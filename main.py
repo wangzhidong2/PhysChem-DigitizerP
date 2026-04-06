@@ -372,6 +372,360 @@ class UltrasonicWidget(QWidget):
         self.save_btn.setEnabled(False)
 
 
+class UltrasonicVelocityWidget(QWidget):
+    """超声波速度模块界面 - 回声定位法"""
+    
+    def __init__(self):
+        super().__init__()
+        self.serial_thread = None
+        self.distance_data = []  # 距离数据
+        self.time_data = []      # 时间数据
+        self.velocity_data = []   # 速度数据
+        self.start_timestamp_us = 0
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # 控制面板
+        control_group = QGroupBox("控制面板")
+        control_layout = QHBoxLayout()
+        
+        # 串口选择
+        control_layout.addWidget(QLabel("串口:"))
+        self.port_combo = QComboBox()
+        self.refresh_ports()
+        control_layout.addWidget(self.port_combo)
+        
+        # 刷新按钮
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.clicked.connect(self.refresh_ports)
+        control_layout.addWidget(self.refresh_btn)
+        
+        # 连接按钮
+        self.connect_btn = QPushButton("连接")
+        self.connect_btn.clicked.connect(self.toggle_connection)
+        control_layout.addWidget(self.connect_btn)
+        
+        control_layout.addStretch()
+        
+        # 速度计算参数
+        control_layout.addWidget(QLabel("采样窗口:"))
+        self.window_size_spin = QSpinBox()
+        self.window_size_spin.setRange(5, 100)
+        self.window_size_spin.setValue(10)
+        self.window_size_spin.setSuffix(" 点")
+        control_layout.addWidget(self.window_size_spin)
+        
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+        
+        # 数据显示区域
+        data_group = QGroupBox("实时数据")
+        data_layout = QHBoxLayout()
+        
+        # 左侧：文本数据显示
+        text_widget = QWidget()
+        text_layout = QVBoxLayout()
+        
+        # 当前数据
+        self.current_data_label = QLabel("当前数据: 等待连接...")
+        self.current_data_label.setFont(QFont("Arial", 12))
+        text_layout.addWidget(self.current_data_label)
+        
+        # 速度统计
+        self.velocity_stats_label = QLabel("速度统计: 暂无数据")
+        text_layout.addWidget(self.velocity_stats_label)
+        
+        # 数据记录
+        self.data_text = QTextEdit()
+        self.data_text.setMaximumHeight(150)
+        text_layout.addWidget(QLabel("速度记录:"))
+        text_layout.addWidget(self.data_text)
+        
+        text_widget.setLayout(text_layout)
+        data_layout.addWidget(text_widget)
+        
+        # 右侧：图表显示
+        self.figure = Figure(figsize=(8, 6))
+        self.canvas = FigureCanvas(self.figure)
+        data_layout.addWidget(self.canvas)
+        
+        data_group.setLayout(data_layout)
+        layout.addWidget(data_group)
+        
+        # 控制按钮
+        button_layout = QHBoxLayout()
+        
+        self.start_btn = QPushButton("开始采集")
+        self.start_btn.clicked.connect(self.start_collection)
+        self.start_btn.setEnabled(False)
+        button_layout.addWidget(self.start_btn)
+        
+        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn.clicked.connect(self.stop_collection)
+        self.stop_btn.setEnabled(False)
+        button_layout.addWidget(self.stop_btn)
+        
+        self.save_btn = QPushButton("保存数据")
+        self.save_btn.clicked.connect(self.save_data)
+        self.save_btn.setEnabled(False)
+        button_layout.addWidget(self.save_btn)
+        
+        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn.clicked.connect(self.clear_data)
+        button_layout.addWidget(self.clear_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+        # 定时器用于更新图表
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_chart)
+        self.timer.start(100)  # 每100ms更新一次图表
+    
+    def refresh_ports(self):
+        """刷新可用串口列表"""
+        self.port_combo.clear()
+        ports = serial.tools.list_ports.comports()
+        for port in ports:
+            self.port_combo.addItem(port.device)
+    
+    def toggle_connection(self):
+        """切换串口连接状态"""
+        if self.serial_thread and self.serial_thread.isRunning():
+            self.disconnect_serial()
+        else:
+            self.connect_serial()
+    
+    def connect_serial(self):
+        """连接串口"""
+        port = self.port_combo.currentText()
+        if not port:
+            QMessageBox.warning(self, "错误", "请选择串口")
+            return
+        
+        try:
+            self.serial_thread = SerialThread(port)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+            
+            self.connect_btn.setText("断开")
+            self.start_btn.setEnabled(True)
+            self.current_data_label.setText("当前数据: 已连接，等待数据...")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
+    
+    def disconnect_serial(self):
+        """断开串口连接"""
+        if self.serial_thread:
+            self.serial_thread.stop()
+            self.serial_thread.wait()
+            self.serial_thread = None
+        
+        self.connect_btn.setText("连接")
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.current_data_label.setText("当前数据: 已断开")
+    
+    def start_collection(self):
+        """开始数据采集"""
+        self.distance_data.clear()
+        self.time_data.clear()
+        self.velocity_data.clear()
+        self.data_text.clear()
+        
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.save_btn.setEnabled(False)
+        
+        self.current_data_label.setText("当前数据: 采集进行中...")
+    
+    def stop_collection(self):
+        """停止数据采集"""
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.save_btn.setEnabled(len(self.distance_data) > 0)
+        
+        self.current_data_label.setText("当前数据: 采集已停止")
+    
+    def handle_data(self, data):
+        """处理接收到的数据 - 回声定位法计算速度"""
+        # 检查是否是错误信息
+        if data.startswith("ERROR:"):
+            QMessageBox.critical(self, "串口错误", data[6:])
+            self.disconnect_serial()
+            return
+        
+        # 检查是否是启动信号
+        if data == "START":
+            self.current_data_label.setText("当前数据: 设备已启动，等待数据...")
+            return
+        
+        if not self.stop_btn.isEnabled():  # 如果没有在采集状态，忽略数据
+            return
+        
+        try:
+            # 解析数据格式: timestamp,echo_time
+            if "," in data:
+                parts = data.split(",")
+                if len(parts) == 2:
+                    timestamp_us = int(parts[0])  # 微秒时间戳
+                    echo_time = int(parts[1])
+                    
+                    # 过滤无效数据
+                    if echo_time < 100 or echo_time > 60000:
+                        return
+                    
+                    # 计算距离（厘米）
+                    distance_cm = echo_time / 58.0
+                    
+                    # 如果是第一个数据点，记录起始时间
+                    if len(self.time_data) == 0:
+                        self.start_timestamp_us = timestamp_us
+                    
+                    # 计算相对于起始时间的秒数
+                    relative_time_s = (timestamp_us - self.start_timestamp_us) / 1000000.0
+                    
+                    # 记录距离和时间数据
+                    self.distance_data.append(distance_cm)
+                    self.time_data.append(relative_time_s)
+                    
+                    # 回声定位法计算速度
+                    velocity = self.calculate_velocity()
+                    if velocity is not None:
+                        self.velocity_data.append(velocity)
+                    
+                    # 更新显示
+                    current_time = datetime.now()
+                    time_str = current_time.strftime("%H:%M:%S.%f")[:-3]
+                    
+                    if velocity is not None:
+                        display_text = f"时间: {time_str} | 距离: {distance_cm:.2f}cm | 速度: {velocity:.2f}cm/s"
+                        self.current_data_label.setText(f"当前数据: {display_text}")
+                        
+                        # 添加到数据记录
+                        self.data_text.append(display_text)
+                        
+                        # 自动滚动到底部
+                        self.data_text.verticalScrollBar().setValue(
+                            self.data_text.verticalScrollBar().maximum()
+                        )
+                    
+                    # 更新统计信息
+                    self.update_stats()
+                    
+        except ValueError:
+            pass  # 忽略无法解析的数据
+    
+    def calculate_velocity(self):
+        """回声定位法计算速度 - 基于距离变化率"""
+        window_size = self.window_size_spin.value()
+        
+        if len(self.distance_data) < window_size:
+            return None
+        
+        # 获取最近的 window_size 个数据点
+        recent_distances = self.distance_data[-window_size:]
+        recent_times = self.time_data[-window_size:]
+        
+        # 使用线性回归计算速度（距离对时间的导数）
+        try:
+            # 转换为 numpy 数组
+            times = np.array(recent_times)
+            distances = np.array(recent_distances)
+            
+            # 线性回归：distance = velocity * time + intercept
+            # 速度就是斜率
+            slope, intercept = np.polyfit(times, distances, 1)
+            
+            # 速度单位：厘米/秒
+            velocity_cm_s = slope
+            
+            return velocity_cm_s
+            
+        except Exception as e:
+            print(f"速度计算错误: {e}")
+            return None
+    
+    def update_stats(self):
+        """更新速度统计信息"""
+        if len(self.velocity_data) > 0:
+            avg_velocity = np.mean(self.velocity_data)
+            max_velocity = np.max(self.velocity_data)
+            min_velocity = np.min(self.velocity_data)
+            
+            stats_text = f"速度统计: 数据点 {len(self.velocity_data)} | " \
+                        f"平均 {avg_velocity:.2f}cm/s | " \
+                        f"最大 {max_velocity:.2f}cm/s | " \
+                        f"最小 {min_velocity:.2f}cm/s"
+            self.velocity_stats_label.setText(stats_text)
+    
+    def update_chart(self):
+        """更新速度图表"""
+        if len(self.velocity_data) > 0:
+            self.figure.clear()
+            
+            # 创建子图
+            ax1 = self.figure.add_subplot(211)  # 距离-时间图
+            ax2 = self.figure.add_subplot(212)  # 速度-时间图
+            
+            # 绘制距离-时间图
+            ax1.plot(self.time_data, self.distance_data, 'b-', linewidth=2)
+            ax1.set_xlabel('时间 (秒)')
+            ax1.set_ylabel('距离 (厘米)')
+            ax1.set_title('距离传感器的距离')
+            ax1.grid(True, alpha=0.3)
+            
+            # 绘制速度-时间图
+            ax2.plot(self.time_data[len(self.time_data)-len(self.velocity_data):], 
+                    self.velocity_data, 'r-', linewidth=2)
+            ax2.set_xlabel('时间 (秒)')
+            ax2.set_ylabel('速度 (厘米/秒)')
+            ax2.set_title('物体运动速度 - 回声定位法')
+            ax2.grid(True, alpha=0.3)
+            
+            # 自动调整布局
+            self.figure.tight_layout()
+            self.canvas.draw()
+    
+    def save_data(self):
+        """保存数据到文件"""
+        if len(self.distance_data) == 0:
+            QMessageBox.warning(self, "警告", "没有数据可保存")
+            return
+        
+        try:
+            filename = f"ultrasonic_velocity_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("time_s,distance_cm,velocity_cm_s\n")
+                for i, (time_val, distance, velocity) in enumerate(
+                    zip(self.time_data, self.distance_data, 
+                        self.velocity_data + [None] * (len(self.distance_data) - len(self.velocity_data)))):
+                    
+                    velocity_str = f"{velocity:.3f}" if velocity is not None else ""
+                    f.write(f"{time_val:.3f},{distance:.3f},{velocity_str}\n")
+            
+            QMessageBox.information(self, "成功", f"数据已保存到: {filename}")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+    
+    def clear_data(self):
+        """清除数据"""
+        self.distance_data.clear()
+        self.time_data.clear()
+        self.velocity_data.clear()
+        self.data_text.clear()
+        self.velocity_stats_label.setText("速度统计: 暂无数据")
+        self.current_data_label.setText("当前数据: 等待数据...")
+        self.figure.clear()
+        self.canvas.draw()
+        self.save_btn.setEnabled(False)
+
+
 class MainWindow(QMainWindow):
     """主窗口"""
     
@@ -438,6 +792,11 @@ class MainWindow(QMainWindow):
         ultrasonic_widget = UltrasonicWidget()
         self.content_stack.addWidget(ultrasonic_widget)
         self.modules["超声波位移"] = ultrasonic_widget
+        
+        # 超声波速度模块
+        ultrasonic_velocity_widget = UltrasonicVelocityWidget()
+        self.content_stack.addWidget(ultrasonic_velocity_widget)
+        self.modules["超声波速度"] = ultrasonic_velocity_widget
         
         # 占位模块（其他模块待实现）
         for module_name in ["温度传感器", "光电门", "力传感器"]:
