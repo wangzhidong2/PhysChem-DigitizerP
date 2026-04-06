@@ -378,9 +378,10 @@ class UltrasonicVelocityWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.serial_thread = None
-        self.distance_data = []  # 距离数据
-        self.time_data = []      # 时间数据
-        self.velocity_data = []   # 速度数据
+        self.distance_data = []    # 距离数据
+        self.time_data = []        # 时间数据
+        self.velocity_data = []    # 速度数据
+        self.echo_time_data = []   # 原始回波时间数据 (µs)
         self.start_timestamp_us = 0
         self.init_ui()
     
@@ -536,6 +537,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.distance_data.clear()
         self.time_data.clear()
         self.velocity_data.clear()
+        self.echo_time_data.clear()  # 清除回波时间数据
         self.data_text.clear()
         
         self.start_btn.setEnabled(False)
@@ -590,9 +592,10 @@ class UltrasonicVelocityWidget(QWidget):
                     # 计算相对于起始时间的秒数
                     relative_time_s = (timestamp_us - self.start_timestamp_us) / 1000000.0
                     
-                    # 记录距离和时间数据
+                    # 记录距离、时间和原始回波时间数据
                     self.distance_data.append(distance_cm)
                     self.time_data.append(relative_time_s)
+                    self.echo_time_data.append(echo_time)  # 保存原始回波时间
                     
                     # 回声定位法计算速度
                     velocity = self.calculate_velocity()
@@ -622,28 +625,43 @@ class UltrasonicVelocityWidget(QWidget):
             pass  # 忽略无法解析的数据
     
     def calculate_velocity(self):
-        """回声定位法计算速度 - 基于距离变化率"""
-        window_size = self.window_size_spin.value()
+        """回声定位法计算速度 - 基于两次测量的时间差
         
-        if len(self.distance_data) < window_size:
+        算法原理：
+        v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
+        
+        其中：
+        - t₀: 第一次回波时间 (µs)
+        - t₁: 第二次回波时间 (µs)
+        - Δt: 两次发射的时间间隔 (s)
+        - vₛ: 声速 = 34000 cm/s
+        """
+        if len(self.distance_data) < 2:
             return None
         
-        # 获取最近的 window_size 个数据点
-        recent_distances = self.distance_data[-window_size:]
-        recent_times = self.time_data[-window_size:]
-        
-        # 使用线性回归计算速度（距离对时间的导数）
         try:
-            # 转换为 numpy 数组
-            times = np.array(recent_times)
-            distances = np.array(recent_distances)
+            # 获取最近两次测量的数据
+            t0 = self.echo_time_data[-2]  # 第一次回波时间 (µs)
+            t1 = self.echo_time_data[-1]  # 第二次回波时间 (µs)
             
-            # 线性回归：distance = velocity * time + intercept
-            # 速度就是斜率
-            slope, intercept = np.polyfit(times, distances, 1)
+            # 计算两次发射的时间间隔 Δt (秒)
+            # 使用 Arduino 的测量间隔 (MIN_INTERVAL = 20000 µs = 0.02s)
+            delta_t = 0.02  # 默认 20ms
+            if len(self.time_data) >= 2:
+                delta_t = self.time_data[-1] - self.time_data[-2]
             
-            # 速度单位：厘米/秒
-            velocity_cm_s = slope
+            # 声速 (cm/s)
+            v_sound = 34000  # 340 m/s = 34000 cm/s
+            
+            # 计算速度 (cm/s)
+            # v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
+            numerator = (t0 - t1) / 2.0 * v_sound
+            denominator = (t1 + t0) / 2.0 + delta_t * 1000000  # 将 Δt 转换为 µs
+            
+            if denominator == 0:
+                return None
+            
+            velocity_cm_s = numerator / denominator
             
             return velocity_cm_s
             
@@ -718,6 +736,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.distance_data.clear()
         self.time_data.clear()
         self.velocity_data.clear()
+        self.echo_time_data.clear()  # 清除回波时间数据
         self.data_text.clear()
         self.velocity_stats_label.setText("速度统计: 暂无数据")
         self.current_data_label.setText("当前数据: 等待数据...")
