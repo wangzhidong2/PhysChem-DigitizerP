@@ -754,7 +754,7 @@ class MainWindow(QMainWindow):
         self.apply_win11_style()
     
     def init_ui(self):
-        self.setWindowTitle("物理实验数据采集软件")
+        self.setWindowTitle("PhysChem-DigitizerP")
         self.setGeometry(100, 100, 1200, 800)
         
         # 创建中央部件
