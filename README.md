@@ -1,12 +1,12 @@
 # PhysChem-DigitizerP
 
-基于 Arduino 开发的低成本理化实验数字化采集系统
+基于 Arduino/ESP32/ESP8266 开发的低成本理化实验数字化采集系统
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 📖 项目简介
 
-**PhysChem-DigitizerP** 是一个开源的物理化学实验数字化采集系统，旨在为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。项目包含硬件（Arduino/ESP8266）和软件（Python + PyQt6）两部分，实现了从传感器数据采集、实时可视化到数据导出的完整功能。
+**PhysChem-DigitizerP** 是一个开源的物理化学实验数字化采集系统，旨在为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python + PyQt6）两部分，实现了从传感器数据采集、实时可视化到数据导出的完整功能。
 
 ### 🎯 项目目标
 
@@ -21,22 +21,21 @@
 
 ### 硬件特性
 
-- **主控板**：WeMOS D1 (ESP8266)，支持 WiFi 连接（预留功能）
-- **高频采样**：超声波传感器采样率可达 50Hz
-- **精确测量**：HC-SR04 超声波模块，测量范围 2cm-400cm
+- **主控板**：支持 ESP32 和 ESP8266（WeMOS D1 等），支持 WiFi 连接（预留功能）
+- **精确测量**：支持多种传感器模块，测量精度高
 - **多传感器支持**：预留温度、光电门、力传感器等接口
 
 ### 软件特性
 
 #### ✅ 已实现功能
 
-1. **超声波位移测量**
+1. **位移测量模块**
    - 实时距离测量（精度：±0.3cm）
    - 距离 - 时间曲线实时绘制
    - 数据统计（平均值、最大值、最小值）
    - CSV 格式数据导出
 
-2. **超声波速度测量（回声定位法）**
+2. **速度测量模块（回声定位法）**
    - 基于回声定位算法的速度计算
    - 双图表显示（距离 - 时间、速度 - 时间）
    - 速度统计分析
@@ -53,8 +52,6 @@
 - 光电门模块
 - 力传感器模块
 - WiFi 无线数据传输
-- 多传感器同步采集
-- 实验数据云端存储
 
 ---
 
@@ -74,7 +71,8 @@ PhysChem-DigitizerP/
 └── 传感器 arduino 代码/
     ├── README.md              # Arduino 代码说明
     └── 超声波位移传感器/
-        └── HC-SR04esp8266.ino # 超声波传感器固件
+        ├── HC-SR04esp8266.ino # ESP8266 传感器固件
+        └── HC-SR04esp32.ino   # ESP32 传感器固件
 ```
 
 ---
@@ -87,13 +85,14 @@ PhysChem-DigitizerP/
 
 | 组件 | 型号/规格 | 数量 | 备注 |
 |------|-----------|------|------|
-| 开发板 | WeMOS D1 (ESP8266) | 1 | 或 Arduino Uno + ESP8266 |
-| 超声波模块 | HC-SR04 | 1 | 测量范围 2-400cm |
-| 杜邦线 | 公对母 | 4 | VCC, GND, TRIG, ECHO |
-| USB 线 | Micro-USB | 1 | 数据通信和供电 |
+| 开发板 | ESP32 或 ESP8266 (WeMOS D1) | 1 | 推荐使用 ESP32 |
+| 传感器模块 | 根据实验需求选择 | 1 | 如 HC-SR04 等 |
+| 杜邦线 | 公对母 | 若干 | 根据传感器需求 |
+| USB 线 | Micro-USB 或 Type-C | 1 | 数据通信和供电 |
 
-#### 硬件连接
+#### 硬件连接示例（以 HC-SR04 为例）
 
+**ESP8266 (WeMOS D1) 连接：**
 ```
 WeMOS D1          HC-SR04
 ─────────         ───────
@@ -101,6 +100,16 @@ WeMOS D1          HC-SR04
 GND         →     GND
 D14 (D5)    →     TRIG
 D12 (D6)    →     ECHO
+```
+
+**ESP32 连接：**
+```
+ESP32             HC-SR04
+─────             ───────
+5V (VIN)    →     VCC
+GND         →     GND
+GPIO 5      →     TRIG
+GPIO 18     →     ECHO
 ```
 
 **注意**：HC-SR04 工作电压为 5V，请确保连接到 5V 引脚而非 3.3V。
@@ -115,15 +124,15 @@ D12 (D6)    →     ECHO
 
 #### 2. 烧录 Arduino 固件
 
-1. 安装 Arduino IDE 并添加 ESP8266 开发板支持：
-   - 打开 Arduino IDE
-   - 文件 → 首选项 → 附加开发板管理器网址
-   - 添加：`http://arduino.esp8266.com/stable/package_esp8266com_index.json`
-   - 工具 → 开发板 → 开发板管理器 → 搜索 "ESP8266" 并安装
+1. 安装 Arduino IDE 并添加开发板支持：
+   - **ESP8266**：添加 `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
+   - **ESP32**：添加 `https://dl.espressif.com/dl/package_esp32_index.json`
+   - 工具 → 开发板 → 开发板管理器 → 搜索并安装
 
 2. 上传代码：
-   - 打开 `传感器 arduino 代码/超声波位移传感器/HC-SR04esp8266.ino`
-   - 选择开发板：**WeMos D1 R1**
+   - 根据你的开发板选择对应的 `.ino` 文件
+   - ESP8266：选择开发板 **WeMos D1 R1**
+   - ESP32：选择开发板 **ESP32 Dev Module**
    - 选择正确的端口（如 COM3）
    - 点击上传按钮
 
@@ -164,10 +173,10 @@ python main.py
 
 ### 操作流程
 
-#### 1. 超声波位移测量
+#### 1. 位移测量
 
-1. **连接硬件**：将 WeMOS D1 通过 USB 连接到电脑
-2. **选择模块**：在软件左侧选择 "超声波位移" 模块
+1. **连接硬件**：将 ESP32/ESP8266 通过 USB 连接到电脑
+2. **选择模块**：在软件左侧选择 "位移测量" 模块
 3. **选择串口**：点击 "刷新" 按钮，选择对应的 COM 端口
 4. **建立连接**：点击 "连接" 按钮，状态显示 "已连接"
 5. **开始采集**：点击 "开始采集"，实时显示距离数据
@@ -178,10 +187,10 @@ python main.py
 7. **停止采集**：点击 "停止采集" 结束
 8. **保存数据**：点击 "保存数据"，导出为 CSV 文件
 
-#### 2. 超声波速度测量（回声定位法）
+#### 2. 速度测量（回声定位法）
 
 操作流程与位移测量类似，不同之处：
-- 选择 "超声波速度" 模块
+- 选择 "速度测量" 模块
 - 软件自动使用**回声定位算法**计算速度
 - 显示双图表：距离 - 时间 + 速度 - 时间
 
@@ -204,7 +213,7 @@ python main.py
 
 #### CSV 导出格式
 
-**位移数据** (`ultrasonic_data_YYYYMMDD_HHMMSS.csv`)：
+**位移数据** (`sensor_data_YYYYMMDD_HHMMSS.csv`)：
 ```csv
 timestamp_ms,distance_cm
 0,12.345
@@ -212,7 +221,7 @@ timestamp_ms,distance_cm
 200,12.789
 ```
 
-**速度数据** (`ultrasonic_velocity_data_YYYYMMDD_HHMMSS.csv`)：
+**速度数据** (`velocity_data_YYYYMMDD_HHMMSS.csv`)：
 ```csv
 time_s,distance_cm,velocity_cm_s
 0.000,12.345,
@@ -251,7 +260,7 @@ time_s,distance_cm,velocity_cm_s
 
 | 问题 | 可能原因 | 解决方案 |
 |------|----------|----------|
-| 找不到串口 | 驱动未安装/USB 未连接 | 安装 CH340G 驱动，重新插拔 USB |
+| 找不到串口 | 驱动未安装/USB 未连接 | 安装 CH340G/CP210x 驱动，重新插拔 USB |
 | 连接后无数据 | 波特率错误/固件未上传 | 确认波特率 115200，重新上传固件 |
 | 数据跳变异常 | 传感器干扰/接线松动 | 检查接线，远离干扰源 |
 | 图表不显示 | matplotlib 问题 | 重新安装 matplotlib |
@@ -344,7 +353,7 @@ pip install -r requirements.txt
 
 ## 👥 致谢
 
-- **硬件平台**：[ESP8266 Community](https://www.esp8266.com/)
+- **硬件平台**：[ESP32](https://www.espressif.com/) / [ESP8266 Community](https://www.esp8266.com/)
 - **图形界面**：[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
 - **数据可视化**：[Matplotlib](https://matplotlib.org/)
 - **串口通信**：[pyserial](https://github.com/pyserial/pyserial)
@@ -364,6 +373,7 @@ pip install -r requirements.txt
 - ✅ **完全开源**：硬件设计 + 软件代码全部开源
 - ✅ **低成本**：单传感器成本<¥30（商业方案通常>¥500）
 - ✅ **高精度**：50Hz 采样率，±0.3cm 测量精度
+- ✅ **多平台**：支持 ESP32 和 ESP8266 开发板
 - ✅ **易用性**：Win11 风格现代化界面
 - ✅ **可扩展**：支持多种传感器类型
 - ✅ **教育友好**：适合中学和大学物理实验教学
