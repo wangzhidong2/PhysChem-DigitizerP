@@ -7,8 +7,8 @@
 // 电脑端 Python 脚本读取后换算：距离 s = echoTime / 58.0 (cm)
 //                                或   s = echoTime * 0.017   (cm)
 
-#define TRIG_PIN D5  // 触发引脚
-#define ECHO_PIN D6  // 接收引脚
+#define TRIG_PIN 14  // 触发引脚
+#define ECHO_PIN 12  // 接收引脚
 
 // 超时阈值：超过此值认为无回波
 // 6000us = 6ms，对应约1米距离（适合您的实验轨道）
