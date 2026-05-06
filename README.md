@@ -3,6 +3,8 @@
 基于 Arduino/ESP32/ESP8266 开发的低成本理化实验数字化采集系统
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
+[![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 
 ## 📖 项目简介
 
@@ -89,7 +91,6 @@ PhysChem-DigitizerP/
 | 传感器模块 | 根据实验需求选择 | 1 | 如 HC-SR04 等 |
 | 杜邦线 | 公对母 | 若干 | 根据传感器需求 |
 | USB 线 | Micro-USB 或 Type-C | 1 | 数据通信和供电 |
-| 电源模块（最好）| DCP3512 | 1 | 供电 |
 
 #### 硬件连接示例（以 HC-SR04 为例）
 
@@ -332,10 +333,14 @@ python test_serial.py
 ### 开发环境设置
 
 ```bash
-# 克隆项目
-git clone https://github.com/your-username/PhysChem-DigitizerP.git
+# 克隆项目（GitHub）
+git clone https://github.com/wangzhidong2/PhysChem-DigitizerP.git
 cd PhysChem-DigitizerP
 
+# 或克隆 Gitee 镜像（国内用户推荐）
+git clone https://gitee.com/wangzhidong2/PhysChem-DigitizerP.git
+cd PhysChem-DigitizerP
+```
 # 创建虚拟环境（推荐）
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
@@ -364,8 +369,14 @@ pip install -r requirements.txt
 ## 📧 联系方式
 
 如有问题或建议，请：
-1. 提交 [GitHub Issue](https://github.com/your-repo/PhysChem-DigitizerP/issues)
-2. 查看 [故障排除指南](TROUBLESHOOTING.md)
+1. 提交 [GitHub Issue](https://github.com/wangzhidong2/PhysChem-DigitizerP/issues)
+2. 提交 [Gitee Issue](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/issues)
+3. 查看 [故障排除指南](TROUBLESHOOTING.md)
+
+## 🌐 项目地址
+
+- **GitHub**: [https://github.com/wangzhidong2/PhysChem-DigitizerP](https://github.com/wangzhidong2/PhysChem-DigitizerP)
+- **Gitee**: [https://gitee.com/wangzhidong2/PhysChem-DigitizerP/](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 
 ---
 
