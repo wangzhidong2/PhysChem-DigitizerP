@@ -342,7 +342,7 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
----
+
 
 ## 📄 许可证
 
@@ -383,6 +383,6 @@ pip install -r requirements.txt
 - ✅ **可扩展**：支持多种传感器类型
 - ✅ **教育友好**：适合中学和大学物理实验教学
 
----
+
 
 **Happy Experimenting! 🔬📊**
