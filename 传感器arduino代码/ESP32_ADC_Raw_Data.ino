@@ -7,7 +7,6 @@
 
 // ADC 配置参数
 #define ADC_WIDTH_BIT ADC_WIDTH_BIT_12  // 12位精度（ESP32 最高）
-#define ADC_ATTEN_DB ADC_ATTEN_DB_11     // 11dB 衰减，对应 3.3V 量程
 
 unsigned long lastSampleTime = 0;
 
@@ -16,7 +15,17 @@ void setup() {
   
   // 配置 ADC
   analogReadResolution(12);           // 设置 ADC 分辨率为 12 位
-  analogSetAttenuation(ADC_ATTEN_DB_11); // 设置衰减为 11dB (0-3.3V)
+  
+  // 设置11dB衰减用于测量3.2V电压
+  // 使用ESP32库中已知的ADC衰减常量
+  #if defined(ADC_ATTEN_DB_11)
+    analogSetAttenuation(ADC_ATTEN_DB_11); // 11dB衰减对应0-3.3V量程
+  #elif defined(ADC_ATTEN_11db)
+    analogSetAttenuation(ADC_ATTEN_11db); // 11dB衰减对应0-3.3V量程
+  #else
+    // 如果都不支持，使用数值3（11dB衰减）
+    analogSetAttenuation((adc_attenuation_t)3); // 11dB衰减对应0-3.3V量程
+  #endif
   
   // 配置 ADC 引脚
   pinMode(ADC_PIN, INPUT);
