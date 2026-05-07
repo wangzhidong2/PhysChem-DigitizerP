@@ -13,8 +13,9 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QPushButton, QFrame, QStackedWidget,
                             QListWidget, QListWidgetItem, QMessageBox, QComboBox,
-                            QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
+                            QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox,
+                            QStyle)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
 import serial
 import serial.tools.list_ports
@@ -745,6 +746,159 @@ class UltrasonicVelocityWidget(QWidget):
         self.save_btn.setEnabled(False)
 
 
+class SidebarWidget(QWidget):
+    """可折叠侧边栏组件"""
+    
+    module_changed = pyqtSignal(int)
+    
+    def __init__(self):
+        super().__init__()
+        self.is_collapsed = False
+        self.expanded_width = 200
+        self.collapsed_width = 50
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setFixedWidth(self.expanded_width)
+        
+        # 获取Qt标准图标
+        self.style = QApplication.style()
+        
+        # 主布局
+        self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+        
+        # 顶部折叠按钮
+        self.toggle_button = QPushButton()
+        self.toggle_button.setIcon(self.style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+        self.toggle_button.setFixedSize(50, 50)
+        self.toggle_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f3f3f3;
+                border: none;
+                border-bottom: 1px solid #e0e0e0;
+            }
+            QPushButton:hover {
+                background-color: #e8e8e8;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        self.toggle_button.clicked.connect(self.toggle_collapse)
+        self.layout.addWidget(self.toggle_button)
+        
+        # 模块列表
+        self.module_list = QListWidget()
+        self.module_list.setStyleSheet("""
+            QListWidget {
+                background-color: #f3f3f3;
+                border: none;
+                font-size: 14px;
+            }
+            QListWidget::item {
+                padding: 12px;
+                padding-left: 15px;
+                border-bottom: 1px solid #e0e0e0;
+                border-left: 3px solid transparent;
+                height: 48px;
+            }
+            QListWidget::item:selected {
+                background-color: #e8e8e8;
+                color: black;
+                border-left: 3px solid #0078d4;
+            }
+            QListWidget::item:hover {
+                background-color: #f0f0f0;
+            }
+        """)
+        self.module_list.setIconSize(QSize(24, 24))
+        self.module_list.currentRowChanged.connect(self.module_changed.emit)
+        self.layout.addWidget(self.module_list)
+        
+        # 图标映射 - 使用物理定义符号字母
+        self.icon_map = {
+            "超声波位移": self.create_text_icon("x"),  # 位移符号 x
+            "超声波速度": self.create_text_icon("v"),  # 速度符号 v
+            "温度传感器": self.create_text_icon("T"),  # 温度符号 T
+            "光电门": self.create_text_icon("t"),     # 时间符号 t
+            "力传感器": self.create_text_icon("F")     # 力符号 F
+        }
+        
+        # 添加模块项
+        self.modules = [
+            ("超声波位移", "测量物体位移和运动轨迹"),
+            ("超声波速度", "回声定位法测量物体速度"),
+            ("温度传感器", "测量环境温度"),
+            ("光电门", "测量物体通过时间"),
+            ("力传感器", "测量力的大小")
+        ]
+        
+        for name, description in self.modules:
+            item = QListWidgetItem()
+            item.setText(name)
+            item.setToolTip(description)
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setIcon(self.icon_map[name])
+            self.module_list.addItem(item)
+        
+        self.setLayout(self.layout)
+    
+    def toggle_collapse(self):
+        """切换折叠/展开状态"""
+        self.is_collapsed = not self.is_collapsed
+        
+        if self.is_collapsed:
+            self.setFixedWidth(self.collapsed_width)
+            self.toggle_button.setIcon(self.style.standardIcon(QStyle.StandardPixmap.SP_ArrowLeft))
+            for i in range(self.module_list.count()):
+                item = self.module_list.item(i)
+                item.setText("")
+        else:
+            self.setFixedWidth(self.expanded_width)
+            self.toggle_button.setIcon(self.style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+            for i, (name, _) in enumerate(self.modules):
+                item = self.module_list.item(i)
+                item.setText(name)
+    
+    def set_current_row(self, row):
+        """设置当前选中的行"""
+        self.module_list.setCurrentRow(row)
+    
+    def get_current_row(self):
+        """获取当前选中的行"""
+        return self.module_list.currentRow()
+    
+    def create_text_icon(self, text):
+        """创建文本图标"""
+        from PyQt6.QtGui import QPixmap, QPainter, QFont, QColor
+        from PyQt6.QtCore import Qt
+        
+        # 创建 24x24 像素的图像
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        # 创建绘图器
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # 设置字体
+        font = QFont()
+        font.setPointSize(12)
+        font.setBold(True)
+        painter.setFont(font)
+        
+        # 设置颜色
+        painter.setPen(QColor(0, 0, 0))  # 黑色文字
+        
+        # 绘制文本（居中显示）
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        painter.end()
+        
+        return QIcon(pixmap)
+
+
 class MainWindow(QMainWindow):
     """主窗口"""
     
@@ -765,39 +919,8 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout()
         
         # 侧边栏
-        self.sidebar = QListWidget()
-        self.sidebar.setFixedWidth(200)
-        self.sidebar.setStyleSheet("""
-            QListWidget {
-                background-color: #f3f3f3;
-                border: none;
-                font-size: 14px;
-            }
-            QListWidget::item {
-                padding: 15px;
-                border-bottom: 1px solid #e0e0e0;
-            }
-            QListWidget::item:selected {
-                background-color: #0078d4;
-                color: white;
-            }
-        """)
-        
-        # 添加模块项
-        modules = [
-            ("超声波位移", "测量物体位移和运动轨迹"),
-            ("超声波速度", "回声定位法测量物体速度"),
-            ("温度传感器", "测量环境温度"),
-            ("光电门", "测量物体通过时间"),
-            ("力传感器", "测量力的大小")
-        ]
-        
-        for name, description in modules:
-            item = QListWidgetItem(f"{name}\n{description}")
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            self.sidebar.addItem(item)
-        
-        self.sidebar.currentRowChanged.connect(self.switch_module)
+        self.sidebar = SidebarWidget()
+        self.sidebar.module_changed.connect(self.switch_module)
         main_layout.addWidget(self.sidebar)
         
         # 内容区域
@@ -828,7 +951,7 @@ class MainWindow(QMainWindow):
         central_widget.setLayout(main_layout)
         
         # 默认选择第一个模块
-        self.sidebar.setCurrentRow(0)
+        self.sidebar.set_current_row(0)
     
     def switch_module(self, index):
         """切换模块"""
