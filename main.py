@@ -821,18 +821,14 @@ class SidebarWidget(QWidget):
         self.icon_map = {
             "超声波位移": self.create_text_icon("x"),  # 位移符号 x
             "超声波速度": self.create_text_icon("v"),  # 速度符号 v
-            "温度传感器": self.create_text_icon("T"),  # 温度符号 T
-            "光电门": self.create_text_icon("t"),     # 时间符号 t
-            "力传感器": self.create_text_icon("F")     # 力符号 F
+            "设置": self.create_text_icon("⚙")        # 设置齿轮符号
         }
         
         # 添加模块项
         self.modules = [
             ("超声波位移", "测量物体位移和运动轨迹"),
             ("超声波速度", "回声定位法测量物体速度"),
-            ("温度传感器", "测量环境温度"),
-            ("光电门", "测量物体通过时间"),
-            ("力传感器", "测量力的大小")
+            ("设置", "应用设置与偏好")
         ]
         
         for name, description in self.modules:
@@ -870,6 +866,81 @@ class SidebarWidget(QWidget):
         """获取当前选中的行"""
         return self.module_list.currentRow()
     
+    def apply_theme(self, theme):
+        """应用主题到侧边栏"""
+        if theme == "dark":
+            dark_style = """
+                QPushButton {
+                    background-color: #2d2d2d;
+                    border: none;
+                    border-bottom: 1px solid #3d3d3d;
+                    color: white;
+                }
+                QPushButton:hover {
+                    background-color: #3d3d3d;
+                }
+                QListWidget {
+                    background-color: #2d2d2d;
+                    border: none;
+                    font-size: 14px;
+                    color: white;
+                }
+                QListWidget::item {
+                    padding: 12px;
+                    padding-left: 15px;
+                    border-bottom: 1px solid #3d3d3d;
+                    border-left: 3px solid transparent;
+                    height: 48px;
+                    color: white;
+                }
+                QListWidget::item:selected {
+                    background-color: #3d3d3d;
+                    color: white;
+                    border-left: 3px solid #0078d4;
+                }
+                QListWidget::item:hover {
+                    background-color: #3d3d3d;
+                }
+            """
+            self.setStyleSheet(dark_style)
+        else:
+            light_style = """
+                QPushButton {
+                    background-color: #f3f3f3;
+                    border: none;
+                    border-bottom: 1px solid #e0e0e0;
+                }
+                QPushButton:hover {
+                    background-color: #e8e8e8;
+                }
+                QPushButton:pressed {
+                    background-color: #d0d0d0;
+                }
+                QListWidget {
+                    background-color: #f3f3f3;
+                    border: none;
+                    font-size: 14px;
+                    color: black;
+                }
+                QListWidget::item {
+                    padding: 12px;
+                    padding-left: 15px;
+                    border-bottom: 1px solid #e0e0e0;
+                    border-left: 3px solid transparent;
+                    height: 48px;
+                    color: black;
+                }
+                QListWidget::item:selected {
+                    background-color: #e8e8e8;
+                    color: black;
+                    border-left: 3px solid #0078d4;
+                }
+                QListWidget::item:hover {
+                    background-color: #f0f0f0;
+                }
+            """
+            self.setStyleSheet(light_style)
+    
     def create_text_icon(self, text):
         """创建文本图标"""
         from PyQt6.QtGui import QPixmap, QPainter, QFont, QColor
@@ -897,6 +968,189 @@ class SidebarWidget(QWidget):
         painter.end()
         
         return QIcon(pixmap)
+
+
+class SettingsWidget(QWidget):
+    """设置界面组件"""
+    
+    theme_changed = pyqtSignal(str)
+    
+    def __init__(self):
+        super().__init__()
+        self.current_theme = "light"
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(20)
+        
+        # 标题
+        title = QLabel("设置")
+        title.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        layout.addWidget(title)
+        
+        # 外观设置卡片
+        appearance_group = QGroupBox("外观")
+        appearance_layout = QVBoxLayout()
+        appearance_layout.setSpacing(15)
+        
+        # 应用主题选项
+        theme_label = QLabel("应用主题")
+        theme_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        appearance_layout.addWidget(theme_label)
+        
+        theme_desc = QLabel("选择要显示的应用主题")
+        theme_desc.setStyleSheet("color: #666; font-size: 11px;")
+        appearance_layout.addWidget(theme_desc)
+        
+        # Win11风格的主题选择按钮组
+        self.theme_button_group = QVBoxLayout()
+        self.theme_button_group.setSpacing(8)
+        
+        self.theme_buttons = {}
+        themes = [
+            ("system", "使用系统设置"),
+            ("light", "浅色"),
+            ("dark", "深色")
+        ]
+        
+        for theme_id, theme_name in themes:
+            btn = QPushButton(f"  {theme_name}")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setMinimumHeight(40)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: white;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 4px;
+                    text-align: left;
+                    padding-left: 15px;
+                    font-size: 13px;
+                    color: #333;
+                }
+                QPushButton:hover {
+                    background-color: #f5f5f5;
+                    border-color: #0078d4;
+                }
+                QPushButton:checked {
+                    background-color: #e6f2ff;
+                    border-left: 3px solid #0078d4;
+                    color: #0078d4;
+                    font-weight: bold;
+                }
+            """)
+            btn.clicked.connect(lambda checked, tid=theme_id: self.change_theme(tid))
+            self.theme_buttons[theme_id] = btn
+            self.theme_button_group.addWidget(btn)
+        
+        appearance_layout.addLayout(self.theme_button_group)
+        appearance_group.setLayout(appearance_layout)
+        layout.addWidget(appearance_group)
+        
+        layout.addStretch()
+        self.setLayout(layout)
+        
+        # 默认选中浅色模式
+        self.theme_buttons["light"].setChecked(True)
+    
+    def change_theme(self, theme_id):
+        """切换主题"""
+        for btn in self.theme_buttons.values():
+            btn.setChecked(False)
+        self.theme_buttons[theme_id].setChecked(True)
+        self.current_theme = theme_id
+        self.theme_changed.emit(theme_id)
+    
+    def apply_theme(self, theme):
+        """应用主题到设置界面本身"""
+        if theme == "dark":
+            dark_style = """
+                QWidget {
+                    background-color: #202020;
+                    color: #ffffff;
+                }
+                QGroupBox {
+                    font-weight: bold;
+                    border: 2px solid #3d3d3d;
+                    border-radius: 8px;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    color: #ffffff;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px 0 5px;
+                    color: #ffffff;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+                QPushButton {
+                    background-color: #333333;
+                    border: 1px solid #444444;
+                    color: #ffffff;
+                    border-radius: 4px;
+                    padding: 8px 16px;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: #404040;
+                    border-color: #0078d4;
+                }
+                QPushButton:checked {
+                    background-color: #003366;
+                    border-left: 3px solid #0078d4;
+                    color: #0078d4;
+                    font-weight: bold;
+                }
+            """
+            self.setStyleSheet(dark_style)
+        else:
+            light_style = """
+                QWidget {
+                    background-color: #fafafa;
+                    color: #000000;
+                }
+                QGroupBox {
+                    font-weight: bold;
+                    border: 2px solid #e0e0e0;
+                    border-radius: 8px;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    color: #000000;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px 0 5px;
+                    color: #000000;
+                }
+                QLabel {
+                    color: #000000;
+                }
+                QPushButton {
+                    background-color: white;
+                    border: 1px solid #e0e0e0;
+                    color: #333333;
+                    border-radius: 4px;
+                    padding: 8px 16px;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: #f5f5f5;
+                    border-color: #0078d4;
+                }
+                QPushButton:checked {
+                    background-color: #e6f2ff;
+                    border-left: 3px solid #0078d4;
+                    color: #0078d4;
+                    font-weight: bold;
+                }
+            """
+            self.setStyleSheet(light_style)
 
 
 class MainWindow(QMainWindow):
@@ -940,13 +1194,11 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(ultrasonic_velocity_widget)
         self.modules["超声波速度"] = ultrasonic_velocity_widget
         
-        # 占位模块（其他模块待实现）
-        for module_name in ["温度传感器", "光电门", "力传感器"]:
-            placeholder = QLabel(f"{module_name}模块 - 开发中...")
-            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            placeholder.setStyleSheet("font-size: 18px; color: #666;")
-            self.content_stack.addWidget(placeholder)
-            self.modules[module_name] = placeholder
+        # 设置模块
+        self.settings_widget = SettingsWidget()
+        self.settings_widget.theme_changed.connect(self.change_app_theme)
+        self.content_stack.addWidget(self.settings_widget)
+        self.modules["设置"] = self.settings_widget
         
         central_widget.setLayout(main_layout)
         
@@ -958,70 +1210,160 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.content_stack.setCurrentIndex(index)
     
+    def change_app_theme(self, theme):
+        """切换应用主题"""
+        self.current_theme = theme
+        self.apply_theme(theme)
+        
+        # 更新设置界面的主题
+        if hasattr(self, 'settings_widget'):
+            self.settings_widget.apply_theme(theme)
+        
+        # 更新侧边栏的主题
+        if hasattr(self, 'sidebar'):
+            self.sidebar.apply_theme(theme)
+    
+    def apply_theme(self, theme):
+        """应用指定主题"""
+        if theme == "dark":
+            dark_style = """
+                QMainWindow {
+                    background-color: #202020;
+                    color: white;
+                }
+                QGroupBox {
+                    font-weight: bold;
+                    border: 2px solid #3d3d3d;
+                    border-radius: 8px;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    color: white;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px 0 5px;
+                    color: white;
+                }
+                QPushButton {
+                    background-color: #0078d4;
+                    border: none;
+                    color: white;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: #106ebe;
+                }
+                QPushButton:disabled {
+                    background-color: #444444;
+                    color: #888888;
+                }
+                QLabel {
+                    font-size: 14px;
+                    color: white;
+                }
+                QTextEdit, QComboBox, QSpinBox {
+                    border: 1px solid #444444;
+                    border-radius: 4px;
+                    padding: 4px;
+                    font-size: 14px;
+                    color: white;
+                    background-color: #333333;
+                }
+                QListWidget {
+                    background-color: #2d2d2d;
+                    border: none;
+                    font-size: 14px;
+                    color: white;
+                }
+                QListWidget::item {
+                    padding: 15px;
+                    border-bottom: 1px solid #3d3d3d;
+                    color: white;
+                }
+                QListWidget::item:selected {
+                    background-color: #0078d4;
+                    color: white;
+                }
+                QListWidget::item:hover {
+                    background-color: #3d3d3d;
+                }
+            """
+            self.setStyleSheet(dark_style)
+        else:
+            light_style = """
+                QMainWindow {
+                    background-color: #fafafa;
+                    color: black;
+                }
+                QGroupBox {
+                    font-weight: bold;
+                    border: 2px solid #e0e0e0;
+                    border-radius: 8px;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    color: black;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px 0 5px;
+                    color: black;
+                }
+                QPushButton {
+                    background-color: #0078d4;
+                    border: none;
+                    color: white;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: #106ebe;
+                }
+                QPushButton:disabled {
+                    background-color: #cccccc;
+                    color: #666666;
+                }
+                QLabel {
+                    font-size: 14px;
+                    color: black;
+                }
+                QTextEdit, QComboBox, QSpinBox {
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 4px;
+                    font-size: 14px;
+                    color: black;
+                    background-color: white;
+                }
+                QListWidget {
+                    background-color: #f3f3f3;
+                    border: none;
+                    font-size: 14px;
+                    color: black;
+                }
+                QListWidget::item {
+                    padding: 15px;
+                    border-bottom: 1px solid #e0e0e0;
+                    color: black;
+                }
+                QListWidget::item:selected {
+                    background-color: #0078d4;
+                    color: white;
+                }
+                QListWidget::item:hover {
+                    background-color: #f0f0f0;
+                }
+            """
+            self.setStyleSheet(light_style)
+    
     def apply_win11_style(self):
-        """应用 Win11 风格样式"""
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #fafafa;
-                color: black;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
-                color: black;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: black;
-            }
-            QPushButton {
-                background-color: #0078d4;
-                border: none;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #666666;
-            }
-            QLabel {
-                font-size: 14px;
-                color: black;
-            }
-            QTextEdit, QComboBox, QSpinBox {
-                border: 1px solid #cccccc;
-                border-radius: 4px;
-                padding: 4px;
-                font-size: 14px;
-                color: black;
-                background-color: white;
-            }
-            QListWidget {
-                background-color: #f3f3f3;
-                border: none;
-                font-size: 14px;
-                color: black;
-            }
-            QListWidget::item {
-                padding: 15px;
-                border-bottom: 1px solid #e0e0e0;
-                color: black;
-            }
-            QListWidget::item:selected {
-                background-color: #0078d4;
-                color: white;
-            }
-        """)
+        """应用 Win11 风格样式（默认浅色模式）"""
+        self.current_theme = "light"
+        self.apply_theme("light")
 
 
 def main():
