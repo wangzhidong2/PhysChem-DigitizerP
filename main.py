@@ -763,6 +763,7 @@ class PhSensorWidget(QWidget):
         
         # 采样频率设置（毫秒）
         self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        self.last_sample_time_ms = 0   # 上次采样时间
         
         # 三点校准参数 (pH, ADC) - 在 init_ui() 之前定义
         self.calibration_points = [
@@ -1021,6 +1022,7 @@ class PhSensorWidget(QWidget):
         self.time_data.clear()
         self.adc_data.clear()
         self.data_text.clear()
+        self.last_sample_time_ms = 0  # 重置采样时间
         
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -1061,9 +1063,16 @@ class PhSensorWidget(QWidget):
                     timestamp_ms = int(parts[0])  # 毫秒时间戳
                     adc_value = int(parts[1])
                     
-                    # 过滤无效ADC值（0-4095范围）
+                    # 过滤无效 ADC 值（0-4095 范围）
                     if adc_value < 0 or adc_value > 4095:
                         return
+                    
+                    # 采样频率控制：检查是否达到采样间隔
+                    if timestamp_ms - self.last_sample_time_ms < self.sample_interval_ms:
+                        return  # 未达到采样间隔，跳过此数据
+                    
+                    # 更新上次采样时间
+                    self.last_sample_time_ms = timestamp_ms
                     
                     # 记录起始时间
                     if len(self.time_data) == 0:
@@ -1177,9 +1186,7 @@ class PhSensorWidget(QWidget):
             
             QMessageBox.information(self, "成功", 
                                    f"采样频率已更新为 {freq} Hz！\n"
-                                   f"采样间隔：{new_interval_ms} ms\n\n"
-                                   f"⚠️ 注意：请同时修改 Arduino 代码中的采样间隔参数，\n"
-                                   f"以保持上下位机同步。")
+                                   f"采样间隔：{new_interval_ms} ms")
     
     def clear_data(self):
         """清除数据"""
