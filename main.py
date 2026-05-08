@@ -765,17 +765,64 @@ class PhSensorWidget(QWidget):
         self.sample_interval_ms = 100  # 默认 100ms (10Hz)
         self.last_sample_time_ms = 0   # 上次采样时间
         
+        # 加载保存的配置
+        self.config = self.load_config()
+        
         # 三点校准参数 (pH, ADC) - 在 init_ui() 之前定义
-        self.calibration_points = [
+        # 优先使用保存的配置，如果没有则使用默认值
+        default_calibration = [
             (4.00, 2555),   # 酸性缓冲液
             (6.86, 2281),   # 中性缓冲液
             (9.18, 2030)    # 碱性缓冲液
         ]
+        self.calibration_points = self.config.get('calibration_points', default_calibration)
         
         # 计算校准系数（二次拟合）
         self.calculate_calibration_coefficients()
         
         self.init_ui()
+    
+    def get_config_path(self):
+        """获取配置文件路径"""
+        # 配置文件保存在程序同目录下
+        config_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(config_dir, 'ph_sensor_config.json')
+    
+    def load_config(self):
+        """加载配置文件"""
+        config_path = self.get_config_path()
+        
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                print(f"✓ 已加载配置文件：{config_path}")
+                return config
+            else:
+                print(f"ℹ️ 配置文件不存在，使用默认配置：{config_path}")
+                return {}
+        except Exception as e:
+            print(f"⚠️ 加载配置文件失败：{e}，使用默认配置")
+            return {}
+    
+    def save_config(self):
+        """保存配置文件"""
+        config_path = self.get_config_path()
+        
+        try:
+            config = {
+                'calibration_points': self.calibration_points,
+                'sample_interval_ms': self.sample_interval_ms
+            }
+            
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            
+            print(f"✓ 配置已保存：{config_path}")
+            return True
+        except Exception as e:
+            print(f"⚠️ 保存配置文件失败：{e}")
+            return False
     
     def calculate_calibration_coefficients(self):
         """计算三点校准的二次拟合系数"""
@@ -1184,9 +1231,13 @@ class PhSensorWidget(QWidget):
             freq = 1000 // new_interval_ms
             self.sample_rate_label.setText(f"{freq}Hz")
             
+            # 保存配置到文件
+            self.save_config()
+            
             QMessageBox.information(self, "成功", 
                                    f"采样频率已更新为 {freq} Hz！\n"
-                                   f"采样间隔：{new_interval_ms} ms")
+                                   f"采样间隔：{new_interval_ms} ms\n"
+                                   f"配置已自动保存，下次启动时生效。")
     
     def clear_data(self):
         """清除数据"""
@@ -1221,8 +1272,11 @@ class PhSensorWidget(QWidget):
                 f"• pH {new_points[2][0]:.2f} → ADC {new_points[2][1]}"
             )
             
+            # 保存配置到文件
+            self.save_config()
+            
             QMessageBox.information(self, "成功", 
-                                   "校准参数已更新！\n新的校准曲线将立即生效。")
+                                   "校准参数已更新并保存！\n新的校准曲线将立即生效。\n下次启动程序时会自动加载此配置。")
 
 
 class CalibrationDialog(QDialog):
