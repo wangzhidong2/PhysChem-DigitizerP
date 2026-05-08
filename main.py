@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QPushButton, QFrame, QStackedWidget,
                             QListWidget, QListWidgetItem, QMessageBox, QComboBox,
                             QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-                            QStyle, QDialog, QLineEdit)
+                            QStyle, QDialog, QLineEdit, QRadioButton)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
 import serial
@@ -761,6 +761,9 @@ class PhSensorWidget(QWidget):
         self.adc_data = []         # 原始 ADC 数据
         self.start_timestamp_ms = 0
         
+        # 采样频率设置（毫秒）
+        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        
         # 三点校准参数 (pH, ADC) - 在 init_ui() 之前定义
         self.calibration_points = [
             (4.00, 2555),   # 酸性缓冲液
@@ -815,6 +818,35 @@ class PhSensorWidget(QWidget):
         self.connect_btn = QPushButton("连接")
         self.connect_btn.clicked.connect(self.toggle_connection)
         control_layout.addWidget(self.connect_btn)
+        
+        control_layout.addStretch()
+        
+        # 采样频率显示
+        control_layout.addWidget(QLabel("采样:"))
+        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
+        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
+        control_layout.addWidget(self.sample_rate_label)
+        
+        # 采样频率设置按钮
+        sample_settings_btn = QPushButton("⚙️")
+        sample_settings_btn.setFixedWidth(40)
+        sample_settings_btn.setToolTip("设置采样频率")
+        sample_settings_btn.clicked.connect(self.edit_sample_rate)
+        sample_settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        control_layout.addWidget(sample_settings_btn)
         
         control_layout.addStretch()
         
@@ -1124,10 +1156,30 @@ class PhSensorWidget(QWidget):
                     f.write(f"{time_val:.3f},{adc_val},{ph_val:.3f}\n")
             
             QMessageBox.information(self, "成功", 
-                                   f"数据已保存到: {filename}\n"
+                                   f"数据已保存到：{filename}\n"
                                    f"共 {len(self.ph_data)} 个数据点")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+            QMessageBox.critical(self, "错误", f"保存失败：{e}")
+    
+    def edit_sample_rate(self):
+        """编辑采样频率对话框"""
+        dialog = SampleRateDialog(self.sample_interval_ms, self)
+        if dialog.exec() == 1:  # QDialog.Accepted
+            # 获取新的采样间隔
+            new_interval_ms = dialog.get_sample_interval()
+            
+            # 更新采样间隔
+            self.sample_interval_ms = new_interval_ms
+            
+            # 更新显示
+            freq = 1000 // new_interval_ms
+            self.sample_rate_label.setText(f"{freq}Hz")
+            
+            QMessageBox.information(self, "成功", 
+                                   f"采样频率已更新为 {freq} Hz！\n"
+                                   f"采样间隔：{new_interval_ms} ms\n\n"
+                                   f"⚠️ 注意：请同时修改 Arduino 代码中的采样间隔参数，\n"
+                                   f"以保持上下位机同步。")
     
     def clear_data(self):
         """清除数据"""
@@ -1280,6 +1332,153 @@ class CalibrationDialog(QDialog):
             adc_val = int(widget['adc'].text())
             points.append((ph_val, adc_val))
         return points
+
+
+class SampleRateDialog(QDialog):
+    """采样频率设置对话框"""
+    
+    def __init__(self, current_interval_ms, parent=None):
+        super().__init__(parent)
+        self.current_interval_ms = current_interval_ms
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle("设置采样频率")
+        self.setModal(True)
+        self.setFixedSize(400, 280)
+        
+        layout = QVBoxLayout()
+        
+        # 说明文字
+        info_label = QLabel(
+            "请选择数据采集的采样频率：\n"
+            "频率越高，数据点越密集，但会增加数据传输负担。"
+        )
+        info_label.setStyleSheet("color: #666; padding: 10px;")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # 预设频率选项
+        preset_group = QGroupBox("预设频率")
+        preset_layout = QVBoxLayout()
+        
+        self.preset_buttons = []
+        presets = [
+            (20, "50 Hz", "高速采样，适合快速变化的信号"),
+            (10, "100 Hz", "超高速采样，适合瞬态信号捕捉"),
+            (50, "20 Hz", "中速采样，适合一般实验"),
+            (100, "10 Hz", "标准采样，适合大多数实验"),
+            (200, "5 Hz", "低速采样，适合缓慢变化的信号"),
+            (500, "2 Hz", "超低速采样，节省存储空间"),
+            (1000, "1 Hz", "最低速采样，长时间监测")
+        ]
+        
+        for interval_ms, label, desc in presets:
+            rb_layout = QHBoxLayout()
+            rb = QRadioButton(f"{label}")
+            rb.setProperty("interval", interval_ms)
+            rb.setToolTip(desc)
+            
+            # 如果当前值匹配，则选中
+            if interval_ms == self.current_interval_ms:
+                rb.setChecked(True)
+            
+            rb_layout.addWidget(rb)
+            rb_layout.addWidget(QLabel(f"({desc})"))
+            rb_layout.addStretch()
+            preset_layout.addLayout(rb_layout)
+            
+            self.preset_buttons.append(rb)
+        
+        preset_group.setLayout(preset_layout)
+        layout.addWidget(preset_group)
+        
+        # 自定义频率
+        custom_group = QGroupBox("自定义频率")
+        custom_layout = QHBoxLayout()
+        
+        custom_layout.addWidget(QLabel("采样间隔:"))
+        self.custom_input = QSpinBox()
+        self.custom_input.setRange(10, 10000)
+        self.custom_input.setValue(self.current_interval_ms)
+        self.custom_input.setSuffix(" ms")
+        self.custom_input.setFixedWidth(120)
+        custom_layout.addWidget(self.custom_input)
+        
+        custom_layout.addWidget(QLabel("(对应 "))
+        self.custom_freq_label = QLabel(f"{1000//self.current_interval_ms} Hz")
+        self.custom_freq_label.setStyleSheet("font-weight: bold; color: #0078d4;")
+        custom_layout.addWidget(self.custom_freq_label)
+        custom_layout.addWidget(QLabel(")"))
+        
+        custom_layout.addStretch()
+        custom_group.setLayout(custom_layout)
+        layout.addWidget(custom_group)
+        
+        # 连接信号
+        for rb in self.preset_buttons:
+            rb.toggled.connect(self.on_preset_changed)
+        
+        self.custom_input.valueChanged.connect(self.on_custom_changed)
+        
+        # 按钮
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                color: #333;
+                border: 1px solid #ccc;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+        """)
+        button_layout.addWidget(cancel_btn)
+        
+        ok_btn = QPushButton("确定")
+        ok_btn.clicked.connect(self.accept)
+        ok_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+        """)
+        button_layout.addWidget(ok_btn)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+    
+    def on_preset_changed(self, checked):
+        """预设选项改变"""
+        if checked:
+            rb = self.sender()
+            interval = rb.property("interval")
+            self.custom_input.setValue(interval)
+    
+    def on_custom_changed(self, value):
+        """自定义输入改变"""
+        freq = 1000 // value
+        self.custom_freq_label.setText(f"{freq} Hz")
+    
+    def get_sample_interval(self):
+        """获取采样间隔"""
+        return self.custom_input.value()
 
 
 class SidebarWidget(QWidget):
