@@ -746,6 +746,377 @@ class UltrasonicVelocityWidget(QWidget):
         self.save_btn.setEnabled(False)
 
 
+class PhSensorWidget(QWidget):
+    """pH传感器模块界面 - 支持三点校准"""
+    
+    def __init__(self):
+        super().__init__()
+        self.serial_thread = None
+        self.ph_data = []          # pH 值数据
+        self.time_data = []        # 时间数据
+        self.adc_data = []         # 原始 ADC 数据
+        self.start_timestamp_ms = 0
+        
+        # 三点校准参数 (pH, ADC) - 在 init_ui() 之前定义
+        self.calibration_points = [
+            (4.00, 2555),   # 酸性缓冲液
+            (6.86, 2281),   # 中性缓冲液
+            (9.18, 2030)    # 碱性缓冲液
+        ]
+        
+        # 计算校准系数（二次拟合）
+        self.calculate_calibration_coefficients()
+        
+        self.init_ui()
+    
+    def calculate_calibration_coefficients(self):
+        """计算三点校准的二次拟合系数"""
+        ph_values = [p[0] for p in self.calibration_points]
+        adc_values = [p[1] for p in self.calibration_points]
+        
+        # 使用二次多项式拟合: pH = a*ADC^2 + b*ADC + c
+        coefficients = np.polyfit(adc_values, ph_values, 2)
+        self.cal_coeffs = coefficients  # [a, b, c]
+    
+    def adc_to_ph(self, adc_value):
+        """将ADC原始值转换为pH值（使用三点校准）"""
+        if not hasattr(self, 'cal_coeffs'):
+            return 7.0
+        
+        a, b, c = self.cal_coeffs
+        ph_value = a * (adc_value ** 2) + b * adc_value + c
+        
+        # 限制pH值在合理范围内（0-14）
+        return max(0.0, min(14.0, ph_value))
+    
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # 控制面板
+        control_group = QGroupBox("控制面板")
+        control_layout = QHBoxLayout()
+        
+        # 串口选择
+        control_layout.addWidget(QLabel("串口:"))
+        self.port_combo = QComboBox()
+        self.refresh_ports()
+        control_layout.addWidget(self.port_combo)
+        
+        # 刷新按钮
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.clicked.connect(self.refresh_ports)
+        control_layout.addWidget(self.refresh_btn)
+        
+        # 连接按钮
+        self.connect_btn = QPushButton("连接")
+        self.connect_btn.clicked.connect(self.toggle_connection)
+        control_layout.addWidget(self.connect_btn)
+        
+        control_layout.addStretch()
+        
+        # 校准信息显示
+        control_layout.addWidget(QLabel("校准状态:"))
+        self.calibration_label = QLabel("✓ 三点校准")
+        self.calibration_label.setStyleSheet("color: green; font-weight: bold;")
+        control_layout.addWidget(self.calibration_label)
+        
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+        
+        # 校准参数显示卡片
+        cal_info_group = QGroupBox("校准参数")
+        cal_info_layout = QVBoxLayout()
+        
+        cal_text = QLabel(
+            f"• pH 4.00 → ADC {self.calibration_points[0][1]}\n"
+            f"• pH 6.86 → ADC {self.calibration_points[1][1]}\n"
+            f"• pH 9.18 → ADC {self.calibration_points[2][1]}"
+        )
+        cal_text.setStyleSheet("font-size: 12px; color: #666;")
+        cal_info_layout.addWidget(cal_text)
+        
+        cal_info_group.setLayout(cal_info_layout)
+        layout.addWidget(cal_info_group)
+        
+        # 数据显示区域
+        data_group = QGroupBox("实时数据")
+        data_layout = QHBoxLayout()
+        
+        # 左侧：文本数据显示
+        text_widget = QWidget()
+        text_layout = QVBoxLayout()
+        
+        # 当前pH值（大字显示）
+        self.current_ph_label = QLabel("pH: --.-")
+        self.current_ph_label.setFont(QFont("Arial", 28, QFont.Weight.Bold))
+        self.current_ph_label.setStyleSheet("color: #0078d4; padding: 10px;")
+        text_layout.addWidget(self.current_ph_label)
+        
+        # 当前ADC值
+        self.current_adc_label = QLabel("ADC: ----")
+        self.current_adc_label.setFont(QFont("Arial", 14))
+        text_layout.addWidget(self.current_adc_label)
+        
+        # 统计信息
+        self.stats_label = QLabel("统计信息: 暂无数据")
+        text_layout.addWidget(self.stats_label)
+        
+        # 数据记录
+        self.data_text = QTextEdit()
+        self.data_text.setMaximumHeight(120)
+        text_layout.addWidget(QLabel("数据记录:"))
+        text_layout.addWidget(self.data_text)
+        
+        text_widget.setLayout(text_layout)
+        data_layout.addWidget(text_widget)
+        
+        # 右侧：图表显示
+        self.figure = Figure(figsize=(8, 5))
+        self.canvas = FigureCanvas(self.figure)
+        data_layout.addWidget(self.canvas)
+        
+        data_group.setLayout(data_layout)
+        layout.addWidget(data_group)
+        
+        # 控制按钮
+        button_layout = QHBoxLayout()
+        
+        self.start_btn = QPushButton("开始采集")
+        self.start_btn.clicked.connect(self.start_collection)
+        self.start_btn.setEnabled(False)
+        button_layout.addWidget(self.start_btn)
+        
+        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn.clicked.connect(self.stop_collection)
+        self.stop_btn.setEnabled(False)
+        button_layout.addWidget(self.stop_btn)
+        
+        self.save_btn = QPushButton("保存数据")
+        self.save_btn.clicked.connect(self.save_data)
+        self.save_btn.setEnabled(False)
+        button_layout.addWidget(self.save_btn)
+        
+        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn.clicked.connect(self.clear_data)
+        button_layout.addWidget(self.clear_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+        # 定时器用于更新图表
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_chart)
+        self.timer.start(100)
+    
+    def refresh_ports(self):
+        """刷新可用串口列表"""
+        self.port_combo.clear()
+        ports = serial.tools.list_ports.comports()
+        for port in ports:
+            self.port_combo.addItem(port.device)
+    
+    def toggle_connection(self):
+        """切换串口连接状态"""
+        if self.serial_thread and self.serial_thread.isRunning():
+            self.disconnect_serial()
+        else:
+            self.connect_serial()
+    
+    def connect_serial(self):
+        """连接串口"""
+        port = self.port_combo.currentText()
+        if not port:
+            QMessageBox.warning(self, "错误", "请选择串口")
+            return
+        
+        try:
+            self.serial_thread = SerialThread(port)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+            
+            self.connect_btn.setText("断开")
+            self.start_btn.setEnabled(True)
+            self.current_ph_label.setText("pH: --.-")
+            self.current_adc_label.setText("ADC: ----")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
+    
+    def disconnect_serial(self):
+        """断开串口连接"""
+        if self.serial_thread:
+            self.serial_thread.stop()
+            self.serial_thread.wait()
+            self.serial_thread = None
+        
+        self.connect_btn.setText("连接")
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.current_ph_label.setText("pH: --.-")
+        self.current_adc_label.setText("ADC: 已断开")
+    
+    def start_collection(self):
+        """开始数据采集"""
+        self.ph_data.clear()
+        self.time_data.clear()
+        self.adc_data.clear()
+        self.data_text.clear()
+        
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.save_btn.setEnabled(False)
+        
+        self.current_ph_label.setText("pH: 采集中...")
+        self.current_adc_label.setText("ADC: 采集中...")
+    
+    def stop_collection(self):
+        """停止数据采集"""
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.save_btn.setEnabled(len(self.ph_data) > 0)
+        
+        if len(self.ph_data) > 0:
+            avg_ph = np.mean(self.ph_data)
+            self.current_ph_label.setText(f"pH: {avg_ph:.2f}")
+    
+    def handle_data(self, data):
+        """处理接收到的数据"""
+        if data.startswith("ERROR:"):
+            QMessageBox.critical(self, "串口错误", data[6:])
+            self.disconnect_serial()
+            return
+        
+        if data == "START":
+            self.current_ph_label.setText("pH: 等待数据...")
+            self.current_adc_label.setText("ADC: 设备就绪")
+            return
+        
+        if not self.stop_btn.isEnabled():
+            return
+        
+        try:
+            if "," in data:
+                parts = data.split(",")
+                if len(parts) == 2:
+                    timestamp_ms = int(parts[0])  # 毫秒时间戳
+                    adc_value = int(parts[1])
+                    
+                    # 过滤无效ADC值（0-4095范围）
+                    if adc_value < 0 or adc_value > 4095:
+                        return
+                    
+                    # 记录起始时间
+                    if len(self.time_data) == 0:
+                        self.start_timestamp_ms = timestamp_ms
+                    
+                    # 计算相对时间（秒）
+                    relative_time_s = (timestamp_ms - self.start_timestamp_ms) / 1000.0
+                    
+                    # 使用三点校准转换pH值
+                    ph_value = self.adc_to_ph(adc_value)
+                    
+                    # 存储数据
+                    self.ph_data.append(ph_value)
+                    self.time_data.append(relative_time_s)
+                    self.adc_data.append(adc_value)
+                    
+                    # 更新显示
+                    current_time = datetime.now()
+                    time_str = current_time.strftime("%H:%M:%S.%f")[:-3]
+                    
+                    display_text = f"时间: {time_str} | ADC: {adc_value} | pH: {ph_value:.2f}"
+                    self.current_ph_label.setText(f"pH: {ph_value:.2f}")
+                    self.current_adc_label.setText(f"ADC: {adc_value}")
+                    
+                    # 添加到数据记录
+                    self.data_text.append(display_text)
+                    self.data_text.verticalScrollBar().setValue(
+                        self.data_text.verticalScrollBar().maximum()
+                    )
+                    
+                    # 更新统计信息
+                    self.update_stats()
+                    
+        except ValueError:
+            pass
+    
+    def update_stats(self):
+        """更新统计信息"""
+        if len(self.ph_data) > 0:
+            avg_ph = np.mean(self.ph_data)
+            max_ph = np.max(self.ph_data)
+            min_ph = np.min(self.ph_data)
+            std_ph = np.std(self.ph_data)
+            
+            stats_text = (f"统计: 数据点 {len(self.ph_data)} | "
+                         f"平均 pH={avg_ph:.2f} | "
+                         f"最大 pH={max_ph:.2f} | "
+                         f"最小 pH={min_ph:.2f} | "
+                         f"标准差 σ={std_ph:.3f}")
+            self.stats_label.setText(stats_text)
+    
+    def update_chart(self):
+        """更新pH值图表"""
+        if len(self.ph_data) > 0:
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+            
+            # 绘制pH值曲线
+            ax.plot(self.time_data, self.ph_data, 'b-', linewidth=2, label='pH值')
+            
+            # 添加参考线（中性pH=7）
+            ax.axhline(y=7.0, color='r', linestyle='--', alpha=0.5, label='中性(pH=7)')
+            
+            ax.set_xlabel('时间 (秒)')
+            ax.set_ylabel('pH值')
+            ax.set_title('pH传感器实时数据', fontsize=14, fontweight='bold')
+            ax.set_ylim(0, 14)
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='upper right')
+            
+            # 自动调整坐标轴范围
+            if len(self.time_data) > 1:
+                ax.set_xlim(min(self.time_data), max(self.time_data))
+            
+            self.figure.tight_layout()
+            self.canvas.draw()
+    
+    def save_data(self):
+        """保存数据到文件"""
+        if len(self.ph_data) == 0:
+            QMessageBox.warning(self, "警告", "没有数据可保存")
+            return
+        
+        try:
+            filename = f"ph_sensor_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("time_s,adc_raw,ph_value\n")
+                for i, (time_val, ph_val, adc_val) in enumerate(
+                    zip(self.time_data, self.ph_data, self.adc_data)):
+                    f.write(f"{time_val:.3f},{adc_val},{ph_val:.3f}\n")
+            
+            QMessageBox.information(self, "成功", 
+                                   f"数据已保存到: {filename}\n"
+                                   f"共 {len(self.ph_data)} 个数据点")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+    
+    def clear_data(self):
+        """清除数据"""
+        self.ph_data.clear()
+        self.time_data.clear()
+        self.adc_data.clear()
+        self.data_text.clear()
+        self.stats_label.setText("统计信息: 暂无数据")
+        self.current_ph_label.setText("pH: --.-")
+        self.current_adc_label.setText("ADC: ----")
+        self.figure.clear()
+        self.canvas.draw()
+        self.save_btn.setEnabled(False)
+
+
 class SidebarWidget(QWidget):
     """可折叠侧边栏组件"""
     
@@ -821,6 +1192,7 @@ class SidebarWidget(QWidget):
         self.icon_map = {
             "超声波位移": self.create_text_icon("x"),  # 位移符号 x
             "超声波速度": self.create_text_icon("v"),  # 速度符号 v
+            "pH传感器": self.create_text_icon("pH"),   # pH符号
             "设置": self.create_text_icon("⚙")        # 设置齿轮符号
         }
         
@@ -828,6 +1200,7 @@ class SidebarWidget(QWidget):
         self.modules = [
             ("超声波位移", "测量物体位移和运动轨迹"),
             ("超声波速度", "回声定位法测量物体速度"),
+            ("pH传感器", "测量溶液酸碱度"),
             ("设置", "应用设置与偏好")
         ]
         
@@ -1193,6 +1566,11 @@ class MainWindow(QMainWindow):
         ultrasonic_velocity_widget = UltrasonicVelocityWidget()
         self.content_stack.addWidget(ultrasonic_velocity_widget)
         self.modules["超声波速度"] = ultrasonic_velocity_widget
+        
+        # pH传感器模块
+        ph_sensor_widget = PhSensorWidget()
+        self.content_stack.addWidget(ph_sensor_widget)
+        self.modules["pH传感器"] = ph_sensor_widget
         
         # 设置模块
         self.settings_widget = SettingsWidget()
