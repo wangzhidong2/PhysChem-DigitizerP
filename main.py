@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QPushButton, QFrame, QStackedWidget,
                             QListWidget, QListWidgetItem, QMessageBox, QComboBox,
                             QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-                            QStyle)
+                            QStyle, QDialog, QLineEdit)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
 import serial
@@ -831,13 +831,35 @@ class PhSensorWidget(QWidget):
         cal_info_group = QGroupBox("校准参数")
         cal_info_layout = QVBoxLayout()
         
-        cal_text = QLabel(
+        # 校准参数显示
+        self.cal_text = QLabel(
             f"• pH 4.00 → ADC {self.calibration_points[0][1]}\n"
             f"• pH 6.86 → ADC {self.calibration_points[1][1]}\n"
             f"• pH 9.18 → ADC {self.calibration_points[2][1]}"
         )
-        cal_text.setStyleSheet("font-size: 12px; color: #666;")
-        cal_info_layout.addWidget(cal_text)
+        self.cal_text.setStyleSheet("font-size: 12px; color: #666;")
+        cal_info_layout.addWidget(self.cal_text)
+        
+        # 编辑按钮
+        edit_btn = QPushButton("✏️ 编辑校准参数")
+        edit_btn.clicked.connect(self.edit_calibration)
+        edit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+        """)
+        cal_info_layout.addWidget(edit_btn)
         
         cal_info_group.setLayout(cal_info_layout)
         layout.addWidget(cal_info_group)
@@ -1113,12 +1135,151 @@ class PhSensorWidget(QWidget):
         self.time_data.clear()
         self.adc_data.clear()
         self.data_text.clear()
-        self.stats_label.setText("统计信息: 暂无数据")
+        self.stats_label.setText("统计信息：暂无数据")
         self.current_ph_label.setText("pH: --.-")
         self.current_adc_label.setText("ADC: ----")
         self.figure.clear()
         self.canvas.draw()
         self.save_btn.setEnabled(False)
+    
+    def edit_calibration(self):
+        """编辑校准参数对话框"""
+        dialog = CalibrationDialog(self.calibration_points, self)
+        if dialog.exec() == 1:  # QDialog.Accepted
+            # 获取新的校准参数
+            new_points = dialog.get_calibration_points()
+            
+            # 更新校准参数
+            self.calibration_points = new_points
+            
+            # 重新计算校准系数
+            self.calculate_calibration_coefficients()
+            
+            # 更新显示
+            self.cal_text.setText(
+                f"• pH {new_points[0][0]:.2f} → ADC {new_points[0][1]}\n"
+                f"• pH {new_points[1][0]:.2f} → ADC {new_points[1][1]}\n"
+                f"• pH {new_points[2][0]:.2f} → ADC {new_points[2][1]}"
+            )
+            
+            QMessageBox.information(self, "成功", 
+                                   "校准参数已更新！\n新的校准曲线将立即生效。")
+
+
+class CalibrationDialog(QDialog):
+    """校准参数编辑对话框"""
+    
+    def __init__(self, calibration_points, parent=None):
+        super().__init__(parent)
+        self.calibration_points = calibration_points
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle("编辑校准参数")
+        self.setModal(True)
+        self.setFixedSize(450, 350)
+        
+        layout = QVBoxLayout()
+        
+        # 说明文字
+        info_label = QLabel(
+            "请输入三点校准的标准缓冲液 pH 值及其对应的 ADC 原始值：\n"
+            "• 酸性缓冲液（如 pH 4.00）\n"
+            "• 中性缓冲液（如 pH 6.86）\n"
+            "• 碱性缓冲液（如 pH 9.18）"
+        )
+        info_label.setStyleSheet("color: #666; padding: 10px;")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # 创建输入框
+        self.point_widgets = []
+        point_names = ["酸性缓冲液 (点 1)", "中性缓冲液 (点 2)", "碱性缓冲液 (点 3)"]
+        
+        for i, (name, (ph_val, adc_val)) in enumerate(zip(point_names, self.calibration_points)):
+            group = QGroupBox(name)
+            group_layout = QHBoxLayout()
+            
+            # pH 值输入
+            ph_label = QLabel("pH 值:")
+            group_layout.addWidget(ph_label)
+            
+            self.ph_input = QLineEdit(str(ph_val))
+            self.ph_input.setFixedWidth(80)
+            self.ph_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+            group_layout.addWidget(self.ph_input)
+            
+            group_layout.addWidget(QLabel("→"))
+            
+            # ADC 值输入
+            adc_label = QLabel("ADC 值:")
+            group_layout.addWidget(adc_label)
+            
+            self.adc_input = QLineEdit(str(adc_val))
+            self.adc_input.setFixedWidth(80)
+            self.adc_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+            group_layout.addWidget(self.adc_input)
+            
+            group_layout.addStretch()
+            group.setLayout(group_layout)
+            layout.addWidget(group)
+            
+            self.point_widgets.append({
+                'ph': self.ph_input,
+                'adc': self.adc_input
+            })
+        
+        # 按钮
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                color: #333;
+                border: 1px solid #ccc;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+        """)
+        button_layout.addWidget(cancel_btn)
+        
+        ok_btn = QPushButton("确定")
+        ok_btn.clicked.connect(self.accept)
+        ok_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+        """)
+        button_layout.addWidget(ok_btn)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+    
+    def get_calibration_points(self):
+        """获取校准参数"""
+        points = []
+        for widget in self.point_widgets:
+            ph_val = float(widget['ph'].text())
+            adc_val = int(widget['adc'].text())
+            points.append((ph_val, adc_val))
+        return points
 
 
 class SidebarWidget(QWidget):
