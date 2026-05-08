@@ -24,6 +24,10 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
 
+# 设置 matplotlib 全局字体为微软雅黑
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
 
 class SerialThread(QThread):
     """串口通信线程"""
@@ -1531,6 +1535,11 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        
+        # 设置全局字体为微软雅黑
+        font = QFont("Microsoft YaHei", 9)
+        self.setFont(font)
+        
         self.init_ui()
         self.apply_win11_style()
     
