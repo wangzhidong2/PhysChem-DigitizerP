@@ -4,6 +4,8 @@
 
 详细模块介绍请参考：[DFRobot SEN0161 pH 计 Wiki](https://wiki.dfrobot.com.cn/_SKU_SEN0161_pH_meter_pH%E8%AE%A1)
 
+参考购买链接【淘宝】大促价保 https://e.tb.cn/h.R19bhV92NZIwylY?tk=yelU5rzSPYE HU591 「PH值测试模块 电极 采集监测 土壤水质酸碱浓度传感器 检测控制」
+点击链接直接打开 或者 淘宝搜索直接打开
 ## 📋 BOM 物料清单
 
 | 组件 | 规格/型号 | 数量 | 备注 |
