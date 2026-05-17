@@ -241,6 +241,96 @@ time_s,distance_cm,velocity_cm_s
 
 ---
 
+## 📐 计算原理与数学表达式
+
+### 1. 速度测量（回声定位法）
+
+**原理**：通过连续两次超声波回波时间的差值，结合声速和测量间隔计算物体运动速度。
+
+**数学表达式**：
+
+```
+v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
+```
+
+其中：
+- `t₀`：第一次回波时间 (µs)
+- `t₁`：第二次回波时间 (µs)
+- `Δt`：两次发射的时间间隔 (s)
+- `vₛ`：声速 = 34000 cm/s
+
+**代码实现**（参考 [main.py](file:///workspace/main.py#L632-L675)）：
+
+```python
+def calculate_velocity(self):
+    # 获取最近两次测量的数据
+    t0 = self.echo_time_data[-2]  # 第一次回波时间 (µs)
+    t1 = self.echo_time_data[-1]  # 第二次回波时间 (µs)
+    
+    # 计算两次发射的时间间隔 Δt (秒)
+    delta_t = 0.02  # 默认 20ms
+    
+    # 声速 (cm/s)
+    v_sound = 34000  # 340 m/s = 34000 cm/s
+    
+    # 计算速度 (cm/s)
+    # v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
+    numerator = (t0 - t1) / 2.0 * v_sound
+    denominator = (t1 + t0) / 2.0 + delta_t * 1000000  # 将 Δt 转换为 µs
+    
+    velocity_cm_s = numerator / denominator
+    
+    return velocity_cm_s
+```
+
+---
+
+### 2. pH 传感器（三点校准二次多项式拟合）
+
+**原理**：使用三个标准 pH 缓冲液（pH 4.00、6.86、9.18）进行校准，通过二次多项式拟合建立 ADC 值与 pH 值的关系。
+
+**数学表达式**：
+
+```
+pH = a·ADC² + b·ADC + c
+```
+
+其中：
+- `a`、`b`、`c`：二次拟合系数（通过三点校准获得）
+- `ADC`：传感器输出的原始 ADC 值（0-4095）
+
+**代码实现**（参考 [main.py](file:///workspace/main.py#L827-L845)）：
+
+```python
+def calculate_calibration_coefficients(self):
+    """计算三点校准的二次拟合系数"""
+    ph_values = [p[0] for p in self.calibration_points]
+    adc_values = [p[1] for p in self.calibration_points]
+    
+    # 使用二次多项式拟合: pH = a*ADC^2 + b*ADC + c
+    coefficients = np.polyfit(adc_values, ph_values, 2)
+    self.cal_coeffs = coefficients  # [a, b, c]
+
+def adc_to_ph(self, adc_value):
+    """将ADC原始值转换为pH值（使用三点校准）"""
+    a, b, c = self.cal_coeffs
+    ph_value = a * (adc_value ** 2) + b * adc_value + c
+    
+    # 限制pH值在合理范围内（0-14）
+    return max(0.0, min(14.0, ph_value))
+```
+
+**默认校准参数**：
+```python
+default_calibration = [
+    (4.00, 2555),   # 酸性缓冲液 (pH 4.00 → ADC 2555)
+    (6.86, 2281),   # 中性缓冲液 (pH 6.86 → ADC 2281)
+    (9.18, 2030)    # 碱性缓冲液 (pH 9.18 → ADC 2030)
+]
+```
+
+---
+
 ## 🧪 典型应用场景
 
 ### 1. 匀速直线运动研究
