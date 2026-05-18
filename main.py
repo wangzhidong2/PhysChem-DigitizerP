@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QPushButton, QFrame, QStackedWidget,
                             QListWidget, QListWidgetItem, QMessageBox, QComboBox,
                             QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-                            QStyle, QDialog, QLineEdit, QRadioButton)
+                            QStyle, QDialog, QLineEdit, QRadioButton, QScrollArea)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
 import serial
@@ -748,6 +748,291 @@ class UltrasonicVelocityWidget(QWidget):
         self.figure.clear()
         self.canvas.draw()
         self.save_btn.setEnabled(False)
+
+
+class HomePageWidget(QWidget):
+    """主页面 - 显示主README和按学科分类的模块导航"""
+    
+    module_clicked = pyqtSignal(str)  # 信号：点击模块时发送模块名称
+    
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setSpacing(15)
+        
+        # 标题区域
+        title_widget = QWidget()
+        title_layout = QVBoxLayout(title_widget)
+        
+        app_title = QLabel("PhysChem-DigitizerP")
+        app_title.setFont(QFont("Microsoft YaHei", 36, QFont.Weight.Bold))
+        app_title.setStyleSheet("color: #0078d4; margin: 10px;")
+        title_layout.addWidget(app_title)
+        
+        subtitle = QLabel("基于 Arduino/ESP32 的低成本理化实验数字化采集系统")
+        subtitle.setFont(QFont("Microsoft YaHei", 14))
+        subtitle.setStyleSheet("color: #666; margin-bottom: 15px;")
+        title_layout.addWidget(subtitle)
+        
+        version = QLabel("版本 v1.2.2 | MIT 开源协议 | Win11 风格界面")
+        version.setFont(QFont("Microsoft YaHei", 10))
+        version.setStyleSheet("color: #999;")
+        title_layout.addWidget(version)
+        
+        content_layout.addWidget(title_widget)
+        
+        # 项目简介
+        intro_group = QGroupBox("📖 项目简介")
+        intro_layout = QVBoxLayout()
+        
+        intro_text = QLabel(
+            "PhysChem-DigitizerP 是一个开源的物理化学实验数字化采集系统，"
+            "旨在为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
+            "\n\n"
+            "✅ 完全开源（硬件+软件） | "
+            "💰 单传感器成本 < ¥30 | "
+            "📊 测量精度 ±0.3cm | "
+            "🔬 适合教学实验"
+        )
+        intro_text.setWordWrap(True)
+        intro_text.setStyleSheet("font-size: 13px; line-height: 1.6; color: #333;")
+        intro_text.setTextFormat(Qt.TextFormat.RichText)
+        intro_layout.addWidget(intro_text)
+        
+        intro_group.setLayout(intro_layout)
+        content_layout.addWidget(intro_group)
+        
+        # 学科分类区域
+        category_widget = QWidget()
+        category_layout = QHBoxLayout(category_widget)
+        category_layout.setSpacing(20)
+        
+        # 物理学科
+        physics_group = QGroupBox("⚛️ 物理实验模块")
+        physics_layout = QVBoxLayout(physics_group)
+        
+        physics_modules = [
+            {
+                'name': '超声波位移',
+                'icon': 'x',
+                'desc': '测量物体位移和运动轨迹',
+                'detail': '实时距离测量 | 距离-时间曲线 | CSV导出'
+            },
+            {
+                'name': '超声波速度',
+                'icon': 'v',
+                'desc': '回声定位法测量物体速度',
+                'detail': '双图表显示 | 速度统计分析 | 瞬时速度计算'
+            }
+        ]
+        
+        for module in physics_modules:
+            module_card = self.create_clickable_module_card(module, '#28a745')
+            module_card.setProperty('module_name', module['name'])
+            physics_layout.addWidget(module_card)
+        
+        physics_layout.addStretch()
+        category_layout.addWidget(physics_group, stretch=1)
+        
+        # 化学学科
+        chemistry_group = QGroupBox("🧪 化学实验模块")
+        chemistry_layout = QVBoxLayout(chemistry_group)
+        
+        chemistry_modules = [
+            {
+                'name': 'pH传感器',
+                'icon': 'pH',
+                'desc': '测量溶液酸碱度',
+                'detail': '三点校准 | 实时pH值 | 标准差统计'
+            }
+        ]
+        
+        for module in chemistry_modules:
+            module_card = self.create_clickable_module_card(module, '#fd7e14')
+            module_card.setProperty('module_name', module['name'])
+            chemistry_layout.addWidget(module_card)
+        
+        chemistry_layout.addStretch()
+        category_layout.addWidget(chemistry_group, stretch=1)
+        
+        content_layout.addWidget(category_widget, stretch=1)
+        
+        # 技术特性
+        tech_group = QGroupBox("🔧 技术特性与支持平台")
+        tech_layout = QHBoxLayout()
+        
+        left_tech = QWidget()
+        left_layout = QVBoxLayout(left_tech)
+        
+        tech_features = [
+            ("硬件平台", "ESP32 / ESP8266 (WeMOS D1)"),
+            ("软件框架", "Python + PyQt6 + Matplotlib"),
+            ("测量精度", "±0.3cm (超声波) / ±0.01 pH"),
+            ("采样频率", "最高 100Hz (可调)"),
+            ("数据格式", "CSV 导出，兼容 Excel")
+        ]
+        
+        for label, value in tech_features:
+            item_layout = QHBoxLayout()
+            name_label = QLabel(f"• {label}: ")
+            name_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #555;")
+            value_label = QLabel(value)
+            value_label.setStyleSheet("font-size: 12px; color: #666;")
+            item_layout.addWidget(name_label)
+            item_layout.addWidget(value_label)
+            item_layout.addStretch()
+            left_layout.addLayout(item_layout)
+        
+        tech_layout.addWidget(left_tech, stretch=1)
+        
+        right_tech = QWidget()
+        right_layout = QVBoxLayout(right_tech)
+        
+        support_features = [
+            "✅ Win11 风格现代化界面",
+            "✅ 支持深色/浅色主题",
+            "✅ 配置自动保存 (JSON)",
+            "✅ 多种传感器支持",
+            "✅ 实时数据可视化"
+        ]
+        
+        for feature in support_features:
+            feat_label = QLabel(feature)
+            feat_label.setStyleSheet("font-size: 12px; color: #666; padding: 2px;")
+            right_layout.addWidget(feat_label)
+        
+        tech_layout.addWidget(right_tech, stretch=1)
+        tech_group.setLayout(tech_layout)
+        content_layout.addWidget(tech_group)
+        
+        # 快速开始
+        quick_start_group = QGroupBox("🚀 快速开始")
+        quick_start_layout = QVBoxLayout()
+        
+        steps_text = (
+            "<b>步骤 1:</b> 连接 ESP32/ESP8266 到电脑 USB<br>"
+            "<b>步骤 2:</b> 选择左侧对应的功能模块<br>"
+            "<b>步骤 3:</b> 选择串口并点击连接<br>"
+            "<b>步骤 4:</b> 配置参数（校准/采样频率）<br>"
+            "<b>步骤 5:</b> 点击开始采集数据<br>"
+            "<b>步骤 6:</b> 查看图表并保存数据"
+        )
+        steps_label = QLabel(steps_text)
+        steps_label.setTextFormat(Qt.TextFormat.RichText)
+        steps_label.setStyleSheet("font-size: 13px; line-height: 1.8; color: #444;")
+        quick_start_layout.addWidget(steps_label)
+        
+        quick_start_group.setLayout(quick_start_layout)
+        content_layout.addWidget(quick_start_group)
+        
+        # 底部信息
+        footer_widget = QWidget()
+        footer_layout = QHBoxLayout(footer_widget)
+        
+        status_label = QLabel("就绪 | 点击上方模块卡片快速进入对应功能")
+        status_label.setStyleSheet("color: #888; font-size: 11px;")
+        footer_layout.addWidget(status_label)
+        
+        footer_layout.addStretch()
+        
+        link_label = QLabel(
+            '<a href="https://github.com/wangzhidong2/PhysChem-DigitizerP">'
+            '🌐 GitHub 项目主页</a>'
+        )
+        link_label.setTextFormat(Qt.TextFormat.RichText)
+        link_label.setOpenExternalLinks(True)
+        link_label.setStyleSheet("color: #0078d4; font-size: 11px;")
+        link_label.setToolTip("在浏览器中打开 GitHub 仓库页面")
+        footer_layout.addWidget(link_label)
+        
+        copyright_label = QLabel("© 2026 PhysChem-DigitizerP | MIT License")
+        copyright_label.setStyleSheet("color: #999; font-size: 11px;")
+        footer_layout.addWidget(copyright_label)
+        
+        content_layout.addWidget(footer_widget)
+        
+        scroll.setWidget(content_widget)
+        layout.addWidget(scroll)
+        
+        self.setLayout(layout)
+    
+    def create_clickable_module_card(self, module_info, color):
+        """创建可点击的模块卡片"""
+        card = QPushButton()  # 使用 QPushButton 以支持点击事件
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setFixedHeight(100)
+        card.setStyleSheet(f"""
+            QPushButton {{
+                background-color: white;
+                border: 2px solid {color};
+                border-radius: 8px;
+                padding: 10px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                background-color: {color}10;
+                border-color: {color};
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            }}
+            QPushButton:pressed {{
+                background-color: {color}20;
+            }}
+        """)
+        
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(15, 10, 15, 10)
+        
+        # 第一行：图标 + 名称 + 箭头
+        header_layout = QHBoxLayout()
+        icon_label = QLabel(module_info['icon'])
+        icon_label.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        icon_label.setStyleSheet(f"color: {color};")
+        header_layout.addWidget(icon_label)
+        
+        name_label = QLabel(module_info['name'])
+        name_label.setFont(QFont("Microsoft YaHei", 16, QFont.Weight.Bold))
+        name_label.setStyleSheet("color: #333;")
+        header_layout.addWidget(name_label)
+        
+        header_layout.addStretch()
+        arrow_label = QLabel("→")
+        arrow_label.setFont(QFont("Arial", 18))
+        arrow_label.setStyleSheet(f"color: {color};")
+        header_layout.addWidget(arrow_label)
+        
+        card_layout.addLayout(header_layout)
+        
+        # 第二行：描述
+        desc_label = QLabel(module_info['desc'])
+        desc_label.setFont(QFont("Microsoft YaHei", 11))
+        desc_label.setStyleSheet("color: #555;")
+        card_layout.addWidget(desc_label)
+        
+        # 第三行：详细信息
+        detail_label = QLabel(module_info['detail'])
+        detail_label.setFont(QFont("Microsoft YaHei", 9))
+        detail_label.setStyleSheet("color: #888;")
+        card_layout.addWidget(detail_label)
+        
+        # 点击事件：发送信号
+        card.clicked.connect(lambda: self.on_module_clicked(module_info['name']))
+        
+        return card
+    
+    def on_module_clicked(self, module_name):
+        """处理模块卡片点击事件"""
+        self.module_clicked.emit(module_name)
 
 
 class PhSensorWidget(QWidget):
@@ -1615,14 +1900,16 @@ class SidebarWidget(QWidget):
         
         # 图标映射 - 使用物理定义符号字母
         self.icon_map = {
+            "主页": self.create_text_icon("🏠"),       # 主页图标
             "超声波位移": self.create_text_icon("x"),  # 位移符号 x
             "超声波速度": self.create_text_icon("v"),  # 速度符号 v
             "pH传感器": self.create_text_icon("pH"),   # pH符号
             "设置": self.create_text_icon("⚙")        # 设置齿轮符号
         }
         
-        # 添加模块项
+        # 添加模块项（主页放在第一位）
         self.modules = [
+            ("主页", "项目介绍与功能导航"),
             ("超声波位移", "测量物体位移和运动轨迹"),
             ("超声波速度", "回声定位法测量物体速度"),
             ("pH传感器", "测量溶液酸碱度"),
@@ -1987,6 +2274,12 @@ class MainWindow(QMainWindow):
         # 创建各个模块的界面
         self.modules = {}
         
+        # 主页
+        home_page_widget = HomePageWidget()
+        home_page_widget.module_clicked.connect(self.on_home_module_clicked)
+        self.content_stack.addWidget(home_page_widget)
+        self.modules["主页"] = home_page_widget
+        
         # 超声波位移模块
         ultrasonic_widget = UltrasonicWidget()
         self.content_stack.addWidget(ultrasonic_widget)
@@ -2017,6 +2310,19 @@ class MainWindow(QMainWindow):
         """切换模块"""
         if index >= 0:
             self.content_stack.setCurrentIndex(index)
+    
+    def on_home_module_clicked(self, module_name):
+        """处理主页模块卡片点击事件"""
+        # 根据模块名称找到对应的索引
+        module_index = None
+        for i, (name, desc) in enumerate(self.sidebar.modules):
+            if name == module_name:
+                module_index = i
+                break
+        
+        if module_index is not None:
+            self.sidebar.set_current_row(module_index)
+            self.switch_module(module_index)
     
     def change_app_theme(self, theme):
         """切换应用主题"""
