@@ -6,6 +6,20 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 
+## 📦 核心依赖库
+
+| 库 | 版本 | 用途 |
+|----|------|------|
+| **PyQt6** | ≥6.4.0 | 图形界面框架 |
+| **pyserial** | ≥3.5 | 串口通信 |
+| **matplotlib** | ≥3.5.0 | 数据可视化 |
+| **numpy** | ≥1.21.0 | 数值计算 |
+
+安装命令：
+```bash
+pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+```
+
 ## 📖 项目简介
 
 **PhysChem-DigitizerP** 是一个开源的物理化学实验数字化采集系统，旨在为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python + PyQt6）两部分，实现了从传感器数据采集、实时可视化到数据导出的完整功能。
@@ -113,10 +127,7 @@ PhysChem-DigitizerP/
 ├── main.py                    # Python 主程序（PyQt6 界面）
 ├── run.py                     # 启动脚本
 ├── test_serial.py             # 串口连接测试工具
-├── requirements.txt           # Python 依赖包列表
 ├── README.md                  # 主文档（本文件）
-├── README_PYTHON.md           # Python 软件详细文档
-├── TROUBLESHOOTING.md         # 故障排除指南
 ├── .gitignore                 # Git 忽略配置
 ├── LICENSE                    # MIT 许可证
 └── 传感器 arduino 代码/
@@ -129,6 +140,12 @@ PhysChem-DigitizerP/
 ---
 
 ## 🛠️ 软件安装
+
+### 软件特性
+- **Win11 风格界面**：现代化的界面设计，符合 Windows 11 设计语言
+- **侧边栏导航**：支持多个传感器模块的快速切换
+- **响应式布局**：自适应窗口大小，提供良好的用户体验
+- **模块化设计**：便于添加新的传感器模块
 
 #### 1. 环境要求
 
@@ -161,15 +178,9 @@ PhysChem-DigitizerP/
 # 克隆或下载项目到本地
 cd PhysChem-DigitizerP
 
-# 安装依赖包
-pip install -r requirements.txt
+# 安装依赖包（或使用 pip install 手动安装）
+pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 ```
-
-**依赖包说明**：
-- `PyQt6>=6.4.0` - 图形界面框架
-- `pyserial>=3.5` - 串口通信
-- `matplotlib>=3.5.0` - 数据可视化
-- `numpy>=1.21.0` - 数值计算
 
 ---
 
@@ -356,6 +367,113 @@ default_calibration = [
 
 ## 🔍 故障排除
 
+### 问题现象
+软件能打开，但无法连接传感器，无法接收数据。
+
+### 快速诊断步骤
+
+#### 1. 运行串口测试脚本
+```bash
+python test_serial.py
+```
+这个脚本会自动检测所有串口并测试连接状态。
+
+#### 2. 检查硬件连接
+- ✅ **USB 连接**: 确保开发板通过 USB 线正确连接到电脑
+- ✅ **电源指示灯**: 开发板上的电源指示灯应该亮起
+- ✅ **传感器接线**: 检查传感器模块接线是否正确
+
+#### 3. 检查 Arduino 代码
+- ✅ **代码上传**: 确认固件已正确上传到开发板
+- ✅ **波特率**: 确认代码中设置的波特率为 115200
+
+### 详细故障排除
+
+#### 步骤 1: 验证 Arduino 代码工作
+
+1. **使用 Arduino IDE 测试**:
+   - 打开 Arduino IDE
+   - 选择正确的开发板和端口
+   - 打开串口监视器
+   - 设置波特率为 115200
+   - 观察是否能看到 "START" 和后续数据
+
+2. **如果 Arduino IDE 能收到数据**:
+   - 说明硬件和代码都正常
+   - 问题在 Python 软件端
+
+3. **如果 Arduino IDE 收不到数据**:
+   - 检查硬件连接
+   - 重新上传代码
+   - 检查传感器模块是否正常工作
+
+#### 步骤 2: 检查 Python 软件
+
+1. **运行测试脚本**:
+   ```bash
+   python test_serial.py
+   ```
+
+2. **检查依赖包**:
+   ```bash
+   pip list | grep -E "(PyQt6|pyserial|matplotlib|numpy)"
+   ```
+   应该能看到:
+   - PyQt6
+   - pyserial
+   - matplotlib
+   - numpy
+
+3. **检查串口权限 (Windows)**:
+   - 打开设备管理器
+   - 查看 "端口 (COM 和 LPT)"
+   - 确认开发板对应的 COM 端口存在
+
+#### 步骤 3: 软件操作流程
+
+1. **启动软件**:
+   ```bash
+   python run.py
+   ```
+
+2. **正确操作顺序**:
+   - 选择对应的传感器模块
+   - 点击 "刷新" 按钮查看可用串口
+   - 选择正确的 COM 端口
+   - 点击 "连接" 按钮
+   - 状态应显示 "已连接，等待数据..."
+   - 点击 "开始采集"
+   - 观察数据接收
+
+### 常见问题及解决方案
+
+#### 问题 1: "未检测到任何串口设备"
+**原因**: USB 驱动问题或设备未识别
+**解决**:
+- 重新插拔 USB 线
+- 检查设备管理器中的串口设备
+- 安装 CH340G 驱动程序（常用）
+
+#### 问题 2: "串口连接失败"
+**原因**: 串口被占用或权限问题
+**解决**:
+- 关闭 Arduino IDE 和其他可能占用串口的程序
+- 以管理员身份运行 Python 软件
+- 重启电脑
+
+#### 问题 3: "连接成功但无数据"
+**原因**: 波特率不匹配或代码问题
+**解决**:
+- 确认 Arduino 代码波特率为 115200
+- 检查传感器模块是否正常工作
+- 在 Arduino IDE 中测试代码
+
+#### 问题 4: "数据格式错误"
+**原因**: 数据解析问题
+**解决**:
+- 确认数据格式正确
+- 检查是否有额外的空格或特殊字符
+
 ### 常见问题速查
 
 | 问题 | 可能原因 | 解决方案 |
@@ -379,17 +497,43 @@ python test_serial.py
 - 显示接收到的原始数据
 - 提供详细的故障诊断建议
 
-### 详细故障排除
+### 驱动程序安装
 
-更详细的故障排除指南请查看：[TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+#### CH340G 驱动
+1. 下载 CH340G 驱动程序
+2. 安装驱动程序
+3. 重新插拔 USB 线
+4. 在设备管理器中确认设备识别
+
+### 硬件测试
+
+#### 测试传感器模块
+1. 使用万用表测试 VCC 和 GND 电压
+2. 检查信号线连接
+3. 尝试更换传感器模块
+
+#### 测试开发板
+1. 上传简单的 LED 闪烁代码测试开发板
+2. 检查开发板上的指示灯
+3. 尝试更换 USB 线或电脑 USB 端口
+
+### 如果以上方法都无效
+
+1. **提供详细错误信息**:
+   - 运行 `test_serial.py` 的输出
+   - Python 软件中的错误提示
+   - 设备管理器截图
+
+2. **尝试替代方案**:
+   - 使用不同的电脑测试
+   - 尝试不同的 USB 端口
+   - 使用其他串口调试工具
 
 ---
 
 ## 📚 技术文档
 
-- **[Python 软件详细文档](README_PYTHON.md)** - Python 图形界面的完整使用说明
 - **[Arduino 代码说明](传感器 arduino 代码/README.md)** - 传感器固件开发指南
-- **[故障排除指南](TROUBLESHOOTING.md)** - 常见问题和解决方案
 
 ---
 
@@ -403,14 +547,59 @@ python test_serial.py
 2. **软件层**：创建新的 `QWidget` 子类，实现数据采集和显示逻辑
 3. **集成**：在 `MainWindow` 中注册新模块
 
-详细开发指南请参考 [README_PYTHON.md](README_PYTHON.md#扩展开发)
+### 示例代码结构
+
+```python
+class NewSensorWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+    
+    def init_ui(self):
+        # 创建界面布局和控件
+        pass
+
+# 在主窗口中添加
+new_module = NewSensorWidget()
+self.content_stack.addWidget(new_module)
+self.modules["新模块名称"] = new_module
+```
 
 ### 支持的传感器类型（规划）
 
 | 传感器 | 测量物理量 | 状态 |
 |--------|------------|------|
 | HC-SR04 超声波 | 距离/速度 | ✅ 已完成 |
+| pH 传感器 | pH 值 | ✅ 已完成 |
 | 光电门 | 时间/速度 | 🔧 开发中 |
+
+---
+
+## 🖥️ 软件界面说明
+
+### 主界面布局
+- **左侧侧边栏**：模块选择区域
+- **右侧内容区**：当前模块的功能界面
+
+### 通用界面元素
+
+#### 控制面板
+- **串口选择**：选择连接的串口设备
+- **刷新按钮**：刷新可用串口列表
+- **连接/断开按钮**：控制串口连接状态
+- **采样率设置**：部分模块支持调节数据采集频率
+
+#### 实时数据显示
+- **当前数据**：显示最新的测量数据
+- **统计信息**：显示数据点的统计信息
+- **数据记录**：显示详细的数据记录列表
+- **实时图表**：显示数据曲线
+
+#### 控制按钮
+- **开始采集**：开始数据采集
+- **停止采集**：停止数据采集
+- **保存数据**：将数据保存为 CSV 文件
+- **清除数据**：清空当前所有数据
 
 ---
 
@@ -466,7 +655,7 @@ pip install -r requirements.txt
 如有问题或建议，请：
 1. 提交 [GitHub Issue](https://github.com/wangzhidong2/PhysChem-DigitizerP/issues)
 2. 提交 [Gitee Issue](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/issues)
-3. 查看 [故障排除指南](TROUBLESHOOTING.md)
+3. 查看本文件的故障排除章节
 
 ## 🌐 项目地址
 
