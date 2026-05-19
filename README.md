@@ -624,13 +624,10 @@ cd PhysChem-DigitizerP
 # 或克隆 Gitee 镜像（国内用户推荐）
 git clone https://gitee.com/wangzhidong2/PhysChem-DigitizerP.git
 cd PhysChem-DigitizerP
-```
-# 创建虚拟环境（推荐）
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
 
 # 安装依赖
-pip install -r requirements.txt
+pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+```
 
 
 
