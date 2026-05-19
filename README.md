@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
+[![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitee)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
 
 ## 📦 核心依赖库
 
@@ -22,7 +23,7 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 
 ## 📖 项目简介
 
-**PhysChem-DigitizerP** 是一个开源的物理化学实验数字化采集系统，旨在为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python + PyQt6）两部分，实现了从传感器数据采集、实时可视化到数据导出的完整功能。
+**PhysChem-DigitizerP** 是一个开源的物理化学实验数字化采集系统，旨在为中学物理/化学实验室提供低成本的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python + PyQt6）两部分，实现了从传感器数据采集、实时可视化到数据导出的完整功能。
 
 ### 🎯 项目目标
 
@@ -625,6 +626,10 @@ cd PhysChem-DigitizerP
 git clone https://gitee.com/wangzhidong2/PhysChem-DigitizerP.git
 cd PhysChem-DigitizerP
 
+# 或克隆 GitCode 镜像
+git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
+cd PhysChem-DigitizerP
+
 # 安装依赖
 pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 ```
@@ -652,12 +657,14 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 如有问题或建议，请：
 1. 提交 [GitHub Issue](https://github.com/wangzhidong2/PhysChem-DigitizerP/issues)
 2. 提交 [Gitee Issue](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/issues)
-3. 查看本文件的故障排除章节
+3. 提交 [GitCode Issue](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/issues)
+4. 查看本文件的故障排除章节
 
 ## 🌐 项目地址
 
 - **GitHub**: [https://github.com/wangzhidong2/PhysChem-DigitizerP](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 - **Gitee**: [https://gitee.com/wangzhidong2/PhysChem-DigitizerP/](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
+- **GitCode**: [https://gitcode.com/wangzhidong2/PhysChem-DigitizerP](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
 
 ---
 
@@ -665,11 +672,11 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 
 - ✅ **完全开源**：硬件设计 + 软件代码全部开源
 - ✅ **低成本**：单传感器成本<¥30（商业方案通常>¥500）
-- ✅ **高精度**：50Hz 采样率，±0.3cm 测量精度
+- ✅ **高精度**：50Hz 采样率，±0.3cm 测量精度（部分传感器）
 - ✅ **多平台**：支持 ESP32 和 ESP8266 开发板
 - ✅ **易用性**：Win11 风格现代化界面
 - ✅ **可扩展**：支持多种传感器类型
-- ✅ **教育友好**：适合中学和大学物理实验教学
+- ✅ **教育友好**：适合中学物理实验教学
 
 
 
