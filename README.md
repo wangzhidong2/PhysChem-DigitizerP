@@ -125,17 +125,22 @@ GPIO 18     →     ECHO
 
 ```
 PhysChem-DigitizerP/
-├── main.py                    # Python 主程序（PyQt6 界面）
-├── run.py                     # 启动脚本
-├── test_serial.py             # 串口连接测试工具
-├── README.md                  # 主文档（本文件）
-├── .gitignore                 # Git 忽略配置
-├── LICENSE                    # MIT 许可证
-└── 传感器 arduino 代码/
-    ├── README.md              # Arduino 代码说明
-    └── 超声波位移传感器/
-        ├── HC-SR04esp8266.ino # ESP8266 传感器固件
-        └── HC-SR04esp32.ino   # ESP32 传感器固件
+├── main.py                      # Python 主程序（PyQt6 界面）
+├── run.py                       # 启动脚本
+├── test_serial.py               # 串口连接测试工具
+├── README.md                    # 主文档（本文件）
+├── .gitignore                   # Git 忽略配置
+├── LICENSE                      # MIT 许可证
+└── 传感器arduino代码/
+    ├── README.md                # Arduino 代码说明
+    ├── ESP32_ADC_Raw_Data.ino   # 通用 ADC 采集代码
+    ├── 超声波位移传感器/
+    │   ├── HC-SR04esp8266.ino   # ESP8266 传感器固件
+    │   └── HC-SR04esp32.ino     # ESP32 传感器固件
+    └── ph传感器/
+        ├── README.md            # pH 传感器使用说明
+        ├── ph esp32.ino         # ESP32 pH 传感器固件
+        └── PH传感器原理图.pdf    # 传感器接线原理图
 ```
 
 ---
@@ -534,7 +539,7 @@ python test_serial.py
 
 ## 📚 技术文档
 
-- **[Arduino 代码说明](传感器 arduino 代码/README.md)** - 传感器固件开发指南
+- **[Arduino 代码说明](传感器arduino代码/README.md)** - 传感器固件开发指南
 
 ---
 
