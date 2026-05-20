@@ -1,0 +1,98 @@
+name: Check README Sync
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      commit_range:
+        description: 'Commit range to check (e.g., HEAD~1..HEAD)'
+        required: false
+        default: ''
+
+jobs:
+  check-readme:
+    runs-on: ubuntu-latest
+    name: Check README Consistency
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git diff
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Run README sync check
+        id: check
+        run: |
+          chmod +x scripts/check_readme_sync.py
+          if [ -n "${{ inputs.commit_range }}" ]; then
+            python scripts/check_readme_sync.py "${{ inputs.commit_range }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            python scripts/check_readme_sync.py ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            python scripts/check_readme_sync.py ${{ github.event.before }}..${{ github.event.after }}
+          else
+            python scripts/check_readme_sync.py HEAD~1..HEAD
+          fi
+        continue-on-error: true
+      
+      - name: Check for issues
+        id: check-issues
+        run: |
+          # Create a temporary file to capture the output
+          output_file=$(mktemp)
+          if [ -n "${{ inputs.commit_range }}" ]; then
+            python scripts/check_readme_sync.py "${{ inputs.commit_range }}" 2>&1 | tee "$output_file"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            python scripts/check_readme_sync.py ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} 2>&1 | tee "$output_file"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            python scripts/check_readme_sync.py ${{ github.event.before }}..${{ github.event.after }} 2>&1 | tee "$output_file"
+          else
+            python scripts/check_readme_sync.py HEAD~1..HEAD 2>&1 | tee "$output_file"
+          fi
+          
+          # Check if there are files that need README updates
+          if grep -q "需要检查的文件" "$output_file" || grep -q "readme_needs_update" "$output_file"; then
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "📋 检测到可能需要更新README的变更"
+          else
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "✅ 未检测到README同步问题"
+          fi
+          
+          # Save the report
+          mkdir -p artifacts
+          mv "$output_file" artifacts/check_report.txt
+      
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: readme-check-report
+          path: artifacts/
+      
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && steps.check-issues.outputs.needs_update == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('artifacts/check_report.txt', 'utf8');
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## 📋 README一致性检查提醒\n\n检测到代码变更，请检查是否需要同步更新相关README文件。\n\n<details>\n<summary>查看检查报告</summary>\n\n\`\`\`\n${report}\n\`\`\`\n\n</details>\n\n---\n*此评论由自动化检查生成*`
+            });

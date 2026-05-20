@@ -634,6 +634,46 @@ cd PhysChem-DigitizerP
 pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 ```
 
+### README同步检查工具
+
+项目提供了自动化工具来帮助检查代码变更与README文档的一致性：
+
+#### 1. 检查README同步状态
+
+```bash
+# 检查最近一次提交
+python scripts/check_readme_sync.py HEAD~1..HEAD
+
+# 检查当前工作区变更
+python scripts/check_readme_sync.py
+
+# 检查指定提交范围
+python scripts/check_readme_sync.py commit1..commit2
+```
+
+该工具会分析变更的文件，并检查是否需要同步更新相关的README文档。
+
+#### 2. 自动创建README更新PR
+
+当需要更新README时，可以使用辅助工具创建PR：
+
+```bash
+# 先修改README文件，然后运行
+python scripts/create_readme_update_pr.py
+
+# 使用参数自定义
+python scripts/create_readme_update_pr.py \
+    --branch "update-readme-feature" \
+    --title "docs: 更新README以反映新功能" \
+    --files README.md "传感器arduino代码/README.md"
+```
+
+#### 3. GitHub Actions自动检查
+
+项目配置了GitHub Actions工作流，会在push和PR时自动运行README同步检查，并在PR中添加评论提醒。
+
+工作流文件位置：`.github/workflows/check-readme-sync.yml`
+
 
 
 
