@@ -25,6 +25,11 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 
 **PhysChem-DigitizerP** 是一个开源的物理化学实验数字化采集系统，旨在为中学物理/化学实验室提供低成本的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python + PyQt6）两部分，实现了从传感器数据采集、实时可视化到数据导出的完整功能。
 
+<p align="center">
+  <img src="docs/images/home.png" alt="主界面" width="800"/>
+</p>
+<p align="center">图1: 软件主界面 — 模块导航与项目概览</p>
+
 ### 🎯 项目目标
 
 - **低成本替代**：为昂贵的商业理化实验传感器提供经济实惠的开源替代方案
@@ -95,16 +100,31 @@ GPIO 18     →     ECHO
    - 数据统计（平均值、最大值、最小值）
    - CSV 格式数据导出
 
+<p align="center">
+  <img src="docs/images/displacement.png" alt="超声波位移" width="800"/>
+</p>
+<p align="center">图2: 超声波位移测量界面</p>
+
 2. **速度测量模块**
    - 基于连续距离测量的速度计算
    - 双图表显示（距离 - 时间、速度 - 时间）
    - 速度统计分析
+
+<p align="center">
+  <img src="docs/images/velocity.png" alt="超声波速度" width="800"/>
+</p>
+<p align="center">图3: 超声波速度测量界面</p>
 
 3. **pH 传感器模块**
    - 三点校准功能（pH 4.00/6.86/9.18）
    - 实时 pH 值显示和曲线绘制
    - Python 程序内校准（非模块校准）
    - 数据统计（平均值、标准差）
+
+<p align="center">
+  <img src="docs/images/ph_sensor.png" alt="pH传感器" width="800"/>
+</p>
+<p align="center">图4: pH 传感器测量界面（含三点校准）</p>
 
 4. **现代化界面**
    - Win11 风格设计语言
@@ -586,6 +606,11 @@ self.modules["新模块名称"] = new_module
 ### 主界面布局
 - **左侧侧边栏**：模块选择区域
 - **右侧内容区**：当前模块的功能界面
+
+<p align="center">
+  <img src="docs/images/settings.png" alt="设置界面" width="800"/>
+</p>
+<p align="center">图5: 设置界面 — 外观主题切换</p>
 
 ### 通用界面元素
 
