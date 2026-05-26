@@ -58,6 +58,8 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 
 ### HC-SR04 超声波传感器接线
 
+> 📖 详细接线说明和注意事项请参考：[超声波位移传感器使用说明](传感器arduino代码/超声波位移传感器/README.md)
+
 **ESP8266 (WeMOS D1) 连接：**
 ```
 WeMOS D1          HC-SR04
@@ -120,6 +122,8 @@ GPIO 18     →     ECHO
    - 实时 pH 值显示和曲线绘制
    - Python 程序内校准（非模块校准）
    - 数据统计（平均值、标准差）
+
+> 📖 详细接线、校准方法和电极保养请参考：[pH 传感器使用说明](传感器arduino代码/ph传感器/README.md)
 
 <p align="center">
   <img src="docs/images/ph_sensor.png" alt="pH传感器" width="800"/>
@@ -559,7 +563,9 @@ python test_serial.py
 
 ## 📚 技术文档
 
-- **[Arduino 代码说明](传感器arduino代码/README.md)** - 传感器固件开发指南
+- **[Arduino 代码说明](传感器arduino代码/README.md)** - 传感器固件开发指南、目录结构与代码规范
+- **[超声波位移传感器使用说明](传感器arduino代码/超声波位移传感器/README.md)** - HC-SR04 接线指南、固件说明、校准方法与性能优化
+- **[pH 传感器使用说明](传感器arduino代码/ph传感器/README.md)** - pH 传感器接线、三点校准步骤、电极保养与常见问题
 
 ---
 
