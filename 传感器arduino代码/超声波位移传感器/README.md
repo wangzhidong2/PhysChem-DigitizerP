@@ -13,7 +13,7 @@
 
 ## 🔌 接线指南
 
-### ESP32 接线方式
+### ESP32 s3 接线方式
 
 ```
 ESP32 开发板        HC-SR04 模块
@@ -21,7 +21,7 @@ ESP32 开发板        HC-SR04 模块
    5V (VIN)      →      VCC
    GND           →      GND
    GPIO5         →      TRIG (触发)
-   GPIO18        →      ECHO (回波)
+   GPIO6        →      ECHO (回波)
 ```
 
 **固件代码**: [HC-SR04esp32.ino](HC-SR04esp32.ino)
