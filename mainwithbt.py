@@ -34,6 +34,75 @@ except ImportError:
 
 import threading
 
+# ============================================================
+# 统一配置管理 — 所有传感器校准配置保存在同一个 JSON 文件
+# ============================================================
+CONFIG_FILENAME = 'sensor_config.json'
+
+
+def _get_config_file_path():
+    """获取统一配置文件的绝对路径"""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILENAME)
+
+
+def load_sensor_config(module_name):
+    """从统一配置文件中读取指定模块的配置
+    
+    Args:
+        module_name: 模块名称，如 'ph_sensor'、'force_sensor'
+    
+    Returns:
+        dict: 该模块的配置字典，不存在则返回空字典
+    """
+    config_path = _get_config_file_path()
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                all_config = json.load(f)
+            module_config = all_config.get(module_name, {})
+            if module_config:
+                print(f"✓ 已加载 [{module_name}] 配置")
+            else:
+                print(f"ℹ️ [{module_name}] 无已保存配置，使用默认值")
+            return module_config
+        else:
+            print(f"ℹ️ 配置文件不存在：{config_path}，所有模块使用默认值")
+            return {}
+    except Exception as e:
+        print(f"⚠️ 读取配置文件失败：{e}")
+        return {}
+
+
+def save_sensor_config(module_name, config_dict):
+    """将指定模块的配置写入统一配置文件
+    
+    Args:
+        module_name: 模块名称，如 'ph_sensor'、'force_sensor'
+        config_dict: 该模块的配置字典
+    
+    Returns:
+        bool: 是否保存成功
+    """
+    config_path = _get_config_file_path()
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                all_config = json.load(f)
+        else:
+            all_config = {}
+        
+        all_config[module_name] = config_dict
+        
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(all_config, f, ensure_ascii=False, indent=2)
+        
+        print(f"✓ [{module_name}] 配置已保存到 {config_path}")
+        return True
+    except Exception as e:
+        print(f"⚠️ 保存 [{module_name}] 配置失败：{e}")
+        return False
+
+
 # 设置 matplotlib 全局字体为微软雅黑
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
 plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
@@ -1204,46 +1273,27 @@ class PhSensorWidget(QWidget):
         self.init_ui()
     
     def get_config_path(self):
-        """获取配置文件路径"""
-        # 配置文件保存在程序同目录下
-        config_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(config_dir, 'ph_sensor_config.json')
+        """获取配置文件路径（已废弃，保留兼容）"""
+        return _get_config_file_path()
     
     def load_config(self):
-        """加载配置文件"""
-        config_path = self.get_config_path()
-        
-        try:
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                print(f"✓ 已加载配置文件：{config_path}")
-                return config
-            else:
-                print(f"ℹ️ 配置文件不存在，使用默认配置：{config_path}")
-                return {}
-        except Exception as e:
-            print(f"⚠️ 加载配置文件失败：{e}，使用默认配置")
-            return {}
+        """加载 pH 传感器配置"""
+        config = load_sensor_config('ph_sensor')
+        if config:
+            self.sample_interval_ms = config.get('sample_interval_ms', 100)
+            default_calibration = [
+                (4.00, 2555), (6.86, 2281), (9.18, 2030)
+            ]
+            self.calibration_points = config.get('calibration_points', default_calibration)
+        return config
     
     def save_config(self):
-        """保存配置文件"""
-        config_path = self.get_config_path()
-        
-        try:
-            config = {
-                'calibration_points': self.calibration_points,
-                'sample_interval_ms': self.sample_interval_ms
-            }
-            
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-            
-            print(f"✓ 配置已保存：{config_path}")
-            return True
-        except Exception as e:
-            print(f"⚠️ 保存配置文件失败：{e}")
-            return False
+        """保存 pH 传感器配置"""
+        config = {
+            'calibration_points': self.calibration_points,
+            'sample_interval_ms': self.sample_interval_ms
+        }
+        return save_sensor_config('ph_sensor', config)
     
     def calculate_calibration_coefficients(self):
         """计算三点校准的二次拟合系数"""
@@ -1763,39 +1813,30 @@ class ForceSensorWidget(QWidget):
         self.flask_server = server
     
     def get_config_path(self):
-        config_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(config_dir, 'force_sensor_config.json')
+        """获取配置文件路径（已废弃，保留兼容）"""
+        return _get_config_file_path()
     
     def load_config(self):
-        config_path = self.get_config_path()
-        try:
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                print(f"✓ 已加载力传感器配置：{config_path}")
-                return config
-            return {}
-        except Exception as e:
-            print(f"⚠️ 加载力传感器配置失败：{e}")
-            return {}
+        """加载力传感器配置"""
+        config = load_sensor_config('force_sensor')
+        if config:
+            self.offset = config.get('offset', 0)
+            self.scale = config.get('scale', 1.0)
+            self.calibrated = config.get('calibrated', False)
+            self.cal_known_weight = config.get('cal_known_weight', 100.0)
+            self.current_unit = config.get('unit', 'g')
+        return config
     
     def save_config(self):
-        config_path = self.get_config_path()
-        try:
-            config = {
-                'offset': self.offset,
-                'scale': self.scale,
-                'calibrated': self.calibrated,
-                'cal_known_weight': self.cal_known_weight,
-                'unit': self.current_unit
-            }
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-            print(f"✓ 力传感器配置已保存：{config_path}")
-            return True
-        except Exception as e:
-            print(f"⚠️ 保存力传感器配置失败：{e}")
-            return False
+        """保存力传感器配置"""
+        config = {
+            'offset': self.offset,
+            'scale': self.scale,
+            'calibrated': self.calibrated,
+            'cal_known_weight': self.cal_known_weight,
+            'unit': self.current_unit
+        }
+        return save_sensor_config('force_sensor', config)
     
     def init_ui(self):
         layout = QVBoxLayout()
