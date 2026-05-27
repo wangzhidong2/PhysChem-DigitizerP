@@ -19,12 +19,6 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
 import serial
 import serial.tools.list_ports
-import asyncio
-try:
-    from bleak import BleakClient, BleakScanner
-    BLE_AVAILABLE = True
-except ImportError:
-    BLE_AVAILABLE = False
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -73,154 +67,44 @@ class SerialThread(QThread):
             self.serial.close()
 
 
-# BLE NUS 服务 UUID（与 ESP32-S3 端代码一致）
-BLE_NUS_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-BLE_NUS_TX_UUID      = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-BLE_NUS_RX_UUID      = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-
-
-class BLESerialThread(QThread):
-    """BLE 串口通信线程 — 基于 bleak 库连接 ESP32-S3 的 NUS 服务"""
-    data_received = pyqtSignal(str)
-    connection_status = pyqtSignal(str)
-
-    def __init__(self, device_address, device_name=""):
-        super().__init__()
-        self.device_address = device_address
-        self.device_name = device_name
-        self.running = False
-        self._loop = None
-        self._buffer = ""
-
-    def run(self):
-        if not BLE_AVAILABLE:
-            self.data_received.emit("ERROR:bleak 库未安装，请运行 pip install bleak")
-            return
-
-        self.running = True
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-
-        try:
-            self._loop.run_until_complete(self._ble_loop())
-        except Exception as e:
-            self.data_received.emit(f"ERROR:BLE 连接错误: {e}")
-        finally:
-            self._loop.close()
-
-    async def _ble_loop(self):
-        async with BleakClient(self.device_address) as client:
-            if client.is_connected:
-                self.connection_status.emit("connected")
-                self.data_received.emit("START")
-            else:
-                self.data_received.emit("ERROR:无法连接 BLE 设备")
-                return
-
-            def notification_handler(sender, data):
-                text = data.decode('utf-8', errors='ignore')
-                self._buffer += text
-                while '\n' in self._buffer:
-                    line, self._buffer = self._buffer.split('\n', 1)
-                    line = line.strip()
-                    if line:
-                        self.data_received.emit(line)
-
-            await client.start_notify(BLE_NUS_TX_UUID, notification_handler)
-
-            while self.running and client.is_connected:
-                await asyncio.sleep(0.1)
-
-            await client.stop_notify(BLE_NUS_TX_UUID)
-
-    def stop(self):
-        self.running = False
-
-
-def scan_ble_devices():
-    """扫描附近的 BLE 设备，返回 [(名称, 地址), ...]"""
-    if not BLE_AVAILABLE:
-        return []
-
-    loop = asyncio.new_event_loop()
-    try:
-        devices = loop.run_until_complete(
-            BleakScanner.discover(timeout=3.0)
-        )
-        result = []
-        for d in devices:
-            name = d.name or "未知设备"
-            result.append((name, d.address))
-        return sorted(result, key=lambda x: x[0])
-    except Exception as e:
-        print(f"BLE 扫描错误: {e}")
-        return []
-    finally:
-        loop.close()
-
-
 class UltrasonicWidget(QWidget):
-    """超声波位移模块界面 — 支持有线串口和 BLE 无线连接"""
+    """超声波位移模块界面"""
     
     def __init__(self):
         super().__init__()
         self.serial_thread = None
-        self.ble_thread = None
-        self.connection_mode = "serial"
         self.data_points = []
         self.timestamps = []
         self.start_time = None
-        self.start_timestamp_us = 0
+        self.start_timestamp_us = 0  # 记录第一个数据点的时间戳
         self.init_ui()
     
     def init_ui(self):
         layout = QVBoxLayout()
         
+        # 控制面板
         control_group = QGroupBox("控制面板")
         control_layout = QHBoxLayout()
         
-        control_layout.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("有线串口")
-        self.mode_combo.addItem("BLE 蓝牙")
-        if not BLE_AVAILABLE:
-            self.mode_combo.model().item(1).setEnabled(False)
-            self.mode_combo.model().item(1).setText("BLE 蓝牙 (未安装 bleak)")
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        control_layout.addWidget(self.mode_combo)
-        
-        self.serial_panel = QWidget()
-        serial_layout = QHBoxLayout(self.serial_panel)
-        serial_layout.setContentsMargins(0, 0, 0, 0)
-        serial_layout.addWidget(QLabel("串口:"))
+        # 串口选择
+        control_layout.addWidget(QLabel("串口:"))
         self.port_combo = QComboBox()
         self.refresh_ports()
-        serial_layout.addWidget(self.port_combo)
+        control_layout.addWidget(self.port_combo)
+        
+        # 刷新按钮
         self.refresh_btn = QPushButton("刷新")
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        serial_layout.addWidget(self.refresh_btn)
+        control_layout.addWidget(self.refresh_btn)
         
-        self.ble_panel = QWidget()
-        ble_layout = QHBoxLayout(self.ble_panel)
-        ble_layout.setContentsMargins(0, 0, 0, 0)
-        ble_layout.addWidget(QLabel("BLE 设备:"))
-        self.ble_combo = QComboBox()
-        self.ble_combo.addItem("点击扫描...")
-        ble_layout.addWidget(self.ble_combo)
-        self.ble_scan_btn = QPushButton("扫描")
-        self.ble_scan_btn.clicked.connect(self.scan_ble)
-        ble_layout.addWidget(self.ble_scan_btn)
-        self.ble_panel.hide()
-        
-        control_layout.addWidget(self.serial_panel)
-        control_layout.addWidget(self.ble_panel)
-        
+        # 连接按钮
         self.connect_btn = QPushButton("连接")
         self.connect_btn.clicked.connect(self.toggle_connection)
         control_layout.addWidget(self.connect_btn)
         
         control_layout.addStretch()
         
+        # 采样率设置
         control_layout.addWidget(QLabel("采样率:"))
         self.sample_rate_spin = QSpinBox()
         self.sample_rate_spin.setRange(1, 100)
@@ -231,19 +115,24 @@ class UltrasonicWidget(QWidget):
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
         
+        # 数据显示区域
         data_group = QGroupBox("实时数据")
         data_layout = QHBoxLayout()
         
+        # 左侧：文本数据显示
         text_widget = QWidget()
         text_layout = QVBoxLayout()
         
+        # 当前数据
         self.current_data_label = QLabel("当前数据: 等待连接...")
         self.current_data_label.setFont(QFont("Arial", 12))
         text_layout.addWidget(self.current_data_label)
         
+        # 数据统计
         self.stats_label = QLabel("统计信息: 暂无数据")
         text_layout.addWidget(self.stats_label)
         
+        # 数据记录
         self.data_text = QTextEdit()
         self.data_text.setMaximumHeight(150)
         text_layout.addWidget(QLabel("数据记录:"))
@@ -252,6 +141,7 @@ class UltrasonicWidget(QWidget):
         text_widget.setLayout(text_layout)
         data_layout.addWidget(text_widget)
         
+        # 右侧：图表显示
         self.figure = Figure(figsize=(8, 6))
         self.canvas = FigureCanvas(self.figure)
         data_layout.addWidget(self.canvas)
@@ -259,6 +149,7 @@ class UltrasonicWidget(QWidget):
         data_group.setLayout(data_layout)
         layout.addWidget(data_group)
         
+        # 控制按钮
         button_layout = QHBoxLayout()
         
         self.start_btn = QPushButton("开始采集")
@@ -285,100 +176,51 @@ class UltrasonicWidget(QWidget):
         
         self.setLayout(layout)
         
+        # 定时器用于更新图表
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_chart)
-        self.timer.start(100)
-    
-    def on_mode_changed(self, index):
-        if index == 0:
-            self.connection_mode = "serial"
-            self.serial_panel.show()
-            self.ble_panel.hide()
-        else:
-            self.connection_mode = "ble"
-            self.serial_panel.hide()
-            self.ble_panel.show()
-    
-    def scan_ble(self):
-        self.ble_scan_btn.setText("扫描中...")
-        self.ble_scan_btn.setEnabled(False)
-        QApplication.processEvents()
-        devices = scan_ble_devices()
-        self.ble_combo.clear()
-        if devices:
-            for name, addr in devices:
-                self.ble_combo.addItem(f"{name} ({addr})", addr)
-        else:
-            self.ble_combo.addItem("未发现设备")
-        self.ble_scan_btn.setText("扫描")
-        self.ble_scan_btn.setEnabled(True)
+        self.timer.start(100)  # 每100ms更新一次图表
     
     def refresh_ports(self):
+        """刷新可用串口列表"""
         self.port_combo.clear()
         ports = serial.tools.list_ports.comports()
         for port in ports:
             self.port_combo.addItem(port.device)
     
     def toggle_connection(self):
-        if (self.serial_thread and self.serial_thread.isRunning()) or \
-           (self.ble_thread and self.ble_thread.isRunning()):
-            self.disconnect_all()
+        """切换串口连接状态"""
+        if self.serial_thread and self.serial_thread.isRunning():
+            self.disconnect_serial()
         else:
-            self.connect_device()
-    
-    def connect_device(self):
-        if self.connection_mode == "serial":
             self.connect_serial()
-        else:
-            self.connect_ble()
     
     def connect_serial(self):
+        """连接串口"""
         port = self.port_combo.currentText()
         if not port:
             QMessageBox.warning(self, "错误", "请选择串口")
             return
+        
         try:
             self.serial_thread = SerialThread(port)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            
             self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
-            self.current_data_label.setText("当前数据: 已连接(串口)，等待数据...")
+            self.current_data_label.setText("当前数据: 已连接，等待数据...")
+            
         except Exception as e:
             QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
     
-    def connect_ble(self):
-        if not BLE_AVAILABLE:
-            QMessageBox.warning(self, "错误", "bleak 库未安装，请运行: pip install bleak")
-            return
-        addr = self.ble_combo.currentData()
-        if not addr:
-            QMessageBox.warning(self, "错误", "请先扫描并选择 BLE 设备")
-            return
-        try:
-            self.ble_thread = BLESerialThread(addr)
-            self.ble_thread.data_received.connect(self.handle_data)
-            self.ble_thread.connection_status.connect(self.on_ble_status)
-            self.ble_thread.start()
-            self.connect_btn.setText("断开")
-            self.start_btn.setEnabled(True)
-            self.current_data_label.setText("当前数据: 正在连接 BLE...")
-        except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"无法连接 BLE: {e}")
-    
-    def on_ble_status(self, status):
-        if status == "connected":
-            self.current_data_label.setText("当前数据: 已连接(BLE)，等待数据...")
-    
-    def disconnect_all(self):
+    def disconnect_serial(self):
+        """断开串口连接"""
         if self.serial_thread:
             self.serial_thread.stop()
             self.serial_thread.wait()
             self.serial_thread = None
-        if self.ble_thread:
-            self.ble_thread.stop()
-            self.ble_thread.wait()
-            self.ble_thread = None
+        
         self.connect_btn.setText("连接")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
@@ -407,11 +249,13 @@ class UltrasonicWidget(QWidget):
     
     def handle_data(self, data):
         """处理接收到的数据"""
+        # 检查是否是错误信息
         if data.startswith("ERROR:"):
-            QMessageBox.critical(self, "连接错误", data[6:])
-            self.disconnect_all()
+            QMessageBox.critical(self, "串口错误", data[6:])
+            self.disconnect_serial()
             return
         
+        # 检查是否是启动信号
         if data == "START":
             self.current_data_label.setText("当前数据: 设备已启动，等待数据...")
             return
@@ -534,68 +378,44 @@ class UltrasonicWidget(QWidget):
 
 
 class UltrasonicVelocityWidget(QWidget):
-    """超声波速度模块界面 - 回声定位法 — 支持有线串口和 BLE 无线连接"""
+    """超声波速度模块界面 - 回声定位法"""
     
     def __init__(self):
         super().__init__()
         self.serial_thread = None
-        self.ble_thread = None
-        self.connection_mode = "serial"
-        self.distance_data = []
-        self.time_data = []
-        self.velocity_data = []
-        self.echo_time_data = []
+        self.distance_data = []    # 距离数据
+        self.time_data = []        # 时间数据
+        self.velocity_data = []    # 速度数据
+        self.echo_time_data = []   # 原始回波时间数据 (µs)
         self.start_timestamp_us = 0
         self.init_ui()
     
     def init_ui(self):
         layout = QVBoxLayout()
         
+        # 控制面板
         control_group = QGroupBox("控制面板")
         control_layout = QHBoxLayout()
         
-        control_layout.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("有线串口")
-        self.mode_combo.addItem("BLE 蓝牙")
-        if not BLE_AVAILABLE:
-            self.mode_combo.model().item(1).setEnabled(False)
-            self.mode_combo.model().item(1).setText("BLE 蓝牙 (未安装 bleak)")
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        control_layout.addWidget(self.mode_combo)
-        
-        self.serial_panel = QWidget()
-        serial_layout = QHBoxLayout(self.serial_panel)
-        serial_layout.setContentsMargins(0, 0, 0, 0)
-        serial_layout.addWidget(QLabel("串口:"))
+        # 串口选择
+        control_layout.addWidget(QLabel("串口:"))
         self.port_combo = QComboBox()
         self.refresh_ports()
-        serial_layout.addWidget(self.port_combo)
+        control_layout.addWidget(self.port_combo)
+        
+        # 刷新按钮
         self.refresh_btn = QPushButton("刷新")
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        serial_layout.addWidget(self.refresh_btn)
+        control_layout.addWidget(self.refresh_btn)
         
-        self.ble_panel = QWidget()
-        ble_layout = QHBoxLayout(self.ble_panel)
-        ble_layout.setContentsMargins(0, 0, 0, 0)
-        ble_layout.addWidget(QLabel("BLE 设备:"))
-        self.ble_combo = QComboBox()
-        self.ble_combo.addItem("点击扫描...")
-        ble_layout.addWidget(self.ble_combo)
-        self.ble_scan_btn = QPushButton("扫描")
-        self.ble_scan_btn.clicked.connect(self.scan_ble)
-        ble_layout.addWidget(self.ble_scan_btn)
-        self.ble_panel.hide()
-        
-        control_layout.addWidget(self.serial_panel)
-        control_layout.addWidget(self.ble_panel)
-        
+        # 连接按钮
         self.connect_btn = QPushButton("连接")
         self.connect_btn.clicked.connect(self.toggle_connection)
         control_layout.addWidget(self.connect_btn)
         
         control_layout.addStretch()
         
+        # 速度计算参数
         control_layout.addWidget(QLabel("采样窗口:"))
         self.window_size_spin = QSpinBox()
         self.window_size_spin.setRange(5, 100)
@@ -606,19 +426,24 @@ class UltrasonicVelocityWidget(QWidget):
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
         
+        # 数据显示区域
         data_group = QGroupBox("实时数据")
         data_layout = QHBoxLayout()
         
+        # 左侧：文本数据显示
         text_widget = QWidget()
         text_layout = QVBoxLayout()
         
+        # 当前数据
         self.current_data_label = QLabel("当前数据: 等待连接...")
         self.current_data_label.setFont(QFont("Arial", 12))
         text_layout.addWidget(self.current_data_label)
         
+        # 速度统计
         self.velocity_stats_label = QLabel("速度统计: 暂无数据")
         text_layout.addWidget(self.velocity_stats_label)
         
+        # 数据记录
         self.data_text = QTextEdit()
         self.data_text.setMaximumHeight(150)
         text_layout.addWidget(QLabel("速度记录:"))
@@ -627,6 +452,7 @@ class UltrasonicVelocityWidget(QWidget):
         text_widget.setLayout(text_layout)
         data_layout.addWidget(text_widget)
         
+        # 右侧：图表显示
         self.figure = Figure(figsize=(8, 6))
         self.canvas = FigureCanvas(self.figure)
         data_layout.addWidget(self.canvas)
@@ -634,6 +460,7 @@ class UltrasonicVelocityWidget(QWidget):
         data_group.setLayout(data_layout)
         layout.addWidget(data_group)
         
+        # 控制按钮
         button_layout = QHBoxLayout()
         
         self.start_btn = QPushButton("开始采集")
@@ -660,100 +487,51 @@ class UltrasonicVelocityWidget(QWidget):
         
         self.setLayout(layout)
         
+        # 定时器用于更新图表
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_chart)
-        self.timer.start(100)
-    
-    def on_mode_changed(self, index):
-        if index == 0:
-            self.connection_mode = "serial"
-            self.serial_panel.show()
-            self.ble_panel.hide()
-        else:
-            self.connection_mode = "ble"
-            self.serial_panel.hide()
-            self.ble_panel.show()
-    
-    def scan_ble(self):
-        self.ble_scan_btn.setText("扫描中...")
-        self.ble_scan_btn.setEnabled(False)
-        QApplication.processEvents()
-        devices = scan_ble_devices()
-        self.ble_combo.clear()
-        if devices:
-            for name, addr in devices:
-                self.ble_combo.addItem(f"{name} ({addr})", addr)
-        else:
-            self.ble_combo.addItem("未发现设备")
-        self.ble_scan_btn.setText("扫描")
-        self.ble_scan_btn.setEnabled(True)
+        self.timer.start(100)  # 每100ms更新一次图表
     
     def refresh_ports(self):
+        """刷新可用串口列表"""
         self.port_combo.clear()
         ports = serial.tools.list_ports.comports()
         for port in ports:
             self.port_combo.addItem(port.device)
     
     def toggle_connection(self):
-        if (self.serial_thread and self.serial_thread.isRunning()) or \
-           (self.ble_thread and self.ble_thread.isRunning()):
-            self.disconnect_all()
+        """切换串口连接状态"""
+        if self.serial_thread and self.serial_thread.isRunning():
+            self.disconnect_serial()
         else:
-            self.connect_device()
-    
-    def connect_device(self):
-        if self.connection_mode == "serial":
             self.connect_serial()
-        else:
-            self.connect_ble()
     
     def connect_serial(self):
+        """连接串口"""
         port = self.port_combo.currentText()
         if not port:
             QMessageBox.warning(self, "错误", "请选择串口")
             return
+        
         try:
             self.serial_thread = SerialThread(port)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            
             self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
-            self.current_data_label.setText("当前数据: 已连接(串口)，等待数据...")
+            self.current_data_label.setText("当前数据: 已连接，等待数据...")
+            
         except Exception as e:
             QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
     
-    def connect_ble(self):
-        if not BLE_AVAILABLE:
-            QMessageBox.warning(self, "错误", "bleak 库未安装，请运行: pip install bleak")
-            return
-        addr = self.ble_combo.currentData()
-        if not addr:
-            QMessageBox.warning(self, "错误", "请先扫描并选择 BLE 设备")
-            return
-        try:
-            self.ble_thread = BLESerialThread(addr)
-            self.ble_thread.data_received.connect(self.handle_data)
-            self.ble_thread.connection_status.connect(self.on_ble_status)
-            self.ble_thread.start()
-            self.connect_btn.setText("断开")
-            self.start_btn.setEnabled(True)
-            self.current_data_label.setText("当前数据: 正在连接 BLE...")
-        except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"无法连接 BLE: {e}")
-    
-    def on_ble_status(self, status):
-        if status == "connected":
-            self.current_data_label.setText("当前数据: 已连接(BLE)，等待数据...")
-    
-    def disconnect_all(self):
+    def disconnect_serial(self):
+        """断开串口连接"""
         if self.serial_thread:
             self.serial_thread.stop()
             self.serial_thread.wait()
             self.serial_thread = None
-        if self.ble_thread:
-            self.ble_thread.stop()
-            self.ble_thread.wait()
-            self.ble_thread = None
+        
         self.connect_btn.setText("连接")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
@@ -783,11 +561,13 @@ class UltrasonicVelocityWidget(QWidget):
     
     def handle_data(self, data):
         """处理接收到的数据 - 回声定位法计算速度"""
+        # 检查是否是错误信息
         if data.startswith("ERROR:"):
-            QMessageBox.critical(self, "连接错误", data[6:])
-            self.disconnect_all()
+            QMessageBox.critical(self, "串口错误", data[6:])
+            self.disconnect_serial()
             return
         
+        # 检查是否是启动信号
         if data == "START":
             self.current_data_label.setText("当前数据: 设备已启动，等待数据...")
             return
@@ -1054,6 +834,12 @@ class HomePageWidget(QWidget):
                 'icon': 'v',
                 'desc': '回声定位法测量物体速度',
                 'detail': '双图表显示 | 速度统计分析 | 瞬时速度计算'
+            },
+            {
+                'name': '力传感器',
+                'icon': 'F',
+                'desc': 'HX711力/质量传感器测量',
+                'detail': '24位高精度ADC | 去皮校准 | 实时质量测量'
             }
         ]
         
@@ -1256,30 +1042,33 @@ class HomePageWidget(QWidget):
 
 
 class PhSensorWidget(QWidget):
-    """pH传感器模块界面 - 支持三点校准 — 支持有线串口和 BLE 无线连接"""
+    """pH传感器模块界面 - 支持三点校准"""
     
     def __init__(self):
         super().__init__()
         self.serial_thread = None
-        self.ble_thread = None
-        self.connection_mode = "serial"
-        self.ph_data = []
-        self.time_data = []
-        self.adc_data = []
+        self.ph_data = []          # pH 值数据
+        self.time_data = []        # 时间数据
+        self.adc_data = []         # 原始 ADC 数据
         self.start_timestamp_ms = 0
         
-        self.sample_interval_ms = 100
-        self.last_sample_time_ms = 0
+        # 采样频率设置（毫秒）
+        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        self.last_sample_time_ms = 0   # 上次采样时间
         
+        # 加载保存的配置
         self.config = self.load_config()
         
+        # 三点校准参数 (pH, ADC) - 在 init_ui() 之前定义
+        # 优先使用保存的配置，如果没有则使用默认值
         default_calibration = [
-            (4.00, 2555),
-            (6.86, 2281),
-            (9.18, 2030)
+            (4.00, 2555),   # 酸性缓冲液
+            (6.86, 2281),   # 中性缓冲液
+            (9.18, 2030)    # 碱性缓冲液
         ]
         self.calibration_points = self.config.get('calibration_points', default_calibration)
         
+        # 计算校准系数（二次拟合）
         self.calculate_calibration_coefficients()
         
         self.init_ui()
@@ -1349,45 +1138,22 @@ class PhSensorWidget(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
         
+        # 控制面板
         control_group = QGroupBox("控制面板")
         control_layout = QHBoxLayout()
         
-        control_layout.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("有线串口")
-        self.mode_combo.addItem("BLE 蓝牙")
-        if not BLE_AVAILABLE:
-            self.mode_combo.model().item(1).setEnabled(False)
-            self.mode_combo.model().item(1).setText("BLE 蓝牙 (未安装 bleak)")
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        control_layout.addWidget(self.mode_combo)
-        
-        self.serial_panel = QWidget()
-        serial_layout = QHBoxLayout(self.serial_panel)
-        serial_layout.setContentsMargins(0, 0, 0, 0)
-        serial_layout.addWidget(QLabel("串口:"))
+        # 串口选择
+        control_layout.addWidget(QLabel("串口:"))
         self.port_combo = QComboBox()
         self.refresh_ports()
-        serial_layout.addWidget(self.port_combo)
+        control_layout.addWidget(self.port_combo)
+        
+        # 刷新按钮
         self.refresh_btn = QPushButton("刷新")
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        serial_layout.addWidget(self.refresh_btn)
+        control_layout.addWidget(self.refresh_btn)
         
-        self.ble_panel = QWidget()
-        ble_layout = QHBoxLayout(self.ble_panel)
-        ble_layout.setContentsMargins(0, 0, 0, 0)
-        ble_layout.addWidget(QLabel("BLE 设备:"))
-        self.ble_combo = QComboBox()
-        self.ble_combo.addItem("点击扫描...")
-        ble_layout.addWidget(self.ble_combo)
-        self.ble_scan_btn = QPushButton("扫描")
-        self.ble_scan_btn.clicked.connect(self.scan_ble)
-        ble_layout.addWidget(self.ble_scan_btn)
-        self.ble_panel.hide()
-        
-        control_layout.addWidget(self.serial_panel)
-        control_layout.addWidget(self.ble_panel)
-        
+        # 连接按钮
         self.connect_btn = QPushButton("连接")
         self.connect_btn.clicked.connect(self.toggle_connection)
         control_layout.addWidget(self.connect_btn)
@@ -1541,99 +1307,47 @@ class PhSensorWidget(QWidget):
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)
     
-    def on_mode_changed(self, index):
-        if index == 0:
-            self.connection_mode = "serial"
-            self.serial_panel.show()
-            self.ble_panel.hide()
-        else:
-            self.connection_mode = "ble"
-            self.serial_panel.hide()
-            self.ble_panel.show()
-    
-    def scan_ble(self):
-        self.ble_scan_btn.setText("扫描中...")
-        self.ble_scan_btn.setEnabled(False)
-        QApplication.processEvents()
-        devices = scan_ble_devices()
-        self.ble_combo.clear()
-        if devices:
-            for name, addr in devices:
-                self.ble_combo.addItem(f"{name} ({addr})", addr)
-        else:
-            self.ble_combo.addItem("未发现设备")
-        self.ble_scan_btn.setText("扫描")
-        self.ble_scan_btn.setEnabled(True)
-    
     def refresh_ports(self):
+        """刷新可用串口列表"""
         self.port_combo.clear()
         ports = serial.tools.list_ports.comports()
         for port in ports:
             self.port_combo.addItem(port.device)
     
     def toggle_connection(self):
-        if (self.serial_thread and self.serial_thread.isRunning()) or \
-           (self.ble_thread and self.ble_thread.isRunning()):
-            self.disconnect_all()
+        """切换串口连接状态"""
+        if self.serial_thread and self.serial_thread.isRunning():
+            self.disconnect_serial()
         else:
-            self.connect_device()
-    
-    def connect_device(self):
-        if self.connection_mode == "serial":
             self.connect_serial()
-        else:
-            self.connect_ble()
     
     def connect_serial(self):
+        """连接串口"""
         port = self.port_combo.currentText()
         if not port:
             QMessageBox.warning(self, "错误", "请选择串口")
             return
+        
         try:
             self.serial_thread = SerialThread(port)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            
             self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
             self.current_ph_label.setText("pH: --.-")
             self.current_adc_label.setText("ADC: ----")
+            
         except Exception as e:
             QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
     
-    def connect_ble(self):
-        if not BLE_AVAILABLE:
-            QMessageBox.warning(self, "错误", "bleak 库未安装，请运行: pip install bleak")
-            return
-        addr = self.ble_combo.currentData()
-        if not addr:
-            QMessageBox.warning(self, "错误", "请先扫描并选择 BLE 设备")
-            return
-        try:
-            self.ble_thread = BLESerialThread(addr)
-            self.ble_thread.data_received.connect(self.handle_data)
-            self.ble_thread.connection_status.connect(self.on_ble_status)
-            self.ble_thread.start()
-            self.connect_btn.setText("断开")
-            self.start_btn.setEnabled(True)
-            self.current_ph_label.setText("pH: 连接中...")
-            self.current_adc_label.setText("ADC: 连接中...")
-        except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"无法连接 BLE: {e}")
-    
-    def on_ble_status(self, status):
-        if status == "connected":
-            self.current_ph_label.setText("pH: --.-")
-            self.current_adc_label.setText("ADC: 已连接(BLE)")
-    
-    def disconnect_all(self):
+    def disconnect_serial(self):
+        """断开串口连接"""
         if self.serial_thread:
             self.serial_thread.stop()
             self.serial_thread.wait()
             self.serial_thread = None
-        if self.ble_thread:
-            self.ble_thread.stop()
-            self.ble_thread.wait()
-            self.ble_thread = None
+        
         self.connect_btn.setText("连接")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
@@ -1668,8 +1382,8 @@ class PhSensorWidget(QWidget):
     def handle_data(self, data):
         """处理接收到的数据"""
         if data.startswith("ERROR:"):
-            QMessageBox.critical(self, "连接错误", data[6:])
-            self.disconnect_all()
+            QMessageBox.critical(self, "串口错误", data[6:])
+            self.disconnect_serial()
             return
         
         if data == "START":
@@ -1854,6 +1568,629 @@ class PhSensorWidget(QWidget):
             
             QMessageBox.information(self, "成功", 
                                    "校准参数已更新并保存！\n新的校准曲线将立即生效。\n下次启动程序时会自动加载此配置。")
+
+
+class ForceSensorWidget(QWidget):
+    """力传感器（HX711）模块界面 - 支持去皮和校准"""
+    
+    def __init__(self):
+        super().__init__()
+        self.serial_thread = None
+        self.ble_thread = None
+        self.flask_server = None
+        self.force_data = []
+        self.time_data = []
+        self.raw_data = []
+        self.start_timestamp_ms = 0
+        
+        self.offset = 0
+        self.scale = 1.0
+        self.calibrated = False
+        self.cal_known_weight = 100.0
+        self.cal_raw_before = 0
+        self.cal_raw_after = 0
+        self.cal_step = 0
+        
+        self.config = self.load_config()
+        self.offset = self.config.get('offset', 0)
+        self.scale = self.config.get('scale', 1.0)
+        self.calibrated = self.config.get('calibrated', False)
+        self.cal_known_weight = self.config.get('cal_known_weight', 100.0)
+        
+        self.init_ui()
+    
+    def set_flask_server(self, server):
+        self.flask_server = server
+    
+    def get_config_path(self):
+        config_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(config_dir, 'force_sensor_config.json')
+    
+    def load_config(self):
+        config_path = self.get_config_path()
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                print(f"✓ 已加载力传感器配置：{config_path}")
+                return config
+            return {}
+        except Exception as e:
+            print(f"⚠️ 加载力传感器配置失败：{e}")
+            return {}
+    
+    def save_config(self):
+        config_path = self.get_config_path()
+        try:
+            config = {
+                'offset': self.offset,
+                'scale': self.scale,
+                'calibrated': self.calibrated,
+                'cal_known_weight': self.cal_known_weight
+            }
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            print(f"✓ 力传感器配置已保存：{config_path}")
+            return True
+        except Exception as e:
+            print(f"⚠️ 保存力传感器配置失败：{e}")
+            return False
+    
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # 连接方式选择
+        conn_group = QGroupBox("连接方式")
+        conn_layout = QHBoxLayout()
+        
+        conn_layout.addWidget(QLabel("连接方式:"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
+        if not BLE_AVAILABLE:
+            self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
+            self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
+        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
+        conn_layout.addWidget(self.mode_combo)
+        
+        # 串口面板
+        self.serial_panel = QWidget()
+        serial_layout = QHBoxLayout(self.serial_panel)
+        serial_layout.setContentsMargins(0, 0, 0, 0)
+        
+        serial_layout.addWidget(QLabel("串口:"))
+        self.port_combo = QComboBox()
+        self.refresh_ports()
+        serial_layout.addWidget(self.port_combo)
+        
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.clicked.connect(self.refresh_ports)
+        serial_layout.addWidget(self.refresh_btn)
+        
+        # BLE 面板
+        self.ble_panel = QWidget()
+        ble_layout = QHBoxLayout(self.ble_panel)
+        ble_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.ble_device_combo = QComboBox()
+        ble_layout.addWidget(self.ble_device_combo)
+        
+        self.ble_scan_btn = QPushButton("扫描BLE")
+        self.ble_scan_btn.clicked.connect(self.scan_ble)
+        if not BLE_AVAILABLE:
+            self.ble_scan_btn.setEnabled(False)
+        ble_layout.addWidget(self.ble_scan_btn)
+        
+        conn_layout.addWidget(self.serial_panel)
+        conn_layout.addWidget(self.ble_panel)
+        self.ble_panel.hide()
+        
+        conn_layout.addStretch()
+        
+        self.connect_btn = QPushButton("连接")
+        self.connect_btn.clicked.connect(self.connect_device)
+        conn_layout.addWidget(self.connect_btn)
+        
+        self.disconnect_btn = QPushButton("断开")
+        self.disconnect_btn.clicked.connect(self.disconnect_all)
+        self.disconnect_btn.setEnabled(False)
+        conn_layout.addWidget(self.disconnect_btn)
+        
+        conn_group.setLayout(conn_layout)
+        layout.addWidget(conn_group)
+        
+        # 校准面板
+        cal_group = QGroupBox("校准与去皮")
+        cal_layout = QVBoxLayout()
+        
+        cal_info_layout = QHBoxLayout()
+        self.cal_status_label = QLabel("校准状态: 未校准" if not self.calibrated else f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
+        self.cal_status_label.setStyleSheet("color: green; font-weight: bold;" if self.calibrated else "color: red; font-weight: bold;")
+        cal_info_layout.addWidget(self.cal_status_label)
+        cal_layout.addLayout(cal_info_layout)
+        
+        cal_btn_layout = QHBoxLayout()
+        
+        self.tare_btn = QPushButton("去皮（TARE）")
+        self.tare_btn.clicked.connect(self.send_tare)
+        self.tare_btn.setEnabled(False)
+        self.tare_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4; color: white;
+                border: none; padding: 8px 16px; border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #106ebe; }
+            QPushButton:pressed { background-color: #005a9e; }
+        """)
+        cal_btn_layout.addWidget(self.tare_btn)
+        
+        self.calibrate_btn = QPushButton("校准（CALIBRATE）")
+        self.calibrate_btn.clicked.connect(self.start_calibration)
+        self.calibrate_btn.setEnabled(False)
+        self.calibrate_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #fd7e14; color: white;
+                border: none; padding: 8px 16px; border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #e06b00; }
+            QPushButton:pressed { background-color: #c55a00; }
+        """)
+        cal_btn_layout.addWidget(self.calibrate_btn)
+        
+        cal_btn_layout.addStretch()
+        cal_layout.addLayout(cal_btn_layout)
+        
+        cal_group.setLayout(cal_layout)
+        layout.addWidget(cal_group)
+        
+        # 数据显示区域
+        data_group = QGroupBox("实时数据")
+        data_layout = QHBoxLayout()
+        
+        text_widget = QWidget()
+        text_layout = QVBoxLayout()
+        
+        self.current_force_label = QLabel("力/质量: --.-")
+        self.current_force_label.setFont(QFont("Arial", 28, QFont.Weight.Bold))
+        self.current_force_label.setStyleSheet("color: #0078d4; padding: 10px;")
+        text_layout.addWidget(self.current_force_label)
+        
+        self.current_raw_label = QLabel("原始ADC: ------")
+        self.current_raw_label.setFont(QFont("Arial", 14))
+        text_layout.addWidget(self.current_raw_label)
+        
+        self.current_unit_label = QLabel("单位: g（未校准则显示原始值）")
+        self.current_unit_label.setStyleSheet("color: #666; font-size: 12px;")
+        text_layout.addWidget(self.current_unit_label)
+        
+        self.stats_label = QLabel("统计信息: 暂无数据")
+        text_layout.addWidget(self.stats_label)
+        
+        self.data_text = QTextEdit()
+        self.data_text.setMaximumHeight(120)
+        text_layout.addWidget(QLabel("数据记录:"))
+        text_layout.addWidget(self.data_text)
+        
+        text_widget.setLayout(text_layout)
+        data_layout.addWidget(text_widget)
+        
+        self.figure = Figure(figsize=(8, 5))
+        self.canvas = FigureCanvas(self.figure)
+        data_layout.addWidget(self.canvas)
+        
+        data_group.setLayout(data_layout)
+        layout.addWidget(data_group)
+        
+        # 控制按钮
+        button_layout = QHBoxLayout()
+        
+        self.start_btn = QPushButton("开始采集")
+        self.start_btn.clicked.connect(self.start_collection)
+        self.start_btn.setEnabled(False)
+        button_layout.addWidget(self.start_btn)
+        
+        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn.clicked.connect(self.stop_collection)
+        self.stop_btn.setEnabled(False)
+        button_layout.addWidget(self.stop_btn)
+        
+        self.save_btn = QPushButton("保存数据")
+        self.save_btn.clicked.connect(self.save_data)
+        self.save_btn.setEnabled(False)
+        button_layout.addWidget(self.save_btn)
+        
+        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn.clicked.connect(self.clear_data)
+        button_layout.addWidget(self.clear_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_chart)
+        self.timer.start(100)
+    
+    def on_mode_changed(self, index):
+        if index == 0:
+            self.serial_panel.show()
+            self.ble_panel.hide()
+        else:
+            self.serial_panel.hide()
+            self.ble_panel.show()
+    
+    def refresh_ports(self):
+        self.port_combo.clear()
+        ports = serial.tools.list_ports.comports()
+        for port in ports:
+            self.port_combo.addItem(port.device)
+    
+    def scan_ble(self):
+        if not BLE_AVAILABLE:
+            QMessageBox.warning(self, "提示", "请先安装 bleak 库：pip install bleak")
+            return
+        
+        self.ble_scan_btn.setEnabled(False)
+        self.ble_scan_btn.setText("扫描中...")
+        
+        self._ble_scan_thread = threading.Thread(target=self._do_scan_ble, daemon=True)
+        self._ble_scan_thread.start()
+    
+    def _do_scan_ble(self):
+        try:
+            devices = scan_ble_devices()
+            self.ble_device_combo.clear()
+            for name, addr in devices:
+                self.ble_device_combo.addItem(f"{name} ({addr})")
+            if not devices:
+                self.ble_device_combo.addItem("未找到设备")
+        except Exception as e:
+            print(f"BLE 扫描错误: {e}")
+        finally:
+            self.ble_scan_btn.setEnabled(BLE_AVAILABLE)
+            self.ble_scan_btn.setText("扫描BLE")
+    
+    def connect_device(self):
+        mode = self.mode_combo.currentText()
+        if "BLE" in mode:
+            self.connect_ble()
+        else:
+            self.connect_serial()
+    
+    def connect_serial(self):
+        port = self.port_combo.currentText()
+        if not port:
+            QMessageBox.warning(self, "错误", "请选择串口")
+            return
+        try:
+            self.serial_thread = SerialThread(port)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.tare_btn.setEnabled(True)
+            self.calibrate_btn.setEnabled(True)
+            self.current_force_label.setText("力/质量: 等待数据...")
+            self.current_raw_label.setText("原始ADC: 连接中...")
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
+    
+    def connect_ble(self):
+        if not BLE_AVAILABLE:
+            QMessageBox.warning(self, "提示", "请先安装 bleak 库：pip install bleak")
+            return
+        
+        device_text = self.ble_device_combo.currentText()
+        if not device_text or "未找到" in device_text:
+            QMessageBox.warning(self, "提示", "请先扫描并选择 BLE 设备")
+            return
+        
+        try:
+            address = device_text.split("(")[-1].rstrip(")")
+        except:
+            QMessageBox.warning(self, "提示", "无法解析设备地址")
+            return
+        
+        try:
+            self.ble_thread = BLESerialThread(address)
+            self.ble_thread.data_received.connect(self.handle_data)
+            self.ble_thread.connection_status.connect(self.on_ble_status)
+            self.ble_thread.start()
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.tare_btn.setEnabled(True)
+            self.calibrate_btn.setEnabled(True)
+            self.current_force_label.setText("力/质量: BLE连接中...")
+            self.current_raw_label.setText("原始ADC: BLE连接中...")
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"BLE 连接失败: {e}")
+    
+    def on_ble_status(self, status):
+        if status == "connected":
+            self.current_force_label.setText("力/质量: BLE已连接，等待数据...")
+            self.current_raw_label.setText("原始ADC: 等待数据...")
+    
+    def disconnect_all(self):
+        if self.serial_thread:
+            self.serial_thread.stop()
+            self.serial_thread.wait()
+            self.serial_thread = None
+        if self.ble_thread:
+            self.ble_thread.stop()
+            self.ble_thread.wait()
+            self.ble_thread = None
+        
+        self.connect_btn.setEnabled(True)
+        self.disconnect_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.tare_btn.setEnabled(False)
+        self.calibrate_btn.setEnabled(False)
+        self.current_force_label.setText("力/质量: --.-")
+        self.current_raw_label.setText("原始ADC: 已断开")
+    
+    def send_tare(self):
+        if self.serial_thread and self.serial_thread.isRunning():
+            try:
+                ser = serial.Serial(self.port_combo.currentText(), 115200, timeout=1)
+                ser.write(b"TARE\n")
+                ser.close()
+                self.current_force_label.setText("力/质量: 去皮中...")
+            except:
+                pass
+        if self.ble_thread and self.ble_thread.isRunning():
+            pass
+    
+    def start_calibration(self):
+        if self.cal_step == 0:
+            self.cal_step = 1
+            self.calibrate_btn.setText("1. 请空载，点击记录零点")
+            self.calibrate_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #dc3545; color: white;
+                    border: none; padding: 8px 16px; border-radius: 4px;
+                }
+                QPushButton:hover { background-color: #c82333; }
+            """)
+        elif self.cal_step == 1:
+            if len(self.raw_data) > 0:
+                self.cal_raw_before = self.raw_data[-1]
+            self.cal_step = 2
+            weight, ok = QInputDialog.getDouble(
+                self, "校准 - 已知质量",
+                "请放上已知质量的砝码，\n输入砝码质量（克）：",
+                self.cal_known_weight, 0.01, 100000, 2
+            )
+            if ok:
+                self.cal_known_weight = weight
+                self.calibrate_btn.setText(f"2. 已放{weight}g砝码，点击记录")
+            else:
+                self.cal_step = 0
+                self.calibrate_btn.setText("校准（CALIBRATE）")
+                self.calibrate_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #fd7e14; color: white;
+                        border: none; padding: 8px 16px; border-radius: 4px;
+                    }
+                    QPushButton:hover { background-color: #e06b00; }
+                """)
+        elif self.cal_step == 2:
+            if len(self.raw_data) > 0:
+                self.cal_raw_after = self.raw_data[-1]
+                diff = self.cal_raw_after - self.cal_raw_before
+                if diff != 0:
+                    self.scale = self.cal_known_weight / diff
+                    self.offset = self.cal_raw_before
+                    self.calibrated = True
+                    self.save_config()
+                    self.cal_status_label.setText(f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
+                    self.cal_status_label.setStyleSheet("color: green; font-weight: bold;")
+                    self.current_unit_label.setText(f"单位: g（校准比例={self.scale:.6f}）")
+                    QMessageBox.information(self, "校准成功",
+                        f"校准完成！\n"
+                        f"空载ADC: {self.cal_raw_before}\n"
+                        f"加载ADC: {self.cal_raw_after}\n"
+                        f"ADC差值: {diff}\n"
+                        f"校准比例: {self.scale:.6f}\n"
+                        f"砝码质量: {self.cal_known_weight}g")
+                else:
+                    QMessageBox.warning(self, "校准失败", "ADC差值为0，请检查传感器是否正常工作")
+            
+            self.cal_step = 0
+            self.calibrate_btn.setText("校准（CALIBRATE）")
+            self.calibrate_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #fd7e14; color: white;
+                    border: none; padding: 8px 16px; border-radius: 4px;
+                }
+                QPushButton:hover { background-color: #e06b00; }
+            """)
+    
+    def start_collection(self):
+        self.force_data.clear()
+        self.time_data.clear()
+        self.raw_data.clear()
+        self.data_text.clear()
+        
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.save_btn.setEnabled(False)
+        
+        self.current_force_label.setText("力/质量: 采集中...")
+        self.current_raw_label.setText("原始ADC: 采集中...")
+    
+    def stop_collection(self):
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.save_btn.setEnabled(len(self.force_data) > 0)
+        
+        if len(self.force_data) > 0:
+            avg_force = np.mean(self.force_data)
+            self.current_force_label.setText(f"力/质量: {avg_force:.2f}")
+    
+    def handle_data(self, data):
+        if data.startswith("ERROR:"):
+            QMessageBox.critical(self, "连接错误", data[6:])
+            self.disconnect_all()
+            return
+        
+        if data == "START":
+            self.current_force_label.setText("力/质量: 设备就绪")
+            self.current_raw_label.setText("原始ADC: 等待数据...")
+            return
+        
+        if data.startswith("TARE_DONE"):
+            parts = data.split(",")
+            if len(parts) == 2:
+                try:
+                    self.offset = int(parts[1])
+                    self.current_force_label.setText("力/质量: 去皮完成")
+                except:
+                    pass
+            return
+        
+        if data.startswith("CALIBRATE_READY"):
+            self.current_force_label.setText("力/质量: 请放置已知质量砝码")
+            return
+        
+        if not self.stop_btn.isEnabled():
+            try:
+                if "," in data:
+                    parts = data.split(",")
+                    if len(parts) == 2:
+                        timestamp_ms = int(parts[0])
+                        raw_value = int(parts[1])
+                        self.raw_data.append(raw_value)
+                        
+                        if self.calibrated:
+                            force_value = (raw_value - self.offset) * self.scale
+                        else:
+                            force_value = float(raw_value)
+                        
+                        self.current_raw_label.setText(f"原始ADC: {raw_value}")
+                        self.current_force_label.setText(f"力/质量: {force_value:.2f}")
+            except ValueError:
+                pass
+            return
+        
+        try:
+            if "," in data:
+                parts = data.split(",")
+                if len(parts) == 2:
+                    timestamp_ms = int(parts[0])
+                    raw_value = int(parts[1])
+                    
+                    if len(self.time_data) == 0:
+                        self.start_timestamp_ms = timestamp_ms
+                    
+                    relative_time_s = (timestamp_ms - self.start_timestamp_ms) / 1000.0
+                    
+                    self.raw_data.append(raw_value)
+                    
+                    if self.calibrated:
+                        force_value = (raw_value - self.offset) * self.scale
+                    else:
+                        force_value = float(raw_value)
+                    
+                    self.force_data.append(force_value)
+                    self.time_data.append(relative_time_s)
+                    
+                    current_time = datetime.now()
+                    time_str = current_time.strftime("%H:%M:%S.%f")[:-3]
+                    
+                    unit = "g" if self.calibrated else "raw"
+                    display_text = f"时间: {time_str} | ADC: {raw_value} | {unit}: {force_value:.2f}"
+                    self.current_raw_label.setText(f"原始ADC: {raw_value}")
+                    self.current_force_label.setText(f"力/质量: {force_value:.2f} {unit}")
+                    
+                    self.data_text.append(display_text)
+                    self.data_text.verticalScrollBar().setValue(
+                        self.data_text.verticalScrollBar().maximum()
+                    )
+                    
+                    self.update_stats()
+                    
+                    if self.flask_server:
+                        self.flask_server.update_data('force', {
+                            'force': force_value,
+                            'raw_adc': raw_value,
+                            'timestamp': time_str,
+                            'connected': True,
+                            'collecting': True,
+                            'history': [(time_str, force_value)]
+                        })
+                    
+        except ValueError:
+            pass
+    
+    def update_stats(self):
+        if len(self.force_data) > 0:
+            avg_force = np.mean(self.force_data)
+            max_force = np.max(self.force_data)
+            min_force = np.min(self.force_data)
+            std_force = np.std(self.force_data)
+            
+            unit = "g" if self.calibrated else "raw"
+            stats_text = (f"统计: 数据点 {len(self.force_data)} | "
+                         f"平均={avg_force:.2f}{unit} | "
+                         f"最大={max_force:.2f}{unit} | "
+                         f"最小={min_force:.2f}{unit} | "
+                         f"标准差 σ={std_force:.3f}")
+            self.stats_label.setText(stats_text)
+    
+    def update_chart(self):
+        if len(self.force_data) > 0:
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+            
+            unit = "质量 (g)" if self.calibrated else "原始ADC值"
+            ax.plot(self.time_data, self.force_data, '#0078d4', linewidth=2, label=unit)
+            
+            ax.set_xlabel('时间 (秒)')
+            ax.set_ylabel(unit)
+            ax.set_title('力传感器实时数据', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='upper right')
+            
+            if len(self.time_data) > 1:
+                ax.set_xlim(min(self.time_data), max(self.time_data))
+            
+            self.figure.tight_layout()
+            self.canvas.draw()
+    
+    def save_data(self):
+        if len(self.force_data) == 0:
+            QMessageBox.warning(self, "警告", "没有数据可保存")
+            return
+        
+        try:
+            unit = "g" if self.calibrated else "raw"
+            filename = f"force_sensor_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(f"time_s,raw_adc,force_{unit}\n")
+                for i, (time_val, force_val, raw_val) in enumerate(
+                    zip(self.time_data, self.force_data, self.raw_data[-len(self.time_data):])):
+                    f.write(f"{time_val:.3f},{raw_val},{force_val:.3f}\n")
+            
+            QMessageBox.information(self, "成功",
+                                   f"数据已保存到：{filename}\n"
+                                   f"共 {len(self.force_data)} 个数据点")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存失败：{e}")
+    
+    def clear_data(self):
+        self.force_data.clear()
+        self.time_data.clear()
+        self.raw_data.clear()
+        self.data_text.clear()
+        self.stats_label.setText("统计信息: 暂无数据")
+        self.current_force_label.setText("力/质量: --.-")
+        self.current_raw_label.setText("原始ADC: ------")
+        self.figure.clear()
+        self.canvas.draw()
+        self.save_btn.setEnabled(False)
 
 
 class CalibrationDialog(QDialog):
@@ -2194,9 +2531,10 @@ class SidebarWidget(QWidget):
         self.icon_map = {
             "主页": self.create_text_icon("🏠"),       # 主页图标
             "超声波位移": self.create_text_icon("x"),  # 位移符号 x
-            "超声波速度": self.create_text_icon("v"),  # 速度符号 v
-            "pH传感器": self.create_text_icon("pH"),   # pH符号
-            "设置": self.create_text_icon("⚙")        # 设置齿轮符号
+            "超声波速度": self.create_text_icon("v"),
+            "力传感器": self.create_text_icon("F"),
+            "pH传感器": self.create_text_icon("pH"),
+            "设置": self.create_text_icon("⚙")
         }
         
         # 添加模块项（主页放在第一位）
@@ -2204,6 +2542,7 @@ class SidebarWidget(QWidget):
             ("主页", "项目介绍与功能导航"),
             ("超声波位移", "测量物体位移和运动轨迹"),
             ("超声波速度", "回声定位法测量物体速度"),
+            ("力传感器", "HX711力/质量传感器测量"),
             ("pH传感器", "测量溶液酸碱度"),
             ("设置", "应用设置与偏好")
         ]
@@ -2581,6 +2920,13 @@ class MainWindow(QMainWindow):
         ultrasonic_velocity_widget = UltrasonicVelocityWidget()
         self.content_stack.addWidget(ultrasonic_velocity_widget)
         self.modules["超声波速度"] = ultrasonic_velocity_widget
+        
+        # 力传感器模块
+        force_sensor_widget = ForceSensorWidget()
+        if hasattr(self, 'flask_server') and self.flask_server:
+            force_sensor_widget.set_flask_server(self.flask_server)
+        self.content_stack.addWidget(force_sensor_widget)
+        self.modules["力传感器"] = force_sensor_widget
         
         # pH传感器模块
         ph_sensor_widget = PhSensorWidget()
