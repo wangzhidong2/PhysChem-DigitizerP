@@ -14,7 +14,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QPushButton, QFrame, QStackedWidget,
                             QListWidget, QListWidgetItem, QMessageBox, QComboBox,
                             QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-                            QStyle, QDialog, QLineEdit, QRadioButton, QScrollArea)
+                            QStyle, QDialog, QLineEdit, QRadioButton, QScrollArea,
+                            QInputDialog)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
 import serial
@@ -23,6 +24,15 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
+
+try:
+    import asyncio
+    from bleak import BleakClient, BleakScanner
+    BLE_AVAILABLE = True
+except ImportError:
+    BLE_AVAILABLE = False
+
+import threading
 
 # 设置 matplotlib 全局字体为微软雅黑
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
@@ -65,6 +75,126 @@ class SerialThread(QThread):
         self.running = False
         if self.serial:
             self.serial.close()
+
+
+BLE_NUS_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+BLE_NUS_TX_UUID      = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+BLE_NUS_RX_UUID      = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+
+
+class BLESerialThread(QThread):
+    """BLE 串口通信线程 — 基于 bleak 库连接 ESP32-S3 的 NUS 服务"""
+    data_received = pyqtSignal(str)
+    connection_status = pyqtSignal(str)
+
+    def __init__(self, device_address, device_name=""):
+        super().__init__()
+        self.device_address = device_address
+        self.device_name = device_name
+        self.running = False
+        self._buffer = ""
+        self._client = None
+
+    def run(self):
+        if not BLE_AVAILABLE:
+            self.data_received.emit("ERROR:bleak 库未安装，请运行 pip install bleak")
+            return
+
+        self.running = True
+
+        try:
+            asyncio.run(self._ble_loop())
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            error_msg = str(e)
+            if "not found" in error_msg.lower() or "could not find" in error_msg.lower():
+                self.data_received.emit("ERROR:设备未找到，请确保 ESP32-S3 已上电并配对")
+            elif "timeout" in error_msg.lower():
+                self.data_received.emit("ERROR:连接超时，请检查设备是否在范围内")
+            else:
+                self.data_received.emit(f"ERROR:BLE 连接失败: {error_msg}")
+
+    async def _ble_loop(self):
+        try:
+            self._client = BleakClient(
+                self.device_address,
+                timeout=10.0,
+                disconnected_callback=self._on_disconnected
+            )
+
+            await self._client.connect()
+
+            if self._client.is_connected:
+                self.connection_status.emit("connected")
+                self.data_received.emit("START")
+            else:
+                self.data_received.emit("ERROR:连接建立失败")
+                return
+
+            try:
+                await self._client.start_notify(BLE_NUS_TX_UUID, self._notification_handler)
+            except Exception as e:
+                self.data_received.emit(f"ERROR:无法订阅数据通知: {e}")
+                return
+
+            while self.running and self._client.is_connected:
+                await asyncio.sleep(0.05)
+
+            if self._client.is_connected:
+                try:
+                    await self._client.stop_notify(BLE_NUS_TX_UUID)
+                except:
+                    pass
+                try:
+                    await self._client.disconnect()
+                except:
+                    pass
+
+        except Exception as e:
+            raise e
+
+    def _notification_handler(self, sender, data):
+        try:
+            text = data.decode('utf-8', errors='ignore')
+            self._buffer += text
+            while '\n' in self._buffer:
+                line, self._buffer = self._buffer.split('\n', 1)
+                line = line.strip()
+                if line:
+                    self.data_received.emit(line)
+        except Exception as e:
+            print(f"BLE 数据处理错误: {e}")
+
+    def _on_disconnected(self, client):
+        if self.running:
+            self.data_received.emit("ERROR:设备意外断开连接")
+            self.running = False
+
+    def stop(self):
+        self.running = False
+        if self._client and self._client.is_connected:
+            try:
+                asyncio.run(self._client.disconnect())
+            except:
+                pass
+
+
+def scan_ble_devices():
+    """扫描附近的 BLE 设备，返回 [(名称, 地址), ...]"""
+    if not BLE_AVAILABLE:
+        return []
+
+    try:
+        devices = asyncio.run(BleakScanner.discover(timeout=5.0))
+        result = []
+        for d in devices:
+            name = d.name or "未知设备"
+            result.append((name, d.address))
+        return sorted(result, key=lambda x: x[0])
+    except Exception as e:
+        print(f"BLE 扫描错误: {e}")
+        return []
 
 
 class UltrasonicWidget(QWidget):
@@ -1571,7 +1701,10 @@ class PhSensorWidget(QWidget):
 
 
 class ForceSensorWidget(QWidget):
-    """力传感器（HX711）模块界面 - 支持去皮和校准"""
+    """力传感器（HX711）模块界面 - 支持去皮、校准和单位切换"""
+    
+    GRAVITY = 9.8
+    UNIT_LABELS = {"g": "克 (g)", "kg": "千克 (kg)", "N": "牛顿 (N)"}
     
     def __init__(self):
         super().__init__()
@@ -1590,14 +1723,41 @@ class ForceSensorWidget(QWidget):
         self.cal_raw_before = 0
         self.cal_raw_after = 0
         self.cal_step = 0
+        self.current_unit = "g"
         
         self.config = self.load_config()
         self.offset = self.config.get('offset', 0)
         self.scale = self.config.get('scale', 1.0)
         self.calibrated = self.config.get('calibrated', False)
         self.cal_known_weight = self.config.get('cal_known_weight', 100.0)
+        self.current_unit = self.config.get('unit', 'g')
         
         self.init_ui()
+    
+    def convert_unit(self, value_grams):
+        """将克值转换为当前单位值
+        
+        转换关系：
+          g  → 直接返回
+          kg → value_grams / 1000
+          N  → value_grams / 1000 * 9.8
+        """
+        if self.current_unit == "kg":
+            return value_grams / 1000.0
+        elif self.current_unit == "N":
+            return value_grams / 1000.0 * self.GRAVITY
+        return value_grams
+    
+    def get_unit_str(self):
+        """获取当前单位字符串"""
+        return self.current_unit if self.calibrated else "raw"
+    
+    def get_chart_ylabel(self):
+        """获取图表Y轴标签"""
+        if not self.calibrated:
+            return "原始ADC值"
+        labels = {"g": "质量 (g)", "kg": "质量 (kg)", "N": "力 (N)"}
+        return labels.get(self.current_unit, "质量 (g)")
     
     def set_flask_server(self, server):
         self.flask_server = server
@@ -1626,7 +1786,8 @@ class ForceSensorWidget(QWidget):
                 'offset': self.offset,
                 'scale': self.scale,
                 'calibrated': self.calibrated,
-                'cal_known_weight': self.cal_known_weight
+                'cal_known_weight': self.cal_known_weight,
+                'unit': self.current_unit
             }
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
@@ -1739,6 +1900,25 @@ class ForceSensorWidget(QWidget):
         cal_btn_layout.addStretch()
         cal_layout.addLayout(cal_btn_layout)
         
+        unit_layout = QHBoxLayout()
+        unit_layout.addWidget(QLabel("显示单位:"))
+        self.unit_combo = QComboBox()
+        self.unit_combo.addItems(["克 (g)", "千克 (kg)", "牛顿 (N)"])
+        unit_map = {"g": 0, "kg": 1, "N": 2}
+        self.unit_combo.setCurrentIndex(unit_map.get(self.current_unit, 0))
+        self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
+        self.unit_combo.setStyleSheet("""
+            QComboBox {
+                padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px;
+                min-width: 120px;
+            }
+        """)
+        unit_layout.addWidget(self.unit_combo)
+        
+        unit_layout.addWidget(QLabel("  g = 9.8 m/s²"))
+        unit_layout.addStretch()
+        cal_layout.addLayout(unit_layout)
+        
         cal_group.setLayout(cal_layout)
         layout.addWidget(cal_group)
         
@@ -1758,7 +1938,7 @@ class ForceSensorWidget(QWidget):
         self.current_raw_label.setFont(QFont("Arial", 14))
         text_layout.addWidget(self.current_raw_label)
         
-        self.current_unit_label = QLabel("单位: g（未校准则显示原始值）")
+        self.current_unit_label = QLabel(f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}（未校准则显示原始值）")
         self.current_unit_label.setStyleSheet("color: #666; font-size: 12px;")
         text_layout.addWidget(self.current_unit_label)
         
@@ -1818,6 +1998,21 @@ class ForceSensorWidget(QWidget):
         else:
             self.serial_panel.hide()
             self.ble_panel.show()
+    
+    def on_unit_changed(self, index):
+        unit_list = ["g", "kg", "N"]
+        self.current_unit = unit_list[index]
+        self.save_config()
+        self.current_unit_label.setText(
+            f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}"
+            + ("（未校准则显示原始值）" if not self.calibrated else f"（校准比例={self.scale:.6f}）")
+        )
+        if len(self.force_data) > 0:
+            self.update_stats()
+            self.update_chart()
+            converted = self.convert_unit(self.force_data[-1])
+            unit = self.get_unit_str()
+            self.current_force_label.setText(f"力/质量: {converted:.4f} {unit}")
     
     def refresh_ports(self):
         self.port_combo.clear()
@@ -1987,7 +2182,7 @@ class ForceSensorWidget(QWidget):
                     self.save_config()
                     self.cal_status_label.setText(f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
                     self.cal_status_label.setStyleSheet("color: green; font-weight: bold;")
-                    self.current_unit_label.setText(f"单位: g（校准比例={self.scale:.6f}）")
+                    self.current_unit_label.setText(f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}（校准比例={self.scale:.6f}）")
                     QMessageBox.information(self, "校准成功",
                         f"校准完成！\n"
                         f"空载ADC: {self.cal_raw_before}\n"
@@ -2027,8 +2222,9 @@ class ForceSensorWidget(QWidget):
         self.save_btn.setEnabled(len(self.force_data) > 0)
         
         if len(self.force_data) > 0:
-            avg_force = np.mean(self.force_data)
-            self.current_force_label.setText(f"力/质量: {avg_force:.2f}")
+            converted = self.convert_unit(np.mean(self.force_data))
+            unit = self.get_unit_str()
+            self.current_force_label.setText(f"力/质量: {converted:.4f} {unit}")
     
     def handle_data(self, data):
         if data.startswith("ERROR:"):
@@ -2065,12 +2261,14 @@ class ForceSensorWidget(QWidget):
                         self.raw_data.append(raw_value)
                         
                         if self.calibrated:
-                            force_value = (raw_value - self.offset) * self.scale
+                            force_value_grams = (raw_value - self.offset) * self.scale
+                            force_value = self.convert_unit(force_value_grams)
                         else:
                             force_value = float(raw_value)
                         
+                        unit = self.get_unit_str()
                         self.current_raw_label.setText(f"原始ADC: {raw_value}")
-                        self.current_force_label.setText(f"力/质量: {force_value:.2f}")
+                        self.current_force_label.setText(f"力/质量: {force_value:.4f} {unit}")
             except ValueError:
                 pass
             return
@@ -2090,20 +2288,21 @@ class ForceSensorWidget(QWidget):
                     self.raw_data.append(raw_value)
                     
                     if self.calibrated:
-                        force_value = (raw_value - self.offset) * self.scale
+                        force_value_grams = (raw_value - self.offset) * self.scale
+                        force_value = self.convert_unit(force_value_grams)
                     else:
                         force_value = float(raw_value)
                     
-                    self.force_data.append(force_value)
+                    self.force_data.append(force_value_grams if self.calibrated else force_value)
                     self.time_data.append(relative_time_s)
                     
                     current_time = datetime.now()
                     time_str = current_time.strftime("%H:%M:%S.%f")[:-3]
                     
-                    unit = "g" if self.calibrated else "raw"
-                    display_text = f"时间: {time_str} | ADC: {raw_value} | {unit}: {force_value:.2f}"
+                    unit = self.get_unit_str()
+                    display_text = f"时间: {time_str} | ADC: {raw_value} | {unit}: {force_value:.4f}"
                     self.current_raw_label.setText(f"原始ADC: {raw_value}")
-                    self.current_force_label.setText(f"力/质量: {force_value:.2f} {unit}")
+                    self.current_force_label.setText(f"力/质量: {force_value:.4f} {unit}")
                     
                     self.data_text.append(display_text)
                     self.data_text.verticalScrollBar().setValue(
@@ -2127,17 +2326,18 @@ class ForceSensorWidget(QWidget):
     
     def update_stats(self):
         if len(self.force_data) > 0:
-            avg_force = np.mean(self.force_data)
-            max_force = np.max(self.force_data)
-            min_force = np.min(self.force_data)
-            std_force = np.std(self.force_data)
+            unit = self.get_unit_str()
+            converted_data = [self.convert_unit(v) for v in self.force_data] if self.calibrated else self.force_data
+            avg_force = np.mean(converted_data)
+            max_force = np.max(converted_data)
+            min_force = np.min(converted_data)
+            std_force = np.std(converted_data)
             
-            unit = "g" if self.calibrated else "raw"
             stats_text = (f"统计: 数据点 {len(self.force_data)} | "
-                         f"平均={avg_force:.2f}{unit} | "
-                         f"最大={max_force:.2f}{unit} | "
-                         f"最小={min_force:.2f}{unit} | "
-                         f"标准差 σ={std_force:.3f}")
+                         f"平均={avg_force:.4f}{unit} | "
+                         f"最大={max_force:.4f}{unit} | "
+                         f"最小={min_force:.4f}{unit} | "
+                         f"标准差 σ={std_force:.4f}")
             self.stats_label.setText(stats_text)
     
     def update_chart(self):
@@ -2145,11 +2345,15 @@ class ForceSensorWidget(QWidget):
             self.figure.clear()
             ax = self.figure.add_subplot(111)
             
-            unit = "质量 (g)" if self.calibrated else "原始ADC值"
-            ax.plot(self.time_data, self.force_data, '#0078d4', linewidth=2, label=unit)
+            ylabel = self.get_chart_ylabel()
+            if self.calibrated:
+                converted_data = [self.convert_unit(v) for v in self.force_data]
+            else:
+                converted_data = self.force_data
+            ax.plot(self.time_data, converted_data, '#0078d4', linewidth=2, label=ylabel)
             
             ax.set_xlabel('时间 (秒)')
-            ax.set_ylabel(unit)
+            ax.set_ylabel(ylabel)
             ax.set_title('力传感器实时数据', fontsize=14, fontweight='bold')
             ax.grid(True, alpha=0.3)
             ax.legend(loc='upper right')
@@ -2166,17 +2370,25 @@ class ForceSensorWidget(QWidget):
             return
         
         try:
-            unit = "g" if self.calibrated else "raw"
+            unit = self.get_unit_str()
             filename = f"force_sensor_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             with open(filename, 'w', encoding='utf-8') as f:
-                f.write(f"time_s,raw_adc,force_{unit}\n")
-                for i, (time_val, force_val, raw_val) in enumerate(
-                    zip(self.time_data, self.force_data, self.raw_data[-len(self.time_data):])):
-                    f.write(f"{time_val:.3f},{raw_val},{force_val:.3f}\n")
+                if self.calibrated:
+                    f.write("time_s,raw_adc,force_g,force_{}\n".format(unit))
+                    for i, (time_val, force_grams, raw_val) in enumerate(
+                        zip(self.time_data, self.force_data, self.raw_data[-len(self.time_data):])):
+                        converted = self.convert_unit(force_grams)
+                        f.write(f"{time_val:.3f},{raw_val},{force_grams:.4f},{converted:.6f}\n")
+                else:
+                    f.write("time_s,raw_adc,raw_value\n")
+                    for i, (time_val, force_val, raw_val) in enumerate(
+                        zip(self.time_data, self.force_data, self.raw_data[-len(self.time_data):])):
+                        f.write(f"{time_val:.3f},{raw_val},{force_val:.4f}\n")
             
             QMessageBox.information(self, "成功",
                                    f"数据已保存到：{filename}\n"
-                                   f"共 {len(self.force_data)} 个数据点")
+                                   f"共 {len(self.force_data)} 个数据点\n"
+                                   f"单位：{self.UNIT_LABELS.get(self.current_unit, 'g')}")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存失败：{e}")
     
