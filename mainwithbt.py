@@ -2168,16 +2168,47 @@ class ForceSensorWidget(QWidget):
         self.current_raw_label.setText("原始ADC: 已断开")
     
     def send_tare(self):
-        if self.serial_thread and self.serial_thread.isRunning():
-            try:
-                ser = serial.Serial(self.port_combo.currentText(), 115200, timeout=1)
-                ser.write(b"TARE\n")
-                ser.close()
-                self.current_force_label.setText("力/质量: 去皮中...")
-            except:
-                pass
-        if self.ble_thread and self.ble_thread.isRunning():
-            pass
+        """发送去皮命令"""
+        if not self.serial_thread and not self.ble_thread:
+            QMessageBox.warning(self, "警告", "请先连接设备")
+            return
+        
+        try:
+            if self.serial_thread and self.serial_thread.isRunning():
+                if hasattr(self.serial_thread, 'serial') and self.serial_thread.serial and self.serial_thread.serial.is_open:
+                    self.serial_thread.serial.write(b"TARE\n")
+                    self.current_force_label.setText("力/质量: 去皮中...")
+                    
+                    if len(self.raw_data) > 0:
+                        self.offset = self.raw_data[-1]
+                        self.save_config()
+                        self.cal_status_label.setText(f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
+                        
+                        QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 去皮完成"))
+                    else:
+                        QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 等待数据..."))
+                else:
+                    QMessageBox.warning(self, "错误", "串口未打开，无法发送去皮命令")
+            
+            elif self.ble_thread and self.ble_thread.isRunning():
+                if hasattr(self.ble_thread, 'send_command'):
+                    self.ble_thread.send_command("TARE")
+                    self.current_force_label.setText("力/质量: 去皮中（BLE）...")
+                    
+                    if len(self.raw_data) > 0:
+                        self.offset = self.raw_data[-1]
+                        self.save_config()
+                        self.cal_status_label.setText(f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
+                        
+                        QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 去皮完成"))
+                    else:
+                        QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 等待数据..."))
+                else:
+                    QMessageBox.information(self, "提示", "BLE连接不支持去皮命令，请使用空载校准功能")
+        
+        except Exception as e:
+            QMessageBox.critical(self, "去皮失败", f"发送去皮命令时出错：{e}")
+            self.current_force_label.setText("力/质量: 去皮失败")
     
     def start_calibration(self):
         if self.cal_step == 0:
