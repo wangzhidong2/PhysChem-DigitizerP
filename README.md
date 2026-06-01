@@ -166,6 +166,11 @@ A-          →    通道A负极（白色线）
 
 > 📖 详细接线、校准方法和常见问题请参考：[力传感器使用说明](传感器arduino代码/力传感器/README.md)
 
+<p align="center">
+  <img src="docs/images/force.png" alt="力传感器" width="800"/>
+</p>
+<p align="center">图5: 力/质量传感器测量界面（含去皮与校准）</p>
+
 5. **现代化界面**
    - Win11 风格设计语言
    - 侧边栏模块化导航
@@ -702,7 +707,7 @@ self.modules["新模块名称"] = new_module
 <p align="center">
   <img src="docs/images/settings.png" alt="设置界面" width="800"/>
 </p>
-<p align="center">图5: 设置界面 — 外观主题切换</p>
+<p align="center">图6: 设置界面 — 外观主题切换</p>
 
 ### 通用界面元素
 
