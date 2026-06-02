@@ -176,7 +176,22 @@ A-          →    通道A负极（白色线）
 </p>
 <p align="center">图5: 力/质量传感器测量界面（含去皮与校准）</p>
 
-5. **现代化界面**
+5. **电压传感器模块**
+   - 基于 ESP32-S3 内置 12 位 ADC 的模拟电压采集（0-3.3V）
+   - 支持通过分压电阻网络扩展测量范围至更高电压
+   - 实时电压值显示和曲线绘制
+   - 数据统计（平均值、最大值、最小值、标准差）
+   - CSV 格式数据导出
+   - 支持偏移校准和增益校准
+
+> 📖 详细接线、固件说明和扩展建议请参考：[电压传感器使用说明](传感器arduino代码/电压/README.md)
+
+<p align="center">
+  <img src="docs/images/voltage.png" alt="电压传感器" width="800"/>
+</p>
+<p align="center">图6: 电压传感器测量界面</p>
+
+6. **现代化界面**
    - Win11 风格设计语言
    - 侧边栏模块化导航
    - 响应式布局
@@ -210,9 +225,12 @@ PhysChem-DigitizerP/
     │   ├── README.md            # pH 传感器使用说明
     │   ├── ph esp32.ino         # ESP32 pH 传感器固件
     │   └── PH传感器原理图.pdf    # 传感器接线原理图
-    └── 力传感器/
-        ├── README.md            # 力传感器使用说明
-        └── force.ino            # ESP32-S3 HX711 传感器固件
+    ├── 力传感器/
+    │   ├── README.md            # 力传感器使用说明
+    │   └── force.ino            # ESP32-S3 HX711 传感器固件
+    └── 电压/
+        ├── README.md            # 电压传感器使用说明
+        └── ESP32_ADC_Raw_Data.ino   # ESP32-S3 ADC 采集固件
 ```
 
 ---
@@ -688,6 +706,7 @@ python test_serial.py
 - **[超声波位移传感器使用说明](传感器arduino代码/超声波位移传感器/README.md)** - HC-SR04 接线指南、固件说明、校准方法与性能优化
 - **[pH 传感器使用说明](传感器arduino代码/ph传感器/README.md)** - pH 传感器接线、多模式校准步骤（单点/两点/三点）、电极保养与常见问题
 - **[力传感器使用说明](传感器arduino代码/力传感器/README.md)** - HX711 力/质量传感器接线、去皮校准、数据采集与常见问题
+- **[电压传感器使用说明](传感器arduino代码/电压/README.md)** - ESP32 ADC 电压采集接线指南、分压扩展方法、精度优化与常见问题
 
 ---
 
@@ -726,6 +745,7 @@ self.modules["新模块名称"] = new_module
 | HC-SR04 超声波 | 距离/速度 | ✅ 已完成 |
 | pH 传感器 | pH 值 | ✅ 已完成 |
 | HX711 力传感器 | 力/质量 | ✅ 已完成 |
+| ESP32 ADC 电压采集 | 电压 (0-3.3V) | ✅ 已完成 |
 | 光电门 | 时间/速度 | 🔧 开发中 |
 
 ---
@@ -739,7 +759,7 @@ self.modules["新模块名称"] = new_module
 <p align="center">
   <img src="docs/images/settings.png" alt="设置界面" width="800"/>
 </p>
-<p align="center">图6: 设置界面 — 外观主题切换</p>
+<p align="center">图7: 设置界面 — 外观主题切换</p>
 
 ### 通用界面元素
 
