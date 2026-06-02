@@ -1059,7 +1059,7 @@ class HomePageWidget(QWidget):
                 'name': 'pH传感器',
                 'icon': 'pH',
                 'desc': '测量溶液酸碱度',
-                'detail': '三点校准 | 实时pH值 | 标准差统计'
+                'detail': '单点/两点/三点校准 | 实时pH值 | 标准差统计'
             }
         ]
         
@@ -1241,7 +1241,7 @@ class HomePageWidget(QWidget):
 
 
 class PhSensorWidget(QWidget):
-    """pH传感器模块界面 - 支持三点校准"""
+    """pH传感器模块界面 - 支持单点/两点/三点校准"""
     
     def __init__(self):
         super().__init__()
@@ -1258,16 +1258,16 @@ class PhSensorWidget(QWidget):
         # 加载保存的配置
         self.config = self.load_config()
         
-        # 三点校准参数 (pH, ADC) - 在 init_ui() 之前定义
-        # 优先使用保存的配置，如果没有则使用默认值
+        # 校准参数 (pH, ADC) - 支持单点/两点/三点校准
         default_calibration = [
             (4.00, 2555),   # 酸性缓冲液
             (6.86, 2281),   # 中性缓冲液
             (9.18, 2030)    # 碱性缓冲液
         ]
         self.calibration_points = self.config.get('calibration_points', default_calibration)
+        self.calibration_mode = self.config.get('calibration_mode', 3)
         
-        # 计算校准系数（二次拟合）
+        # 计算校准系数（根据点数选择拟合方式）
         self.calculate_calibration_coefficients()
         
         self.init_ui()
@@ -1285,34 +1285,57 @@ class PhSensorWidget(QWidget):
                 (4.00, 2555), (6.86, 2281), (9.18, 2030)
             ]
             self.calibration_points = config.get('calibration_points', default_calibration)
+            self.calibration_mode = config.get('calibration_mode', len(self.calibration_points))
         return config
     
     def save_config(self):
         """保存 pH 传感器配置"""
         config = {
             'calibration_points': self.calibration_points,
+            'calibration_mode': self.calibration_mode,
             'sample_interval_ms': self.sample_interval_ms
         }
         return save_sensor_config('ph_sensor', config)
     
     def calculate_calibration_coefficients(self):
-        """计算三点校准的二次拟合系数"""
+        """根据校准点数计算拟合系数
+        - 单点校准: 使用理论斜率 (-0.5 pH/V) + 偏移量
+        - 两点校准: 线性拟合 pH = k*ADC + b
+        - 三点校准: 二次拟合 pH = a*ADC^2 + b*ADC + c
+        """
         ph_values = [p[0] for p in self.calibration_points]
         adc_values = [p[1] for p in self.calibration_points]
         
-        # 使用二次多项式拟合: pH = a*ADC^2 + b*ADC + c
-        coefficients = np.polyfit(adc_values, ph_values, 2)
-        self.cal_coeffs = coefficients  # [a, b, c]
+        num_points = len(self.calibration_points)
+        
+        if num_points == 1:
+            ph0, adc0 = self.calibration_points[0]
+            theoretical_slope = -0.59  # 理论斜率 (pH/V), Nernst方程在25°C约为-59mV/pH
+            intercept = ph0 - theoretical_slope * adc0
+            self.cal_coeffs = (0, theoretical_slope, intercept)  # 二次项为0
+            self.calibration_mode = 1
+            
+        elif num_points == 2:
+            coefficients = np.polyfit(adc_values, ph_values, 1)
+            self.cal_coeffs = (0, coefficients[0], coefficients[1])  # 扩展为3元组
+            self.calibration_mode = 2
+            
+        else:  # 3点或更多
+            coefficients = np.polyfit(adc_values, ph_values, min(2, num_points-1))
+            if len(coefficients) == 2:
+                self.cal_coeffs = (0, coefficients[0], coefficients[1])
+            else:
+                self.cal_coeffs = tuple(coefficients)
+            self.calibration_mode = num_points
     
     def adc_to_ph(self, adc_value):
-        """将ADC原始值转换为pH值（使用三点校准）"""
+        """将ADC原始值转换为pH值（支持不同校准模式）"""
         if not hasattr(self, 'cal_coeffs'):
             return 7.0
         
         a, b, c = self.cal_coeffs
         ph_value = a * (adc_value ** 2) + b * adc_value + c
         
-        # 限制pH值在合理范围内（0-14）
         return max(0.0, min(14.0, ph_value))
     
     def init_ui(self):
@@ -1371,7 +1394,9 @@ class PhSensorWidget(QWidget):
         
         # 校准信息显示
         control_layout.addWidget(QLabel("校准状态:"))
-        self.calibration_label = QLabel("✓ 三点校准")
+        mode_names = {1: "单点校准", 2: "两点校准", 3: "三点校准"}
+        mode_name = mode_names.get(self.calibration_mode, f"{self.calibration_mode}点校准")
+        self.calibration_label = QLabel(f"✓ {mode_name}")
         self.calibration_label.setStyleSheet("color: green; font-weight: bold;")
         control_layout.addWidget(self.calibration_label)
         
@@ -1383,11 +1408,10 @@ class PhSensorWidget(QWidget):
         cal_info_layout = QVBoxLayout()
         
         # 校准参数显示
-        self.cal_text = QLabel(
-            f"• pH 4.00 → ADC {self.calibration_points[0][1]}\n"
-            f"• pH 6.86 → ADC {self.calibration_points[1][1]}\n"
-            f"• pH 9.18 → ADC {self.calibration_points[2][1]}"
-        )
+        cal_lines = []
+        for i, (ph_val, adc_val) in enumerate(self.calibration_points):
+            cal_lines.append(f"• pH {ph_val:.2f} → ADC {adc_val}")
+        self.cal_text = QLabel("\n".join(cal_lines) if cal_lines else "未设置校准参数")
         self.cal_text.setStyleSheet("font-size: 12px; color: #666;")
         cal_info_layout.addWidget(self.cal_text)
         
@@ -1599,7 +1623,7 @@ class PhSensorWidget(QWidget):
                     # 计算相对时间（秒）
                     relative_time_s = (timestamp_ms - self.start_timestamp_ms) / 1000.0
                     
-                    # 使用三点校准转换pH值
+                    # 使用校准转换pH值
                     ph_value = self.adc_to_ph(adc_value)
                     
                     # 存储数据
@@ -1727,21 +1751,20 @@ class PhSensorWidget(QWidget):
         """编辑校准参数对话框"""
         dialog = CalibrationDialog(self.calibration_points, self)
         if dialog.exec() == 1:  # QDialog.Accepted
-            # 获取新的校准参数
             new_points = dialog.get_calibration_points()
+            self.calibration_mode = dialog.get_calibration_mode()
             
-            # 更新校准参数
             self.calibration_points = new_points
-            
-            # 重新计算校准系数
             self.calculate_calibration_coefficients()
             
-            # 更新显示
-            self.cal_text.setText(
-                f"• pH {new_points[0][0]:.2f} → ADC {new_points[0][1]}\n"
-                f"• pH {new_points[1][0]:.2f} → ADC {new_points[1][1]}\n"
-                f"• pH {new_points[2][0]:.2f} → ADC {new_points[2][1]}"
-            )
+            mode_names = {1: "单点校准", 2: "两点校准", 3: "三点校准"}
+            mode_name = mode_names.get(self.calibration_mode, f"{self.calibration_mode}点校准")
+            self.calibration_label.setText(f"✓ {mode_name}")
+            
+            cal_lines = []
+            for ph_val, adc_val in new_points:
+                cal_lines.append(f"• pH {ph_val:.2f} → ADC {adc_val}")
+            self.cal_text.setText("\n".join(cal_lines))
             
             # 保存配置到文件
             self.save_config()
@@ -2478,69 +2501,65 @@ class ForceSensorWidget(QWidget):
 
 
 class CalibrationDialog(QDialog):
-    """校准参数编辑对话框"""
+    """校准参数编辑对话框 - 支持单点/两点/三点校准"""
     
     def __init__(self, calibration_points, parent=None):
         super().__init__(parent)
         self.calibration_points = calibration_points
+        self.calibration_mode = len(calibration_points) if calibration_points else 2
         self.init_ui()
     
     def init_ui(self):
         self.setWindowTitle("编辑校准参数")
         self.setModal(True)
-        self.setFixedSize(450, 350)
+        self.setFixedSize(500, 500)
         
         layout = QVBoxLayout()
         
-        # 说明文字
         info_label = QLabel(
-            "请输入三点校准的标准缓冲液 pH 值及其对应的 ADC 原始值：\n"
-            "• 酸性缓冲液（如 pH 4.00）\n"
-            "• 中性缓冲液（如 pH 6.86）\n"
-            "• 碱性缓冲液（如 pH 9.18）"
+            "请选择校准模式并输入标准缓冲液 pH 值及其对应的 ADC 原始值："
         )
         info_label.setStyleSheet("color: #666; padding: 10px;")
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
         
-        # 创建输入框
+        mode_group = QGroupBox("校准模式")
+        mode_layout = QVBoxLayout()
+        
+        self.mode_buttons = []
+        modes = [
+            (1, "单点校准", "仅使用一个参考点，需要已知理论斜率（约 -0.5 pH/V）"),
+            (2, "两点校准", "线性拟合，适合大多数常规测量"),
+            (3, "三点校准", "二次拟合，精度最高，推荐用于精确实验")
+        ]
+        
+        for count, label, desc in modes:
+            rb_layout = QHBoxLayout()
+            rb = QRadioButton(f"{label}")
+            rb.setProperty("mode", count)
+            rb.setToolTip(desc)
+            
+            if count == self.calibration_mode:
+                rb.setChecked(True)
+            
+            rb.toggled.connect(self.on_mode_changed)
+            rb_layout.addWidget(rb)
+            rb_layout.addWidget(QLabel(f"({desc})"))
+            rb_layout.addStretch()
+            mode_layout.addLayout(rb_layout)
+            
+            self.mode_buttons.append(rb)
+        
+        mode_group.setLayout(mode_layout)
+        layout.addWidget(mode_group)
+        
+        points_group = QGroupBox("校准点设置")
+        self.points_layout = QVBoxLayout()
         self.point_widgets = []
-        point_names = ["酸性缓冲液 (点 1)", "中性缓冲液 (点 2)", "碱性缓冲液 (点 3)"]
+        self._create_point_inputs()
+        points_group.setLayout(self.points_layout)
+        layout.addWidget(points_group)
         
-        for i, (name, (ph_val, adc_val)) in enumerate(zip(point_names, self.calibration_points)):
-            group = QGroupBox(name)
-            group_layout = QHBoxLayout()
-            
-            # pH 值输入
-            ph_label = QLabel("pH 值:")
-            group_layout.addWidget(ph_label)
-            
-            self.ph_input = QLineEdit(str(ph_val))
-            self.ph_input.setFixedWidth(80)
-            self.ph_input.setAlignment(Qt.AlignmentFlag.AlignRight)
-            group_layout.addWidget(self.ph_input)
-            
-            group_layout.addWidget(QLabel("→"))
-            
-            # ADC 值输入
-            adc_label = QLabel("ADC 值:")
-            group_layout.addWidget(adc_label)
-            
-            self.adc_input = QLineEdit(str(adc_val))
-            self.adc_input.setFixedWidth(80)
-            self.adc_input.setAlignment(Qt.AlignmentFlag.AlignRight)
-            group_layout.addWidget(self.adc_input)
-            
-            group_layout.addStretch()
-            group.setLayout(group_layout)
-            layout.addWidget(group)
-            
-            self.point_widgets.append({
-                'ph': self.ph_input,
-                'adc': self.adc_input
-            })
-        
-        # 按钮
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
@@ -2583,12 +2602,72 @@ class CalibrationDialog(QDialog):
         layout.addLayout(button_layout)
         self.setLayout(layout)
     
+    def _create_point_inputs(self):
+        for widget in self.point_widgets:
+            widget['group'].deleteLater()
+        self.point_widgets.clear()
+        
+        point_names_1 = ["参考缓冲液 (点 1)"]
+        point_names_2 = ["低 pH 缓冲液 (点 1)", "高 pH 缓冲液 (点 2)"]
+        point_names_3 = ["酸性缓冲液 (点 1)", "中性缓冲液 (点 2)", "碱性缓冲液 (点 3)"]
+        
+        names_map = {1: point_names_1, 2: point_names_2, 3: point_names_3}
+        point_names = names_map.get(self.calibration_mode, point_names_2)
+        
+        defaults = {
+            1: [(7.00, 2281)],
+            2: [(4.00, 2555), (9.18, 2030)],
+            3: [(4.00, 2555), (6.86, 2281), (9.18, 2030)]
+        }
+        default_points = defaults.get(self.calibration_mode, defaults[2])
+        
+        for i, name in enumerate(point_names):
+            group = QGroupBox(name)
+            group_layout = QHBoxLayout()
+            
+            ph_label = QLabel("pH 值:")
+            group_layout.addWidget(ph_label)
+            
+            ph_input = QLineEdit(str(default_points[i][0]) if i < len(default_points) else "7.00")
+            ph_input.setFixedWidth(80)
+            ph_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+            group_layout.addWidget(ph_input)
+            
+            group_layout.addWidget(QLabel("→"))
+            
+            adc_label = QLabel("ADC/电压:")
+            group_layout.addWidget(adc_label)
+            
+            adc_input = QLineEdit(str(default_points[i][1]) if i < len(default_points) else "2281")
+            adc_input.setFixedWidth(80)
+            adc_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+            group_layout.addWidget(adc_input)
+            
+            group_layout.addStretch()
+            group.setLayout(group_layout)
+            self.points_layout.addWidget(group)
+            
+            self.point_widgets.append({
+                'group': group,
+                'ph': ph_input,
+                'adc': adc_input
+            })
+    
+    def on_mode_changed(self):
+        sender = self.sender()
+        if sender.isChecked():
+            self.calibration_mode = sender.property("mode")
+            self._create_point_inputs()
+    
+    def get_calibration_mode(self):
+        return self.calibration_mode
+    
     def get_calibration_points(self):
         """获取校准参数"""
         points = []
         for widget in self.point_widgets:
             ph_val = float(widget['ph'].text())
-            adc_val = int(widget['adc'].text())
+            adc_val = float(widget['adc'].text())
             points.append((ph_val, adc_val))
         return points
 
