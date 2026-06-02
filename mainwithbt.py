@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 物理实验数据采集软件
-基于 PyQt6 的 Win11 风格界面
 支持多种传感器模块的数据采集和管理
 """
 
@@ -984,7 +983,7 @@ class HomePageWidget(QWidget):
         subtitle.setStyleSheet("color: #666; margin-bottom: 15px;")
         title_layout.addWidget(subtitle)
         
-        version = QLabel("版本 v1.2.2 | MIT 开源协议 | Win11 风格界面")
+        version = QLabel("版本 v1.2.3 | MIT 开源协议")
         version.setFont(QFont("Microsoft YaHei", 10))
         version.setStyleSheet("color: #999;")
         title_layout.addWidget(version)
@@ -999,9 +998,7 @@ class HomePageWidget(QWidget):
             "PhysChem-DigitizerP 是一个开源的物理化学实验数字化采集系统，"
             "旨在为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
             "\n\n"
-            "✅ 完全开源（硬件+软件） | "
-            "💰 单传感器成本 < ¥30 | "
-            "📊 测量精度 ±0.3cm | "
+            "✅ 完全开源（硬件+软件） | 
             "🔬 适合教学实验"
         )
         intro_text.setWordWrap(True)
@@ -1112,7 +1109,7 @@ class HomePageWidget(QWidget):
         right_layout = QVBoxLayout(right_tech)
         
         support_features = [
-            "✅ Win11 风格现代化界面",
+            "✅ 现代化界面",
             "✅ 支持深色/浅色主题",
             "✅ 配置自动保存 (JSON)",
             "✅ 多种传感器支持",
