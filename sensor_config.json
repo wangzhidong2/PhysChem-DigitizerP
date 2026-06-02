@@ -12,5 +12,10 @@
     ],
     "calibration_mode": 2,
     "sample_interval_ms": 100
+  },
+  "voltage_sensor": {
+    "adc_bits": 12,
+    "divider_ratio": 1.0,
+    "amp_ratio": 1.0
   }
 }
