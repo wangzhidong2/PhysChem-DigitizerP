@@ -1,5 +1,10 @@
 # HX711 力/质量传感器模块使用说明
 
+<p align="center">
+  <img src="../../docs/images/实拍图.jpg" alt="力传感器实拍" width="600"/>
+</p>
+<p align="center">图1: 力/质量传感器模块实物</p>
+
 ## 📋 BOM 物料清单
 
 | 组件 | 规格/型号 | 数量 | 备注 |
@@ -25,6 +30,11 @@ ESP32-S3 开发板       HX711 模块
    GPIO5          →      SCK (PD_SCK)
 ```
 
+<p align="center">
+  <img src="../../docs/images/接线指南一.png" alt="接线指南一" width="600"/>
+</p>
+<p align="center">图2: ESP32-S3 与 HX711 模块接线示意图</p>
+
 ### HX711 模块 ↔ 称重传感器
 
 ```
@@ -37,6 +47,11 @@ HX711 模块           称重传感器
    B+            →      通道B正极（未使用）
    B-            →      通道B负极（未使用）
 ```
+
+<p align="center">
+  <img src="../../docs/images/接线指南二.png" alt="接线指南二" width="600"/>
+</p>
+<p align="center">图3: HX711 模块与称重传感器接线示意图</p>
 
 **固件代码**: [force.ino](force.ino)
 
@@ -53,6 +68,11 @@ HX711 模块           称重传感器
 2. **称重传感器线序**：因厂家不同可能有所差异，请以传感器标注为准。常见线序为：红=E+、黑=E-、绿=A+、白=A-
 3. **DT/SCK 引脚**：数字信号引脚，连接到 ESP32-S3 的 GPIO4 和 GPIO5
 4. **接线牢固**：传感器接线松动会导致读数跳动，请确保所有连接牢固
+
+<p align="center">
+  <img src="../../docs/images/组装注意事项.png" alt="组装注意事项" width="600"/>
+</p>
+<p align="center">图4: 力传感器模块组装注意事项</p>
 
 ---
 
