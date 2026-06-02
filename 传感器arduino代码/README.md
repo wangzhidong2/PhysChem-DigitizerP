@@ -16,9 +16,12 @@
 │   ├── README.md                # 使用说明
 │   ├── ph esp32.ino             # ESP32-S3 固件
 │   └── PH传感器原理图.pdf        # 接线原理图
-└── 力传感器/                     # HX711 力/质量传感器模块
+├── 力传感器/                     # HX711 力/质量传感器模块
+│   ├── README.md                # 使用说明
+│   └── force.ino                # ESP32-S3 固件
+└── 电压/                         # ESP32 ADC 电压采集模块
     ├── README.md                # 使用说明
-    └── force.ino                # ESP32-S3 固件
+    └── ESP32_ADC_Raw_Data.ino   # ESP32-S3 ADC 采集固件
 ```
 
 ## 📋 支持的传感器
@@ -28,6 +31,7 @@
 | 超声波测距 | HC-SR04 | ESP32, ESP8266 | ✅ 已完成 |
 | pH 值检测 | SEN0161 | ESP32-S3 | ✅ 已完成 |
 | 力/质量测量 | HX711 | ESP32-S3 | ✅ 已完成 |
+| 电压采集 | ESP32 内置 ADC | ESP32-S3 | ✅ 已完成 |
 
 ## 🔧 通用配置
 
