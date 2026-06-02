@@ -998,7 +998,9 @@ class HomePageWidget(QWidget):
             "PhysChem-DigitizerP 是一个开源的物理化学实验数字化采集系统，"
             "旨在为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
             "\n\n"
-            "✅ 完全开源（硬件+软件） | 
+            "✅ 完全开源（硬件+软件） | "
+            "💰 单传感器成本 < ¥30 | "
+            "📊 测量精度 ±0.3cm | "
             "🔬 适合教学实验"
         )
         intro_text.setWordWrap(True)
