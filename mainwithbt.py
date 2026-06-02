@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QListWidget, QListWidgetItem, QMessageBox, QComboBox,
                             QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox,
                             QStyle, QDialog, QLineEdit, QRadioButton, QScrollArea,
-                            QInputDialog)
+                            QInputDialog, QGridLayout)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
 import serial
@@ -1019,8 +1019,10 @@ class HomePageWidget(QWidget):
         
         # 物理学科
         physics_group = QGroupBox("⚛️ 物理实验模块")
-        physics_layout = QVBoxLayout(physics_group)
-        
+        physics_layout = QGridLayout(physics_group)
+        physics_layout.setSpacing(15)
+        physics_layout.setContentsMargins(10, 10, 10, 10)
+
         physics_modules = [
             {
                 'name': '超声波位移',
@@ -1047,13 +1049,12 @@ class HomePageWidget(QWidget):
                 'detail': 'ADC位数选择 | 分压比/放大倍数 | 实时电压曲线'
             }
         ]
-        
-        for module in physics_modules:
+
+        for i, module in enumerate(physics_modules):
             module_card = self.create_clickable_module_card(module, '#28a745')
             module_card.setProperty('module_name', module['name'])
-            physics_layout.addWidget(module_card)
-        
-        physics_layout.addStretch()
+            row, col = divmod(i, 2)
+            physics_layout.addWidget(module_card, row, col)
         category_layout.addWidget(physics_group, stretch=1)
         
         # 化学学科
@@ -1180,9 +1181,9 @@ class HomePageWidget(QWidget):
     
     def create_clickable_module_card(self, module_info, color):
         """创建可点击的模块卡片"""
-        card = QPushButton()  # 使用 QPushButton 以支持点击事件
+        card = QPushButton()
         card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.setFixedHeight(100)
+        card.setFixedHeight(60)
         card.setStyleSheet(f"""
             QPushButton {{
                 background-color: white;
@@ -1201,42 +1202,26 @@ class HomePageWidget(QWidget):
             }}
         """)
         
-        card_layout = QVBoxLayout(card)
+        card_layout = QHBoxLayout(card)
         card_layout.setContentsMargins(15, 10, 15, 10)
         
-        # 第一行：图标 + 名称 + 箭头
-        header_layout = QHBoxLayout()
         icon_label = QLabel(module_info['icon'])
-        icon_label.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        icon_label.setFont(QFont("Arial", 22, QFont.Weight.Bold))
         icon_label.setStyleSheet(f"color: {color};")
-        header_layout.addWidget(icon_label)
+        card_layout.addWidget(icon_label)
         
         name_label = QLabel(module_info['name'])
-        name_label.setFont(QFont("Microsoft YaHei", 16, QFont.Weight.Bold))
+        name_label.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
         name_label.setStyleSheet("color: #333;")
-        header_layout.addWidget(name_label)
+        card_layout.addWidget(name_label)
         
-        header_layout.addStretch()
+        card_layout.addStretch()
+        
         arrow_label = QLabel("→")
-        arrow_label.setFont(QFont("Arial", 18))
+        arrow_label.setFont(QFont("Arial", 16))
         arrow_label.setStyleSheet(f"color: {color};")
-        header_layout.addWidget(arrow_label)
+        card_layout.addWidget(arrow_label)
         
-        card_layout.addLayout(header_layout)
-        
-        # 第二行：描述
-        desc_label = QLabel(module_info['desc'])
-        desc_label.setFont(QFont("Microsoft YaHei", 11))
-        desc_label.setStyleSheet("color: #555;")
-        card_layout.addWidget(desc_label)
-        
-        # 第三行：详细信息
-        detail_label = QLabel(module_info['detail'])
-        detail_label.setFont(QFont("Microsoft YaHei", 9))
-        detail_label.setStyleSheet("color: #888;")
-        card_layout.addWidget(detail_label)
-        
-        # 点击事件：发送信号
         card.clicked.connect(lambda: self.on_module_clicked(module_info['name']))
         
         return card
