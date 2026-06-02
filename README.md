@@ -144,7 +144,12 @@ A-          →    通道A负极（白色线）
 <p align="center">图3: 超声波速度测量界面</p>
 
 3. **pH 传感器模块**
-   - 三点校准功能（pH 4.00/6.86/9.18）
+   - 多模式校准功能（**单点 / 两点 / 三点校准**）
+     - **单点校准**：使用 Nernst 理论斜率（-59mV/pH），快速粗略校准
+     - **两点校准**：线性拟合，适用于一般测量场景
+     - **三点校准**：二次多项式拟合，高精度测量
+   - 校准模式动态切换，UI 根据所选模式自动调整
+   - 支持 ADC 原始值 / 电压值输入（适配带信号调理的传感器）
    - 实时 pH 值显示和曲线绘制
    - Python 程序内校准（非模块校准）
    - 数据统计（平均值、标准差）
@@ -154,7 +159,7 @@ A-          →    通道A负极（白色线）
 <p align="center">
   <img src="docs/images/ph_sensor.png" alt="pH传感器" width="800"/>
 </p>
-<p align="center">图4: pH 传感器测量界面（含三点校准）</p>
+<p align="center">图4: pH 传感器测量界面（含多模式校准）</p>
 
 4. **力/质量传感器模块**
    - 基于 HX711 24位高精度 ADC 的力/质量测量
@@ -369,39 +374,66 @@ def calculate_velocity(self):
 
 ---
 
-### 2. pH 传感器（三点校准二次多项式拟合）
+### 2. pH 传感器（多模式校准）
 
-**原理**：使用三个标准 pH 缓冲液（pH 4.00、6.86、9.18）进行校准，通过二次多项式拟合建立 ADC 值与 pH 值的关系。
+**原理**：支持单点、两点、三点三种校准模式，根据精度需求和实验条件灵活选择。
+
+#### 校准模式说明
+
+| 模式 | 拟合方法 | 适用场景 | 精度 |
+|------|----------|----------|------|
+| **单点校准** | Nernst 理论斜率（-59mV/pH） | 快速粗略校准，已知理论斜率时 | 一般 |
+| **两点校准** | 线性拟合 `pH = k·ADC + b` | 一般测量场景，覆盖常用 pH 范围 | 较高 |
+| **三点校准** | 二次多项式拟合 `pH = a·ADC² + b·ADC + c` | 高精度测量，非线性补偿 | 最高 |
 
 **数学表达式**：
 
+**单点校准**（Nernst 方程）：
+```
+pH = pH_ref + slope × (V - V_ref)
+```
+其中 `slope` 为 Nernst 理论斜率（-59.16 mV/pH @25°C）
+
+**两点校准**（线性拟合）：
+```
+pH = k·ADC + b
+```
+
+**三点校准**（二次多项式拟合）：
 ```
 pH = a·ADC² + b·ADC + c
 ```
 
 其中：
 - `a`、`b`、`c`：二次拟合系数（通过三点校准获得）
-- `ADC`：传感器输出的原始 ADC 值（0-4095）
+- `k`、`b`：线性拟合系数（通过两点校准获得）
+- `ADC`：传感器输出的原始 ADC 值（0-4095），或电压值（适配信号调理传感器）
 
-**代码实现**（参考 [main.py](file:///workspace/main.py#L827-L845)）：
+**代码实现**（参考 [main.py](file:///workspace/main.py#L1112-L1130)）：
 
 ```python
 def calculate_calibration_coefficients(self):
-    """计算三点校准的二次拟合系数"""
+    """根据校准点数量自动选择拟合方法"""
     ph_values = [p[0] for p in self.calibration_points]
     adc_values = [p[1] for p in self.calibration_points]
-    
-    # 使用二次多项式拟合: pH = a*ADC^2 + b*ADC + c
-    coefficients = np.polyfit(adc_values, ph_values, 2)
-    self.cal_coeffs = coefficients  # [a, b, c]
+    n_points = len(ph_values)
+
+    if n_points == 1:
+        # 单点校准：使用 Nernst 理论斜率
+        pass  # 使用固定斜率计算
+    elif n_points == 2:
+        # 两点校准：线性拟合
+        coefficients = np.polyfit(adc_values, ph_values, 1)
+        self.cal_coeffs = coefficients  # [k, b]
+    elif n_points >= 3:
+        # 三点校准：二次多项式拟合
+        coefficients = np.polyfit(adc_values, ph_values, 2)
+        self.cal_coeffs = coefficients  # [a, b, c]
 
 def adc_to_ph(self, adc_value):
-    """将ADC原始值转换为pH值（使用三点校准）"""
-    a, b, c = self.cal_coeffs
-    ph_value = a * (adc_value ** 2) + b * adc_value + c
-    
-    # 限制pH值在合理范围内（0-14）
-    return max(0.0, min(14.0, ph_value))
+    """将ADC原始值转换为pH值"""
+    # 根据校准模式动态选择转换公式
+    ...
 ```
 
 **默认校准参数**：
@@ -654,7 +686,7 @@ python test_serial.py
 
 - **[Arduino 代码说明](传感器arduino代码/README.md)** - 传感器固件开发指南、目录结构与代码规范
 - **[超声波位移传感器使用说明](传感器arduino代码/超声波位移传感器/README.md)** - HC-SR04 接线指南、固件说明、校准方法与性能优化
-- **[pH 传感器使用说明](传感器arduino代码/ph传感器/README.md)** - pH 传感器接线、三点校准步骤、电极保养与常见问题
+- **[pH 传感器使用说明](传感器arduino代码/ph传感器/README.md)** - pH 传感器接线、多模式校准步骤（单点/两点/三点）、电极保养与常见问题
 - **[力传感器使用说明](传感器arduino代码/力传感器/README.md)** - HX711 力/质量传感器接线、去皮校准、数据采集与常见问题
 
 ---
