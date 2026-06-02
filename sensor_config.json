@@ -1,0 +1,16 @@
+{
+  "ph_sensor": {
+    "calibration_points": [
+      [
+        4.0,
+        2555.0
+      ],
+      [
+        9.18,
+        2030.0
+      ]
+    ],
+    "calibration_mode": 2,
+    "sample_interval_ms": 100
+  }
+}
