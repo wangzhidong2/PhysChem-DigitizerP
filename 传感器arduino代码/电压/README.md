@@ -36,7 +36,7 @@ ESP32-S3 开发板       外部电压源/传感器
    GND           ←      GND（共地）
 ```
 
-**固件代码**: [ESP32_ADC_Raw_Data.ino](ESP32_ADC_Raw_Data.ino)
+**固件代码**: [ESP32_Voltage_Sensor.ino](ESP32_Voltage_Sensor.ino)
 
 **引脚定义**（来自固件）：
 ```cpp
@@ -142,7 +142,7 @@ void loop() {
 
 ### 操作流程
 
-1. **烧录固件**：使用 Arduino IDE 将 `ESP32_ADC_Raw_Data.ino` 烧录至 ESP32-S3
+1. **烧录固件**：使用 Arduino IDE 将 `ESP32_Voltage_Sensor.ino` 烧录至 ESP32-S3
 2. **连接硬件**：按照接线指南连接待测电压源
 3. **打开上位机程序**：运行 `main.py`，选择电压传感器模块
 4. **连接串口**：选择正确的 COM 口并连接
