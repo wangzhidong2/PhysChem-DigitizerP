@@ -42,3 +42,4 @@
 __pycache__/mainwithbt.cpython-313.pyc
 .gitignore
 sensor_config.json
+.vscode/settings.json
