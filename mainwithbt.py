@@ -267,7 +267,7 @@ def scan_ble_devices():
 
 class UltrasonicWidget(QWidget):
     """超声波位移模块界面"""
-    
+
     def __init__(self):
         super().__init__()
         self.serial_thread = None
@@ -275,6 +275,11 @@ class UltrasonicWidget(QWidget):
         self.timestamps = []
         self.start_time = None
         self.start_timestamp_us = 0  # 记录第一个数据点的时间戳
+
+        # 采样频率设置（毫秒）
+        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        self.last_sample_time_ms = 0   # 上次采样时间
+
         self.init_ui()
     
     def init_ui(self):
@@ -301,14 +306,35 @@ class UltrasonicWidget(QWidget):
         control_layout.addWidget(self.connect_btn)
         
         control_layout.addStretch()
-        
-        # 采样率设置
-        control_layout.addWidget(QLabel("采样率:"))
-        self.sample_rate_spin = QSpinBox()
-        self.sample_rate_spin.setRange(1, 100)
-        self.sample_rate_spin.setValue(50)
-        self.sample_rate_spin.setSuffix(" Hz")
-        control_layout.addWidget(self.sample_rate_spin)
+
+        # 采样频率显示
+        control_layout.addWidget(QLabel("采样:"))
+        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
+        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
+        control_layout.addWidget(self.sample_rate_label)
+
+        # 采样频率设置按钮
+        sample_settings_btn = QPushButton("⚙️")
+        sample_settings_btn.setFixedWidth(40)
+        sample_settings_btn.setToolTip("设置采样频率")
+        sample_settings_btn.clicked.connect(self.edit_sample_rate)
+        sample_settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        control_layout.addWidget(sample_settings_btn)
+
+        control_layout.addStretch()
         
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
@@ -430,6 +456,7 @@ class UltrasonicWidget(QWidget):
         self.timestamps.clear()
         self.start_time = datetime.now()
         self.data_text.clear()
+        self.last_sample_time_ms = 0  # 重置采样时间
         
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -472,6 +499,14 @@ class UltrasonicWidget(QWidget):
                     # 过滤无效数据（回波时间过小或过大）
                     if echo_time < 100 or echo_time > 60000:  # 100µs - 60ms
                         return
+
+                    # 采样频率控制：检查是否达到采样间隔
+                    timestamp_ms = timestamp_us // 1000  # 转换为毫秒
+                    if timestamp_ms - self.last_sample_time_ms < self.sample_interval_ms:
+                        return  # 未达到采样间隔，跳过此数据
+
+                    # 更新上次采样时间
+                    self.last_sample_time_ms = timestamp_ms
                     
                     # 计算距离（厘米）
                     distance_cm = echo_time / 58.0
@@ -545,7 +580,19 @@ class UltrasonicWidget(QWidget):
                                max(self.data_points) + 0.1 * distance_range)
             
             self.canvas.draw()
-    
+
+    def edit_sample_rate(self):
+        """编辑采样频率对话框"""
+        dialog = SampleRateDialog(self.sample_interval_ms, self)
+        if dialog.exec() == 1:  # QDialog.Accepted
+            new_interval_ms = dialog.get_sample_interval()
+            self.sample_interval_ms = new_interval_ms
+            freq = 1000 // new_interval_ms
+            self.sample_rate_label.setText(f"{freq}Hz")
+            QMessageBox.information(self, "成功",
+                                   f"采样频率已更新为 {freq} Hz！\n"
+                                   f"采样间隔：{new_interval_ms} ms")
+
     def save_data(self):
         """保存数据到文件"""
         if len(self.data_points) == 0:
@@ -577,7 +624,7 @@ class UltrasonicWidget(QWidget):
 
 class UltrasonicVelocityWidget(QWidget):
     """超声波速度模块界面 - 回声定位法"""
-    
+
     def __init__(self):
         super().__init__()
         self.serial_thread = None
@@ -586,6 +633,11 @@ class UltrasonicVelocityWidget(QWidget):
         self.velocity_data = []    # 速度数据
         self.echo_time_data = []   # 原始回波时间数据 (µs)
         self.start_timestamp_us = 0
+
+        # 采样频率设置（毫秒）
+        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        self.last_sample_time_ms = 0   # 上次采样时间
+
         self.init_ui()
     
     def init_ui(self):
@@ -612,7 +664,36 @@ class UltrasonicVelocityWidget(QWidget):
         control_layout.addWidget(self.connect_btn)
         
         control_layout.addStretch()
-        
+
+        # 采样频率显示
+        control_layout.addWidget(QLabel("采样:"))
+        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
+        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
+        control_layout.addWidget(self.sample_rate_label)
+
+        # 采样频率设置按钮
+        sample_settings_btn = QPushButton("⚙️")
+        sample_settings_btn.setFixedWidth(40)
+        sample_settings_btn.setToolTip("设置采样频率")
+        sample_settings_btn.clicked.connect(self.edit_sample_rate)
+        sample_settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        control_layout.addWidget(sample_settings_btn)
+
+        control_layout.addStretch()
+
         # 速度计算参数
         control_layout.addWidget(QLabel("采样窗口:"))
         self.window_size_spin = QSpinBox()
@@ -742,6 +823,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.velocity_data.clear()
         self.echo_time_data.clear()  # 清除回波时间数据
         self.data_text.clear()
+        self.last_sample_time_ms = 0  # 重置采样时间
         
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -784,6 +866,14 @@ class UltrasonicVelocityWidget(QWidget):
                     # 过滤无效数据
                     if echo_time < 100 or echo_time > 60000:
                         return
+
+                    # 采样频率控制：检查是否达到采样间隔
+                    timestamp_ms = timestamp_us // 1000  # 转换为毫秒
+                    if timestamp_ms - self.last_sample_time_ms < self.sample_interval_ms:
+                        return  # 未达到采样间隔，跳过此数据
+
+                    # 更新上次采样时间
+                    self.last_sample_time_ms = timestamp_ms
                     
                     # 计算距离（厘米）
                     distance_cm = echo_time / 58.0
@@ -912,9 +1002,21 @@ class UltrasonicVelocityWidget(QWidget):
             # 自动调整布局
             self.figure.tight_layout()
             self.canvas.draw()
-    
+
+    def edit_sample_rate(self):
+        """编辑采样频率对话框"""
+        dialog = SampleRateDialog(self.sample_interval_ms, self)
+        if dialog.exec() == 1:  # QDialog.Accepted
+            new_interval_ms = dialog.get_sample_interval()
+            self.sample_interval_ms = new_interval_ms
+            freq = 1000 // new_interval_ms
+            self.sample_rate_label.setText(f"{freq}Hz")
+            QMessageBox.information(self, "成功",
+                                   f"采样频率已更新为 {freq} Hz！\n"
+                                   f"采样间隔：{new_interval_ms} ms")
+
     def save_data(self):
-        """保存数据到文件"""
+        """保存数据到文件 - 超声波速度"""
         if len(self.distance_data) == 0:
             QMessageBox.warning(self, "警告", "没有数据可保存")
             return
@@ -1778,6 +1880,10 @@ class VoltageSensorWidget(QWidget):
         self.raw_data = []
         self.start_timestamp_ms = 0
 
+        # 采样频率设置（毫秒）
+        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        self.last_sample_time_ms = 0   # 上次采样时间
+
         self.adc_bits = 12
         self.divider_ratio = 1.0
         self.amp_ratio = 1.0
@@ -1795,13 +1901,15 @@ class VoltageSensorWidget(QWidget):
             self.adc_bits = config.get('adc_bits', 12)
             self.divider_ratio = config.get('divider_ratio', 1.0)
             self.amp_ratio = config.get('amp_ratio', 1.0)
+            self.sample_interval_ms = config.get('sample_interval_ms', 100)
         return config
 
     def save_config(self):
         config = {
             'adc_bits': self.adc_bits,
             'divider_ratio': self.divider_ratio,
-            'amp_ratio': self.amp_ratio
+            'amp_ratio': self.amp_ratio,
+            'sample_interval_ms': self.sample_interval_ms
         }
         return save_sensor_config('voltage_sensor', config)
 
@@ -1866,6 +1974,35 @@ class VoltageSensorWidget(QWidget):
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
         conn_layout.addWidget(self.disconnect_btn)
+
+        conn_layout.addStretch()
+
+        # 采样频率显示
+        conn_layout.addWidget(QLabel("采样:"))
+        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
+        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
+        conn_layout.addWidget(self.sample_rate_label)
+
+        # 采样频率设置按钮
+        sample_settings_btn = QPushButton("⚙️")
+        sample_settings_btn.setFixedWidth(40)
+        sample_settings_btn.setToolTip("设置采样频率")
+        sample_settings_btn.clicked.connect(self.edit_sample_rate)
+        sample_settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        conn_layout.addWidget(sample_settings_btn)
 
         conn_group.setLayout(conn_layout)
         layout.addWidget(conn_group)
@@ -2143,6 +2280,7 @@ class VoltageSensorWidget(QWidget):
         self.time_data.clear()
         self.raw_data.clear()
         self.data_text.clear()
+        self.last_sample_time_ms = 0  # 重置采样时间
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.save_btn.setEnabled(False)
@@ -2189,6 +2327,13 @@ class VoltageSensorWidget(QWidget):
                 if len(parts) == 2:
                     timestamp_ms = int(parts[0])
                     raw_value = int(parts[1])
+
+                    # 采样频率控制：检查是否达到采样间隔
+                    if timestamp_ms - self.last_sample_time_ms < self.sample_interval_ms:
+                        return  # 未达到采样间隔，跳过此数据
+
+                    # 更新上次采样时间
+                    self.last_sample_time_ms = timestamp_ms
 
                     if len(self.time_data) == 0:
                         self.start_timestamp_ms = timestamp_ms
@@ -2253,6 +2398,20 @@ class VoltageSensorWidget(QWidget):
             self.figure.tight_layout()
             self.canvas.draw()
 
+    def edit_sample_rate(self):
+        """编辑采样频率对话框"""
+        dialog = SampleRateDialog(self.sample_interval_ms, self)
+        if dialog.exec() == 1:  # QDialog.Accepted
+            new_interval_ms = dialog.get_sample_interval()
+            self.sample_interval_ms = new_interval_ms
+            freq = 1000 // new_interval_ms
+            self.sample_rate_label.setText(f"{freq}Hz")
+            self.save_config()
+            QMessageBox.information(self, "成功",
+                                   f"采样频率已更新为 {freq} Hz！\n"
+                                   f"采样间隔：{new_interval_ms} ms\n"
+                                   f"配置已自动保存。")
+
     def save_data(self):
         if len(self.voltage_data) == 0:
             QMessageBox.warning(self, "警告", "没有数据可保存")
@@ -2297,7 +2456,11 @@ class ForceSensorWidget(QWidget):
         self.time_data = []
         self.raw_data = []
         self.start_timestamp_ms = 0
-        
+
+        # 采样频率设置（毫秒）
+        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        self.last_sample_time_ms = 0   # 上次采样时间
+
         self.offset = 0
         self.scale = 1.0
         self.calibrated = False
@@ -2357,8 +2520,9 @@ class ForceSensorWidget(QWidget):
             self.calibrated = config.get('calibrated', False)
             self.cal_known_weight = config.get('cal_known_weight', 100.0)
             self.current_unit = config.get('unit', 'g')
+            self.sample_interval_ms = config.get('sample_interval_ms', 100)
         return config
-    
+
     def save_config(self):
         """保存力传感器配置"""
         config = {
@@ -2366,7 +2530,8 @@ class ForceSensorWidget(QWidget):
             'scale': self.scale,
             'calibrated': self.calibrated,
             'cal_known_weight': self.cal_known_weight,
-            'unit': self.current_unit
+            'unit': self.current_unit,
+            'sample_interval_ms': self.sample_interval_ms
         }
         return save_sensor_config('force_sensor', config)
     
@@ -2428,7 +2593,36 @@ class ForceSensorWidget(QWidget):
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
         conn_layout.addWidget(self.disconnect_btn)
-        
+
+        conn_layout.addStretch()
+
+        # 采样频率显示
+        conn_layout.addWidget(QLabel("采样:"))
+        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
+        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
+        conn_layout.addWidget(self.sample_rate_label)
+
+        # 采样频率设置按钮
+        sample_settings_btn = QPushButton("⚙️")
+        sample_settings_btn.setFixedWidth(40)
+        sample_settings_btn.setToolTip("设置采样频率")
+        sample_settings_btn.clicked.connect(self.edit_sample_rate)
+        sample_settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        conn_layout.addWidget(sample_settings_btn)
+
         conn_group.setLayout(conn_layout)
         layout.addWidget(conn_group)
         
@@ -2812,6 +3006,7 @@ class ForceSensorWidget(QWidget):
         self.time_data.clear()
         self.raw_data.clear()
         self.data_text.clear()
+        self.last_sample_time_ms = 0  # 重置采样时间
         
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -2883,7 +3078,14 @@ class ForceSensorWidget(QWidget):
                 if len(parts) == 2:
                     timestamp_ms = int(parts[0])
                     raw_value = int(parts[1])
-                    
+
+                    # 采样频率控制：检查是否达到采样间隔
+                    if timestamp_ms - self.last_sample_time_ms < self.sample_interval_ms:
+                        return  # 未达到采样间隔，跳过此数据
+
+                    # 更新上次采样时间
+                    self.last_sample_time_ms = timestamp_ms
+
                     if len(self.time_data) == 0:
                         self.start_timestamp_ms = timestamp_ms
                     
@@ -2967,7 +3169,21 @@ class ForceSensorWidget(QWidget):
             
             self.figure.tight_layout()
             self.canvas.draw()
-    
+
+    def edit_sample_rate(self):
+        """编辑采样频率对话框"""
+        dialog = SampleRateDialog(self.sample_interval_ms, self)
+        if dialog.exec() == 1:  # QDialog.Accepted
+            new_interval_ms = dialog.get_sample_interval()
+            self.sample_interval_ms = new_interval_ms
+            freq = 1000 // new_interval_ms
+            self.sample_rate_label.setText(f"{freq}Hz")
+            self.save_config()
+            QMessageBox.information(self, "成功",
+                                   f"采样频率已更新为 {freq} Hz！\n"
+                                   f"采样间隔：{new_interval_ms} ms\n"
+                                   f"配置已自动保存。")
+
     def save_data(self):
         if len(self.force_data) == 0:
             QMessageBox.warning(self, "警告", "没有数据可保存")
@@ -3192,14 +3408,15 @@ class SampleRateDialog(QDialog):
     def init_ui(self):
         self.setWindowTitle("设置采样频率")
         self.setModal(True)
-        self.setFixedSize(400, 280)
+        self.setFixedSize(400, 260)
         
         layout = QVBoxLayout()
         
         # 说明文字
         info_label = QLabel(
             "请选择数据采集的采样频率：\n"
-            "频率越高，数据点越密集，但会增加数据传输负担。"
+            "下位机最大输出频率为 10Hz，设定高于此值将接收全部数据。\n"
+            "频率越低，数据点越稀疏，适合长时间监测。"
         )
         info_label.setStyleSheet("color: #666; padding: 10px;")
         info_label.setWordWrap(True)
@@ -3211,13 +3428,12 @@ class SampleRateDialog(QDialog):
         
         self.preset_buttons = []
         presets = [
-            (20, "50 Hz", "高速采样，适合快速变化的信号"),
-            (10, "100 Hz", "超高速采样，适合瞬态信号捕捉"),
-            (50, "20 Hz", "中速采样，适合一般实验"),
-            (100, "10 Hz", "标准采样，适合大多数实验"),
-            (200, "5 Hz", "低速采样，适合缓慢变化的信号"),
-            (500, "2 Hz", "超低速采样，节省存储空间"),
-            (1000, "1 Hz", "最低速采样，长时间监测")
+            (100, "10 Hz", "全速接收（下位机最大频率），适合大多数实验"),
+            (200, "5 Hz", "中速采样，适合一般变化信号"),
+            (500, "2 Hz", "低速采样，适合缓慢变化的信号"),
+            (1000, "1 Hz", "超低速采样，长时间监测"),
+            (2000, "0.5 Hz", "极低速采样，每2秒一个点"),
+            (5000, "0.2 Hz", "最低速采样，每5秒一个点")
         ]
         
         for interval_ms, label, desc in presets:
@@ -3246,7 +3462,7 @@ class SampleRateDialog(QDialog):
         
         custom_layout.addWidget(QLabel("采样间隔:"))
         self.custom_input = QSpinBox()
-        self.custom_input.setRange(10, 10000)
+        self.custom_input.setRange(100, 10000)
         self.custom_input.setValue(self.current_interval_ms)
         self.custom_input.setSuffix(" ms")
         self.custom_input.setFixedWidth(120)

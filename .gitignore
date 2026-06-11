@@ -43,3 +43,5 @@ __pycache__/mainwithbt.cpython-313.pyc
 .gitignore
 sensor_config.json
 .vscode/settings.json
+.trae/rules/git-commit-message.md
+sensor_config.json
