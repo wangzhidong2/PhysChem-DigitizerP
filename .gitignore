@@ -45,3 +45,5 @@ sensor_config.json
 .vscode/settings.json
 .trae/rules/git-commit-message.md
 sensor_config.json
+voltage_sensor_data_20260612_182909.csv
+voltage_sensor_data_20260612_190922.csv
