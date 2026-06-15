@@ -48,6 +48,7 @@ pip install bleak
 通过 Arduino IDE 烧录。开发板管理器地址：
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
 - ESP32: `https://dl.espressif.com/dl/package_esp32_index.json`
+- ESP32 国内镜像: `https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json`
 
 ## 架构说明
 
@@ -114,6 +115,7 @@ Located in `传感器arduino代码/` (Chinese directory names). Each subfolder h
 Flash via Arduino IDE. Board packages:
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
 - ESP32: `https://dl.espressif.com/dl/package_esp32_index.json`
+- ESP32 CN mirror: `https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json`
 
 ## Architecture notes
 
