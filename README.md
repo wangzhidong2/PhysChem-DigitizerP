@@ -28,7 +28,7 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 <p align="center">
   <img src="docs/images/home.png" alt="主界面" width="800"/>
 </p>
-<p align="center">图1: 软件主界面 — 模块导航与项目概览</p>
+<p align="center">软件主界面 — 模块导航与项目概览</p>
 
 ### 🎯 项目目标
 
@@ -131,7 +131,7 @@ A-          →    通道A负极（白色线）
 <p align="center">
   <img src="docs/images/displacement.png" alt="超声波位移" width="800"/>
 </p>
-<p align="center">图2: 超声波位移测量界面</p>
+<p align="center">超声波位移测量界面</p>
 
 2. **速度测量模块**
    - 基于连续距离测量的速度计算
@@ -141,7 +141,7 @@ A-          →    通道A负极（白色线）
 <p align="center">
   <img src="docs/images/velocity.png" alt="超声波速度" width="800"/>
 </p>
-<p align="center">图3: 超声波速度测量界面</p>
+<p align="center">超声波速度测量界面</p>
 
 3. **pH 传感器模块**
    - 多模式校准功能（**单点 / 两点 / 三点校准**）
@@ -159,7 +159,7 @@ A-          →    通道A负极（白色线）
 <p align="center">
   <img src="docs/images/ph_sensor.png" alt="pH传感器" width="800"/>
 </p>
-<p align="center">图4: pH 传感器测量界面（含多模式校准）</p>
+<p align="center">pH 传感器测量界面（含多模式校准）</p>
 
 4. **力/质量传感器模块**
    - 基于 HX711 24位高精度 ADC 的力/质量测量
@@ -174,7 +174,7 @@ A-          →    通道A负极（白色线）
 <p align="center">
   <img src="docs/images/force.png" alt="力传感器" width="800"/>
 </p>
-<p align="center">图5: 力/质量传感器测量界面（含去皮与校准）</p>
+<p align="center">力/质量传感器测量界面（含去皮与校准）</p>
 
 5. **电压传感器模块**
    - 基于 ESP32-S3 内置 12 位 ADC 的模拟电压采集（0-3.3V）
@@ -189,7 +189,7 @@ A-          →    通道A负极（白色线）
 <p align="center">
   <img src="docs/images/voltage.png" alt="电压传感器" width="800"/>
 </p>
-<p align="center">图6: 电压传感器测量界面</p>
+<p align="center">电压传感器测量界面</p>
 
 6. **现代化界面**
    - Win11 风格设计语言
@@ -209,39 +209,38 @@ A-          →    通道A负极（白色线）
 
 ```
 PhysChem-DigitizerP/
-├── main.py                      # Python 主程序（PyQt6 界面）
-├── run.py                       # 启动脚本
-├── test_serial.py               # 串口连接测试工具
-├── README.md                    # 主文档（本文件）
-├── .gitignore                   # Git 忽略配置
-├── LICENSE                      # MIT 许可证
+├── mainwithbt.py               # Python 主程序（PyQt6 界面 + BLE 支持）
+├── test_serial.py              # 串口连接测试工具
+├── sensor_config.json          # 传感器校准配置（运行时自动生成）
+├── README.md                   # 主文档（本文件）
+├── AGENTS.md                   # 开发者指南
+├── .gitignore                  # Git 忽略配置
+├── LICENSE                     # MIT 许可证
+├── docs/
+│   └── images/                 # 文档图片
 └── 传感器arduino代码/
-    ├── README.md                # Arduino 代码说明
-    ├── ESP32_ADC_Raw_Data.ino   # 通用 ADC 采集代码
+    ├── README.md               # Arduino 代码说明
+    ├── ESP32_ADC_Raw_Data.ino  # 通用 ADC 采集代码
     ├── 超声波位移传感器/
-    │   ├── HC-SR04esp8266.ino   # ESP8266 传感器固件
-    │   └── HC-SR04esp32.ino     # ESP32 传感器固件
+    │   ├── HC-SR04esp32.ino    # ESP32 传感器固件
+    │   ├── HC-SR04esp8266.ino  # ESP8266 传感器固件
+    │   └── csbwithbt.ino       # ESP32-S3 + BLE 固件
     ├── ph传感器/
-    │   ├── README.md            # pH 传感器使用说明
-    │   ├── ph esp32.ino         # ESP32 pH 传感器固件
-    │   └── PH传感器原理图.pdf    # 传感器接线原理图
+    │   ├── ph esp32.ino        # ESP32-S3 pH 传感器固件
+    │   └── PH传感器原理图.pdf
     ├── 力传感器/
-    │   ├── README.md            # 力传感器使用说明
-    │   └── force.ino            # ESP32-S3 HX711 传感器固件
-    └── 电压/
-        ├── README.md            # 电压传感器使用说明
-        └── ESP32_ADC_Raw_Data.ino   # ESP32-S3 ADC 采集固件
+    │   ├── force.ino           # ESP32-S3 HX711 传感器固件
+    │   └── 资料（HX711称重模块商家提供的）/
+    ├── 电压/
+    │   ├── ESP32_Voltage_Sensor.ino  # ESP32-S3 ADC 采集固件
+    │   └── README.md
+    └── 电流传感器/
+        └── ESP32_ADC_Raw_Data.ino
 ```
 
 ---
 
 ## 🛠️ 软件安装
-
-### 软件特性
-- **Win11 风格界面**：现代化的界面设计，符合 Windows 11 设计语言
-- **侧边栏导航**：支持多个传感器模块的快速切换
-- **响应式布局**：自适应窗口大小，提供良好的用户体验
-- **模块化设计**：便于添加新的传感器模块
 
 #### 1. 环境要求
 
@@ -271,10 +270,6 @@ PhysChem-DigitizerP/
 #### 3. 安装 Python 软件
 
 ```bash
-# 克隆或下载项目到本地
-cd PhysChem-DigitizerP
-
-# 安装依赖包（或使用 pip install 手动安装）
 pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 ```
 
@@ -285,11 +280,7 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 ### 启动软件
 
 ```bash
-# 方式 1：使用启动脚本（推荐）
-python run.py
-
-# 方式 2：直接运行主程序
-python main.py
+python mainwithbt.py
 ```
 
 ### 操作流程
@@ -366,7 +357,7 @@ v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
 - `Δt`：两次发射的时间间隔 (s)
 - `vₛ`：声速 = 34000 cm/s
 
-**代码实现**（参考 [main.py](file:///workspace/main.py#L632-L675)）：
+**代码实现**（参考 `mainwithbt.py` 中的 `calculate_velocity` 方法）：
 
 ```python
 def calculate_velocity(self):
@@ -427,7 +418,7 @@ pH = a·ADC² + b·ADC + c
 - `k`、`b`：线性拟合系数（通过两点校准获得）
 - `ADC`：传感器输出的原始 ADC 值（0-4095），或电压值（适配信号调理传感器）
 
-**代码实现**（参考 [main.py](file:///workspace/main.py#L1112-L1130)）：
+**代码实现**（参考 `mainwithbt.py` 中的校准相关方法）：
 
 ```python
 def calculate_calibration_coefficients(self):
@@ -504,167 +495,28 @@ offset = -58720
 
 ## 🔍 故障排除
 
-### 问题现象
-软件能打开，但无法连接传感器，无法接收数据。
+### 快速诊断
 
-### 快速诊断步骤
-
-#### 1. 运行串口测试脚本
 ```bash
 python test_serial.py
 ```
-这个脚本会自动检测所有串口并测试连接状态。
 
-#### 2. 检查硬件连接
-- ✅ **USB 连接**: 确保开发板通过 USB 线正确连接到电脑
-- ✅ **电源指示灯**: 开发板上的电源指示灯应该亮起
-- ✅ **传感器接线**: 检查传感器模块接线是否正确
+该脚本自动检测所有串口并测试连接状态。
 
-#### 3. 检查 Arduino 代码
-- ✅ **代码上传**: 确认固件已正确上传到开发板
-- ✅ **波特率**: 确认代码中设置的波特率为 115200
+### 常见问题
 
-### 详细故障排除
-
-#### 步骤 1: 验证 Arduino 代码工作
-
-1. **使用 Arduino IDE 测试**:
-   - 打开 Arduino IDE
-   - 选择正确的开发板和端口
-   - 打开串口监视器
-   - 设置波特率为 115200
-   - 观察是否能看到 "START" 和后续数据
-
-2. **如果 Arduino IDE 能收到数据**:
-   - 说明硬件和代码都正常
-   - 问题在 Python 软件端
-
-3. **如果 Arduino IDE 收不到数据**:
-   - 检查硬件连接
-   - 重新上传代码
-   - 检查传感器模块是否正常工作
-
-#### 步骤 2: 检查 Python 软件
-
-1. **运行测试脚本**:
-   ```bash
-   python test_serial.py
-   ```
-
-2. **检查依赖包**:
-   ```bash
-   pip list | grep -E "(PyQt6|pyserial|matplotlib|numpy)"
-   ```
-   应该能看到:
-   - PyQt6
-   - pyserial
-   - matplotlib
-   - numpy
-
-3. **检查串口权限 (Windows)**:
-   - 打开设备管理器
-   - 查看 "端口 (COM 和 LPT)"
-   - 确认开发板对应的 COM 端口存在
-
-#### 步骤 3: 软件操作流程
-
-1. **启动软件**:
-   ```bash
-   python run.py
-   ```
-
-2. **正确操作顺序**:
-   - 选择对应的传感器模块
-   - 点击 "刷新" 按钮查看可用串口
-   - 选择正确的 COM 端口
-   - 点击 "连接" 按钮
-   - 状态应显示 "已连接，等待数据..."
-   - 点击 "开始采集"
-   - 观察数据接收
-
-### 常见问题及解决方案
-
-#### 问题 1: "未检测到任何串口设备"
-**原因**: USB 驱动问题或设备未识别
-**解决**:
-- 重新插拔 USB 线
-- 检查设备管理器中的串口设备
-- 安装 CH340G 驱动程序（常用）
-
-#### 问题 2: "串口连接失败"
-**原因**: 串口被占用或权限问题
-**解决**:
-- 关闭 Arduino IDE 和其他可能占用串口的程序
-- 以管理员身份运行 Python 软件
-- 重启电脑
-
-#### 问题 3: "连接成功但无数据"
-**原因**: 波特率不匹配或代码问题
-**解决**:
-- 确认 Arduino 代码波特率为 115200
-- 检查传感器模块是否正常工作
-- 在 Arduino IDE 中测试代码
-
-#### 问题 4: "数据格式错误"
-**原因**: 数据解析问题
-**解决**:
-- 确认数据格式正确
-- 检查是否有额外的空格或特殊字符
-
-### 常见问题速查
-
-| 问题 | 可能原因 | 解决方案 |
-|------|----------|----------|
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
 | 找不到串口 | 驱动未安装/USB 未连接 | 安装 CH340G/CP210x 驱动，重新插拔 USB |
 | 连接后无数据 | 波特率错误/固件未上传 | 确认波特率 115200，重新上传固件 |
 | 数据跳变异常 | 传感器干扰/接线松动 | 检查接线，远离干扰源 |
-| 图表不显示 | matplotlib 问题 | 重新安装 matplotlib |
+| 图表不显示 | matplotlib 问题 | `pip install --upgrade matplotlib` |
 
-### 诊断工具
+### 诊断步骤
 
-项目提供了专用的串口测试工具：
-
-```bash
-python test_serial.py
-```
-
-该工具会：
-- 自动检测所有可用串口
-- 测试每个串口的连接状态
-- 显示接收到的原始数据
-- 提供详细的故障诊断建议
-
-### 驱动程序安装
-
-#### CH340G 驱动
-1. 下载 CH340G 驱动程序
-2. 安装驱动程序
-3. 重新插拔 USB 线
-4. 在设备管理器中确认设备识别
-
-### 硬件测试
-
-#### 测试传感器模块
-1. 使用万用表测试 VCC 和 GND 电压
-2. 检查信号线连接
-3. 尝试更换传感器模块
-
-#### 测试开发板
-1. 上传简单的 LED 闪烁代码测试开发板
-2. 检查开发板上的指示灯
-3. 尝试更换 USB 线或电脑 USB 端口
-
-### 如果以上方法都无效
-
-1. **提供详细错误信息**:
-   - 运行 `test_serial.py` 的输出
-   - Python 软件中的错误提示
-   - 设备管理器截图
-
-2. **尝试替代方案**:
-   - 使用不同的电脑测试
-   - 尝试不同的 USB 端口
-   - 使用其他串口调试工具
+1. **验证固件**：打开 Arduino IDE 串口监视器（波特率 115200），应看到 `START` 和数据输出
+2. **检查驱动**：设备管理器 → 端口 (COM 和 LPT)，确认开发板 COM 端口存在
+3. **运行测试**：`python test_serial.py` 查看详细诊断信息
 
 ---
 
@@ -707,36 +559,20 @@ self.modules["新模块名称"] = new_module
 ```
 
 
-## 🖥️ 软件界面说明
-
-### 主界面布局
-- **左侧侧边栏**：模块选择区域
-- **右侧内容区**：当前模块的功能界面
+## 🖥️ 软件界面
 
 <p align="center">
   <img src="docs/images/settings.png" alt="设置界面" width="800"/>
 </p>
-<p align="center">图7: 设置界面 — 外观主题切换</p>
+<p align="center">设置界面 — 外观主题切换</p>
 
-### 通用界面元素
+### 界面元素
 
-#### 控制面板
-- **串口选择**：选择连接的串口设备
-- **刷新按钮**：刷新可用串口列表
-- **连接/断开按钮**：控制串口连接状态
-- **采样率设置**：部分模块支持调节数据采集频率
-
-#### 实时数据显示
-- **当前数据**：显示最新的测量数据
-- **统计信息**：显示数据点的统计信息
-- **数据记录**：显示详细的数据记录列表
-- **实时图表**：显示数据曲线
-
-#### 控制按钮
-- **开始采集**：开始数据采集
-- **停止采集**：停止数据采集
-- **保存数据**：将数据保存为 CSV 文件
-- **清除数据**：清空当前所有数据
+- **左侧侧边栏**：模块选择导航
+- **串口控制**：选择端口、刷新、连接/断开
+- **实时数据**：当前值、统计信息、数据记录
+- **图表区域**：实时数据曲线
+- **操作按钮**：开始/停止采集、保存数据、清除数据
 
 ---
 
@@ -744,29 +580,19 @@ self.modules["新模块名称"] = new_module
 
 欢迎贡献代码、报告问题或提出建议！
 
-### 贡献方式
-
-1. **提交 Issue**：报告 Bug 或提出功能建议
-2. **提交 PR**：修复问题或添加新功能
-3. **改进文档**：完善使用说明或添加示例
-4. **硬件测试**：测试不同传感器并提供反馈
-
 ### 开发环境设置
 
 ```bash
-# 克隆项目（GitHub）
+# GitHub
 git clone https://github.com/wangzhidong2/PhysChem-DigitizerP.git
-cd PhysChem-DigitizerP
 
-# 或克隆 Gitee 镜像（国内用户推荐）
+# Gitee（国内推荐）
 git clone https://gitee.com/wangzhidong2/PhysChem-DigitizerP.git
-cd PhysChem-DigitizerP
 
-# 或克隆 GitCode 镜像
+# GitCode
 git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
-cd PhysChem-DigitizerP
 
-# 安装依赖
+cd PhysChem-DigitizerP
 pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 ```
 
@@ -790,11 +616,7 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 
 ## 📧 联系方式
 
-如有问题或建议，请：
-1. 提交 [GitHub Issue](https://github.com/wangzhidong2/PhysChem-DigitizerP/issues)
-2. 提交 [Gitee Issue](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/issues)
-3. 提交 [GitCode Issue](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/issues)
-4. 查看本文件的故障排除章节
+如有问题或建议，请提交 [GitHub Issue](https://github.com/wangzhidong2/PhysChem-DigitizerP/issues) 或 [Gitee Issue](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/issues)。
 
 ## 🌐 项目地址
 
@@ -803,17 +625,5 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 - **GitCode**: [https://gitcode.com/wangzhidong2/PhysChem-DigitizerP](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
 
 ---
-
-## 🌟 项目亮点
-
-- ✅ **完全开源**：硬件设计 + 软件代码全部开源
-- ✅ **低成本**：单传感器成本<¥30（商业方案通常>¥500）
-- ✅ **高精度**：50Hz 采样率，±0.3cm 测量精度（部分传感器）
-- ✅ **多平台**：支持 ESP32 和 ESP8266 开发板
-- ✅ **易用性**：Win11 风格现代化界面
-- ✅ **可扩展**：支持多种传感器类型
-- ✅ **教育友好**：适合中学物理实验教学
-
-
 
 **Happy Experimenting! 🔬📊**
