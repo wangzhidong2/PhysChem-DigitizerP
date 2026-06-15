@@ -56,6 +56,12 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 
 ## 🔌 接线指南
 
+> ⚠️ **以下为简要接线参考，具体接线、注意事项及故障排查请参阅各模块详细文档：**
+> - [超声波位移传感器](传感器arduino代码/超声波位移传感器/README.md)
+> - [pH 传感器](传感器arduino代码/ph传感器/README.md)
+> - [力传感器](传感器arduino代码/力传感器/README.md)
+> - [电压传感器](传感器arduino代码/电压/README.md)
+
 ### HC-SR04 超声波传感器接线
 
 > 📖 详细接线说明和注意事项请参考：[超声波位移传感器使用说明](传感器arduino代码/超声波位移传感器/README.md)
