@@ -259,7 +259,9 @@ PhysChem-DigitizerP/
 1. 安装 Arduino IDE 并添加开发板支持：
    - **ESP8266**：添加 `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
    - **ESP32**：添加 `https://dl.espressif.com/dl/package_esp32_index.json`
-   - 工具 → 开发板 → 开发板管理器 → 搜索并安装
+   - **ESP32 国内镜像（推荐）**：`https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json`
+   - 文件 → 首选项 → 附加开发板管理器网址 → 粘贴上述地址
+   - 工具 → 开发板 → 开发板管理器 → 搜索 "esp32" → 选择带 "-cn" 的版本安装
 
 2. 上传代码：
    - 根据你的开发板选择对应的固件文件
