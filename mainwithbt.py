@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QStyle, QDialog, QLineEdit, QRadioButton, QScrollArea,
                             QInputDialog, QGridLayout)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
-from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
+from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter
 import serial
 import serial.tools.list_ports
 import matplotlib.pyplot as plt
@@ -1296,7 +1296,6 @@ class HomePageWidget(QWidget):
             QPushButton:hover {{
                 background-color: {color}10;
                 border-color: {color};
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
             }}
             QPushButton:pressed {{
                 background-color: {color}20;
@@ -3544,235 +3543,324 @@ class SampleRateDialog(QDialog):
         return self.custom_input.value()
 
 
+class NavButton(QPushButton):
+    """Win11 风格侧边栏导航按钮"""
+    
+    def __init__(self, icon_text, label, tooltip="", parent=None):
+        super().__init__(parent)
+        self.icon_text = icon_text
+        self.label = label
+        self.tooltip = tooltip
+        self._is_selected = False
+        self._is_collapsed = False
+        self._theme = "light"
+        
+        self.setCheckable(False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(tooltip)
+        self.setFixedHeight(40)
+        self.setMinimumWidth(40)
+        
+        self._update_style()
+    
+    def set_selected(self, selected):
+        self._is_selected = selected
+        self._update_style()
+    
+    def set_collapsed(self, collapsed):
+        self._is_collapsed = collapsed
+        self._update_style()
+    
+    def set_theme(self, theme):
+        self._theme = theme
+        self._update_style()
+    
+    def _update_style(self):
+        if self._theme == "dark":
+            bg = "#2d2d2d"
+            bg_hover = "#3d3d3d"
+            bg_selected = "#3d3d3d"
+            text_color = "#ffffff"
+            icon_color = "#ffffff"
+            indicator_color = "#60cdff"
+        else:
+            bg = "transparent"
+            bg_hover = "#e9e9e9"
+            bg_selected = "#e9e9e9"
+            text_color = "#1a1a1a"
+            icon_color = "#1a1a1a"
+            indicator_color = "#0067c0"
+        
+        border_radius = "8px"
+        
+        if self._is_selected:
+            if self._is_collapsed:
+                self.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {bg_selected};
+                        border: none;
+                        border-radius: {border_radius};
+                        color: {text_color};
+                        font-size: 14px;
+                        font-weight: 500;
+                    }}
+                """)
+            else:
+                self.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {bg_selected};
+                        border: none;
+                        border-radius: {border_radius};
+                        color: {text_color};
+                        font-size: 14px;
+                        font-weight: 500;
+                        text-align: left;
+                        padding-left: 14px;
+                    }}
+                """)
+        else:
+            if self._is_collapsed:
+                self.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {bg};
+                        border: none;
+                        border-radius: {border_radius};
+                        color: {text_color};
+                        font-size: 14px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {bg_hover};
+                    }}
+                """)
+            else:
+                self.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {bg};
+                        border: none;
+                        border-radius: {border_radius};
+                        color: {text_color};
+                        font-size: 14px;
+                        text-align: left;
+                        padding-left: 14px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {bg_hover};
+                    }}
+                """)
+    
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        from PyQt6.QtGui import QFontMetrics
+        from PyQt6.QtCore import QRect
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        if self._theme == "dark":
+            icon_color = QColor("#ffffff") if not self._is_selected else QColor("#60cdff")
+            text_color = QColor("#ffffff")
+            indicator_color = QColor("#60cdff")
+        else:
+            icon_color = QColor("#1a1a1a") if not self._is_selected else QColor("#0067c0")
+            text_color = QColor("#1a1a1a")
+            indicator_color = QColor("#0067c0")
+        
+        rect = self.rect()
+        
+        # Draw blue indicator bar on the left when selected
+        if self._is_selected:
+            indicator_width = 3
+            indicator_height = 16
+            indicator_x = 0
+            indicator_y = (rect.height() - indicator_height) // 2
+            painter.setBrush(indicator_color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(indicator_x, indicator_y, indicator_width, indicator_height, 2, 2)
+        
+        # Draw icon
+        icon_size = 20
+        icon_x = 12 if not self._is_collapsed else (rect.width() - icon_size) // 2
+        icon_y = (rect.height() - icon_size) // 2
+        
+        font = QFont("Segoe MDL2 Assets", 14)
+        painter.setFont(font)
+        painter.setPen(icon_color)
+        painter.drawText(QRect(icon_x, icon_y, icon_size, icon_size), Qt.AlignmentFlag.AlignCenter, self.icon_text)
+        
+        # Draw text label when expanded
+        if not self._is_collapsed:
+            painter.setPen(text_color)
+            label_font = QFont("Microsoft YaHei", 10)
+            painter.setFont(label_font)
+            fm = QFontMetrics(label_font)
+            text_x = 42
+            text_rect = QRect(text_x, 0, rect.width() - text_x - 8, rect.height())
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.label)
+        
+        painter.end()
+
+
 class SidebarWidget(QWidget):
-    """可折叠侧边栏组件"""
+    """Win11 风格可折叠侧边栏组件"""
     
     module_changed = pyqtSignal(int)
     
     def __init__(self):
         super().__init__()
         self.is_collapsed = False
-        self.expanded_width = 200
-        self.collapsed_width = 50
+        self.expanded_width = 220
+        self.collapsed_width = 60
+        self.current_index = 0
+        self.theme = "light"
         self.init_ui()
     
     def init_ui(self):
         self.setFixedWidth(self.expanded_width)
-        
-        # 获取Qt标准图标
-        self.style = QApplication.style()
+        self.setStyleSheet("background-color: #f3f3f3; border: none;")
         
         # 主布局
-        self.layout = QVBoxLayout()
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
+        self.main_layout = QVBoxLayout()
+        self.main_layout.setContentsMargins(8, 8, 8, 8)
+        self.main_layout.setSpacing(2)
         
-        # 顶部折叠按钮
-        self.toggle_button = QPushButton()
-        self.toggle_button.setIcon(self.style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
-        self.toggle_button.setFixedSize(50, 50)
-        self.toggle_button.setStyleSheet("""
+        # 顶部汉堡菜单按钮
+        self.hamburger_btn = QPushButton()
+        self.hamburger_btn.setFixedSize(44, 44)
+        self.hamburger_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hamburger_btn.setToolTip("折叠/展开侧边栏")
+        self.hamburger_btn.setStyleSheet("""
             QPushButton {
-                background-color: #f3f3f3;
+                background-color: transparent;
                 border: none;
-                border-bottom: 1px solid #e0e0e0;
+                border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #e8e8e8;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
+                background-color: #e9e9e9;
             }
         """)
-        self.toggle_button.clicked.connect(self.toggle_collapse)
-        self.layout.addWidget(self.toggle_button)
+        self.hamburger_btn.clicked.connect(self.toggle_collapse)
+        self.main_layout.addWidget(self.hamburger_btn, alignment=Qt.AlignmentFlag.AlignLeft)
         
-        # 模块列表
-        self.module_list = QListWidget()
-        self.module_list.setStyleSheet("""
-            QListWidget {
-                background-color: #f3f3f3;
-                border: none;
-                font-size: 14px;
-            }
-            QListWidget::item {
-                padding: 12px;
-                padding-left: 15px;
-                border-bottom: 1px solid #e0e0e0;
-                border-left: 3px solid transparent;
-                height: 48px;
-            }
-            QListWidget::item:selected {
-                background-color: #e8e8e8;
-                color: black;
-                border-left: 3px solid #0078d4;
-            }
-            QListWidget::item:hover {
-                background-color: #f0f0f0;
-            }
-        """)
-        self.module_list.setIconSize(QSize(24, 24))
-        self.module_list.currentRowChanged.connect(self.module_changed.emit)
-        self.layout.addWidget(self.module_list)
-        
-        # 图标映射 - 使用物理定义符号字母
-        self.icon_map = {
-            "主页": self.create_text_icon("🏠"),
-            "超声波位移": self.create_text_icon("x"),
-            "超声波速度": self.create_text_icon("v"),
-            "力传感器": self.create_text_icon("F"),
-            "电压": self.create_text_icon("V"),
-            "pH传感器": self.create_text_icon("pH"),
-            "设置": self.create_text_icon("⚙")
-        }
+        # 导航按钮列表
+        self.nav_buttons = []
+        self.nav_container = QWidget()
+        self.nav_layout = QVBoxLayout()
+        self.nav_layout.setContentsMargins(0, 4, 0, 0)
+        self.nav_layout.setSpacing(2)
         
         self.modules = [
-            ("主页", "项目介绍与功能导航"),
-            ("超声波位移", "测量物体位移和运动轨迹"),
-            ("超声波速度", "回声定位法测量物体速度"),
-            ("力传感器", "HX711力/质量传感器测量"),
-            ("电压", "ADC电压采集与分压电路换算"),
-            ("pH传感器", "测量溶液酸碱度"),
-            ("设置", "应用设置与偏好")
+            ("🏠", "主页", "项目介绍与功能导航"),
+            ("x", "超声波位移", "测量物体位移和运动轨迹"),
+            ("v", "超声波速度", "回声定位法测量物体速度"),
+            ("F", "力传感器", "HX711力/质量传感器测量"),
+            ("V", "电压", "ADC电压采集与分压电路换算"),
+            ("pH", "pH传感器", "测量溶液酸碱度"),
         ]
         
-        for name, description in self.modules:
-            item = QListWidgetItem()
-            item.setText(name)
-            item.setToolTip(description)
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            item.setIcon(self.icon_map[name])
-            self.module_list.addItem(item)
+        for icon, name, desc in self.modules:
+            btn = NavButton(icon, name, desc)
+            btn.clicked.connect(lambda checked, idx=len(self.nav_buttons): self.on_nav_clicked(idx))
+            self.nav_buttons.append(btn)
+            self.nav_layout.addWidget(btn)
         
-        self.setLayout(self.layout)
+        self.nav_layout.addStretch()
+        self.nav_container.setLayout(self.nav_layout)
+        self.main_layout.addWidget(self.nav_container)
+        
+        # 底部设置按钮（固定在底部）
+        self.settings_btn = NavButton("⚙", "设置", "应用设置与偏好")
+        self.settings_btn.clicked.connect(lambda: self.on_nav_clicked(len(self.modules)))
+        self.nav_buttons.append(self.settings_btn)
+        self.main_layout.addWidget(self.settings_btn)
+        
+        self.setLayout(self.main_layout)
+        
+        # 设置默认选中
+        self.set_current_row(0)
+        
+        # 初始化汉堡图标
+        self._update_hamburger_icon()
     
     def toggle_collapse(self):
-        """切换折叠/展开状态"""
         self.is_collapsed = not self.is_collapsed
         
         if self.is_collapsed:
             self.setFixedWidth(self.collapsed_width)
-            self.toggle_button.setIcon(self.style.standardIcon(QStyle.StandardPixmap.SP_ArrowLeft))
-            for i in range(self.module_list.count()):
-                item = self.module_list.item(i)
-                item.setText("")
         else:
             self.setFixedWidth(self.expanded_width)
-            self.toggle_button.setIcon(self.style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
-            for i, (name, _) in enumerate(self.modules):
-                item = self.module_list.item(i)
-                item.setText(name)
-    
-    def set_current_row(self, row):
-        """设置当前选中的行"""
-        self.module_list.setCurrentRow(row)
-    
-    def get_current_row(self):
-        """获取当前选中的行"""
-        return self.module_list.currentRow()
-    
-    def apply_theme(self, theme):
-        """应用主题到侧边栏"""
-        if theme == "dark":
-            dark_style = """
-                QPushButton {
-                    background-color: #2d2d2d;
-                    border: none;
-                    border-bottom: 1px solid #3d3d3d;
-                    color: white;
-                }
-                QPushButton:hover {
-                    background-color: #3d3d3d;
-                }
-                QListWidget {
-                    background-color: #2d2d2d;
-                    border: none;
-                    font-size: 14px;
-                    color: white;
-                }
-                QListWidget::item {
-                    padding: 12px;
-                    padding-left: 15px;
-                    border-bottom: 1px solid #3d3d3d;
-                    border-left: 3px solid transparent;
-                    height: 48px;
-                    color: white;
-                }
-                QListWidget::item:selected {
-                    background-color: #3d3d3d;
-                    color: white;
-                    border-left: 3px solid #0078d4;
-                }
-                QListWidget::item:hover {
-                    background-color: #3d3d3d;
-                }
-            """
-            self.setStyleSheet(dark_style)
-        else:
-            light_style = """
-                QPushButton {
-                    background-color: #f3f3f3;
-                    border: none;
-                    border-bottom: 1px solid #e0e0e0;
-                }
-                QPushButton:hover {
-                    background-color: #e8e8e8;
-                }
-                QPushButton:pressed {
-                    background-color: #d0d0d0;
-                }
-                QListWidget {
-                    background-color: #f3f3f3;
-                    border: none;
-                    font-size: 14px;
-                    color: black;
-                }
-                QListWidget::item {
-                    padding: 12px;
-                    padding-left: 15px;
-                    border-bottom: 1px solid #e0e0e0;
-                    border-left: 3px solid transparent;
-                    height: 48px;
-                    color: black;
-                }
-                QListWidget::item:selected {
-                    background-color: #e8e8e8;
-                    color: black;
-                    border-left: 3px solid #0078d4;
-                }
-                QListWidget::item:hover {
-                    background-color: #f0f0f0;
-                }
-            """
-            self.setStyleSheet(light_style)
-    
-    def create_text_icon(self, text):
-        """创建文本图标"""
-        from PyQt6.QtGui import QPixmap, QPainter, QFont, QColor
-        from PyQt6.QtCore import Qt
         
-        # 创建 24x24 像素的图像
-        pixmap = QPixmap(24, 24)
+        for btn in self.nav_buttons:
+            btn.set_collapsed(self.is_collapsed)
+        
+        self._update_hamburger_icon()
+    
+    def _update_hamburger_icon(self):
+        from PyQt6.QtCore import QRect
+        
+        pixmap = QPixmap(20, 20)
         pixmap.fill(Qt.GlobalColor.transparent)
         
-        # 创建绘图器
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # 设置字体
-        font = QFont()
-        font.setPointSize(12)
-        font.setBold(True)
+        if self.theme == "dark":
+            color = QColor("#ffffff")
+        else:
+            color = QColor("#1a1a1a")
+        
+        painter.setPen(color)
+        font = QFont("Segoe MDL2 Assets", 14)
         painter.setFont(font)
-        
-        # 设置颜色
-        painter.setPen(QColor(0, 0, 0))  # 黑色文字
-        
-        # 绘制文本（居中显示）
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        painter.drawText(QRect(0, 0, 20, 20), Qt.AlignmentFlag.AlignCenter, "\uE700")
         painter.end()
         
-        return QIcon(pixmap)
+        self.hamburger_btn.setIcon(QIcon(pixmap))
+        self.hamburger_btn.setIconSize(QSize(20, 20))
+    
+    def set_current_row(self, row):
+        if 0 <= row < len(self.nav_buttons):
+            self.current_index = row
+            for i, btn in enumerate(self.nav_buttons):
+                btn.set_selected(i == row)
+    
+    def get_current_row(self):
+        return self.current_index
+    
+    def on_nav_clicked(self, index):
+        self.set_current_row(index)
+        self.module_changed.emit(index)
+    
+    def apply_theme(self, theme):
+        self.theme = theme
+        if theme == "dark":
+            self.setStyleSheet("background-color: #202020; border: none;")
+            self.hamburger_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #3d3d3d;
+                }
+            """)
+        else:
+            self.setStyleSheet("background-color: #f3f3f3; border: none;")
+            self.hamburger_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #e9e9e9;
+                }
+            """)
+        
+        for btn in self.nav_buttons:
+            btn.set_theme(theme)
+        
+        self._update_hamburger_icon()
 
 
 class SettingsWidget(QWidget):
