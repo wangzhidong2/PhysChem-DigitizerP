@@ -1051,284 +1051,369 @@ class UltrasonicVelocityWidget(QWidget):
 
 
 class HomePageWidget(QWidget):
-    """主页面 - 显示主README和按学科分类的模块导航"""
+    """主页面 - Win11 风格卡片布局"""
     
-    module_clicked = pyqtSignal(str)  # 信号：点击模块时发送模块名称
+    module_clicked = pyqtSignal(str)
+    
+    CARD_STYLE = """
+        QWidget#card {
+            background-color: #ffffff;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+        }
+        QWidget#card QLabel,
+        QWidget#card QFrame {
+            background-color: transparent;
+        }
+    """
+    
+    CARD_HOVER_STYLE = """
+        QPushButton#module_item {
+            background-color: transparent;
+            border: none;
+            border-radius: 6px;
+            text-align: left;
+            padding: 12px 16px;
+        }
+        QPushButton#module_item:hover {
+            background-color: #f0f0f0;
+        }
+        QPushButton#module_item:pressed {
+            background-color: #e5e5e5;
+        }
+    """
     
     def __init__(self):
         super().__init__()
         self.init_ui()
     
     def init_ui(self):
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
         
-        content_widget = QWidget()
-        content_layout = QVBoxLayout(content_widget)
-        content_layout.setSpacing(15)
+        content = QWidget()
+        content.setStyleSheet("background: #f3f3f3;")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(24, 20, 24, 24)
+        content_layout.setSpacing(16)
         
-        # 标题区域
-        title_widget = QWidget()
-        title_layout = QVBoxLayout(title_widget)
+        # 页面标题
+        title = QLabel("主页")
+        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
+        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        content_layout.addWidget(title)
         
-        app_title = QLabel("PhysChem-DigitizerP")
-        app_title.setFont(QFont("Microsoft YaHei", 36, QFont.Weight.Bold))
-        app_title.setStyleSheet("color: #0078d4; margin: 10px;")
-        title_layout.addWidget(app_title)
+        # ========== 卡片1：版本信息 + 项目简介 ==========
+        card1 = QWidget()
+        card1.setObjectName("card")
+        card1.setStyleSheet(self.CARD_STYLE)
+        card1_layout = QVBoxLayout(card1)
+        card1_layout.setContentsMargins(20, 20, 20, 20)
+        card1_layout.setSpacing(12)
         
-        subtitle = QLabel("基于 Arduino/ESP32 的低成本理化实验数字化采集系统")
-        subtitle.setFont(QFont("Microsoft YaHei", 14))
-        subtitle.setStyleSheet("color: #666; margin-bottom: 15px;")
-        title_layout.addWidget(subtitle)
+        # 顶部：应用图标 + 名称 + 版本 + GitHub按钮
+        top_row = QWidget()
+        top_layout = QHBoxLayout(top_row)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(16)
         
-        version = QLabel("版本 v1.2.3 | MIT 开源协议")
-        version.setFont(QFont("Microsoft YaHei", 10))
-        version.setStyleSheet("color: #999;")
-        title_layout.addWidget(version)
+        # 应用图标
+        icon_label = QLabel("🔬")
+        icon_label.setFont(QFont("Segoe MDL2 Assets", 36))
+        icon_label.setFixedSize(64, 64)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("""
+            background-color: #e8f0fe;
+            border-radius: 12px;
+            color: #0067c0;
+        """)
+        top_layout.addWidget(icon_label)
         
-        content_layout.addWidget(title_widget)
+        # 应用名称和版本
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(2)
+        
+        app_name = QLabel("PhysChem-DigitizerP")
+        app_name.setFont(QFont("Microsoft YaHei", 18, QFont.Weight.Bold))
+        app_name.setStyleSheet("color: #1a1a1a;")
+        info_layout.addWidget(app_name)
+        
+        version_label = QLabel("版本 1.2.4 | MIT 开源协议")
+        version_label.setFont(QFont("Microsoft YaHei", 10))
+        version_label.setStyleSheet("color: #666666;")
+        info_layout.addWidget(version_label)
+        
+        top_layout.addLayout(info_layout)
+        top_layout.addStretch()
+        
+        # GitHub 按钮
+        github_btn = QPushButton("  GitHub")
+        github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        github_btn.setFixedHeight(36)
+        github_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0067c0;
+                border: none;
+                border-radius: 6px;
+                color: white;
+                font-size: 13px;
+                padding: 0 16px;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton:pressed {
+                background-color: #004578;
+            }
+        """)
+        github_btn.clicked.connect(lambda: self.open_github())
+        top_layout.addWidget(github_btn)
+        
+        card1_layout.addWidget(top_row)
+        
+        # 分隔线
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("color: #e0e0e0;")
+        card1_layout.addWidget(separator)
         
         # 项目简介
-        intro_group = QGroupBox("📖 项目简介")
-        intro_layout = QVBoxLayout()
-        
-        intro_text = QLabel(
-            "PhysChem-DigitizerP 是一个开源的物理化学实验数字化采集系统，"
-            "旨在为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
-            "\n\n"
-            "✅ 完全开源（硬件+软件） | "
-            "💰 单传感器成本 < ¥30 | "
-            "📊 测量精度 ±0.3cm | "
-            "🔬 适合教学实验"
+        desc_label = QLabel(
+            "基于 Arduino/ESP32 的低成本理化实验数字化采集系统，"
+            "为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
         )
-        intro_text.setWordWrap(True)
-        intro_text.setStyleSheet("font-size: 13px; line-height: 1.6; color: #333;")
-        intro_text.setTextFormat(Qt.TextFormat.RichText)
-        intro_layout.addWidget(intro_text)
+        desc_label.setWordWrap(True)
+        desc_label.setFont(QFont("Microsoft YaHei", 11))
+        desc_label.setStyleSheet("color: #444444; line-height: 1.5;")
+        card1_layout.addWidget(desc_label)
         
-        intro_group.setLayout(intro_layout)
-        content_layout.addWidget(intro_group)
+        # 特性标签
+        tags_layout = QHBoxLayout()
+        tags_layout.setSpacing(8)
         
-        # 学科分类区域
-        category_widget = QWidget()
-        category_layout = QHBoxLayout(category_widget)
-        category_layout.setSpacing(20)
-        
-        # 物理学科
-        physics_group = QGroupBox("⚛️ 物理实验模块")
-        physics_layout = QGridLayout(physics_group)
-        physics_layout.setSpacing(15)
-        physics_layout.setContentsMargins(10, 10, 10, 10)
-
-        physics_modules = [
-            {
-                'name': '超声波位移',
-                'icon': 'x',
-                'desc': '测量物体位移和运动轨迹',
-                'detail': '实时距离测量 | 距离-时间曲线 | CSV导出'
-            },
-            {
-                'name': '超声波速度',
-                'icon': 'v',
-                'desc': '回声定位法测量物体速度',
-                'detail': '双图表显示 | 速度统计分析 | 瞬时速度计算'
-            },
-            {
-                'name': '力传感器',
-                'icon': 'F',
-                'desc': 'HX711力/质量传感器测量',
-                'detail': '24位高精度ADC | 去皮校准 | 实时质量测量'
-            },
-            {
-                'name': '电压',
-                'icon': 'V',
-                'desc': 'ADC电压采集与分压电路换算',
-                'detail': 'ADC位数选择 | 分压比/放大倍数 | 实时电压曲线'
-            }
-        ]
-
-        for i, module in enumerate(physics_modules):
-            module_card = self.create_clickable_module_card(module, '#28a745')
-            module_card.setProperty('module_name', module['name'])
-            row, col = divmod(i, 2)
-            physics_layout.addWidget(module_card, row, col)
-        category_layout.addWidget(physics_group, stretch=1)
-        
-        # 化学学科
-        chemistry_group = QGroupBox("🧪 化学实验模块")
-        chemistry_layout = QVBoxLayout(chemistry_group)
-        
-        chemistry_modules = [
-            {
-                'name': 'pH传感器',
-                'icon': 'pH',
-                'desc': '测量溶液酸碱度',
-                'detail': '单点/两点/三点校准 | 实时pH值 | 标准差统计'
-            }
+        tags = [
+            ("MIT 开源", "#e8f5e9", "#2e7d32"),
+            ("教学实验", "#f3e5f5", "#7b1fa2"),
         ]
         
-        for module in chemistry_modules:
-            module_card = self.create_clickable_module_card(module, '#fd7e14')
-            module_card.setProperty('module_name', module['name'])
-            chemistry_layout.addWidget(module_card)
+        for text, bg, fg in tags:
+            tag = QLabel(text)
+            tag.setFont(QFont("Microsoft YaHei", 9))
+            tag.setStyleSheet(f"""
+                background-color: {bg};
+                color: {fg};
+                border-radius: 4px;
+                padding: 4px 10px;
+            """)
+            tags_layout.addWidget(tag)
         
-        chemistry_layout.addStretch()
-        category_layout.addWidget(chemistry_group, stretch=1)
+        tags_layout.addStretch()
+        card1_layout.addLayout(tags_layout)
         
-        content_layout.addWidget(category_widget, stretch=1)
+        content_layout.addWidget(card1)
         
-        # 技术特性
-        tech_group = QGroupBox("🔧 技术特性与支持平台")
-        tech_layout = QHBoxLayout()
-        
-        left_tech = QWidget()
-        left_layout = QVBoxLayout(left_tech)
-        
-        tech_features = [
-            ("硬件平台", "ESP32 / ESP8266 (WeMOS D1)"),
-            ("软件框架", "Python + PyQt6 + Matplotlib"),
-            ("测量精度", "±0.3cm (超声波) / ±0.01 pH / ±0.01V (电压)"),
-            ("采样频率", "最高 100Hz (可调)"),
-            ("数据格式", "CSV 导出，兼容 Excel")
-        ]
-        
-        for label, value in tech_features:
-            item_layout = QHBoxLayout()
-            name_label = QLabel(f"• {label}: ")
-            name_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #555;")
-            value_label = QLabel(value)
-            value_label.setStyleSheet("font-size: 12px; color: #666;")
-            item_layout.addWidget(name_label)
-            item_layout.addWidget(value_label)
-            item_layout.addStretch()
-            left_layout.addLayout(item_layout)
-        
-        tech_layout.addWidget(left_tech, stretch=1)
-        
-        right_tech = QWidget()
-        right_layout = QVBoxLayout(right_tech)
-        
-        support_features = [
-            "✅ 现代化界面",
-            "✅ 支持深色/浅色主题",
-            "✅ 配置自动保存 (JSON)",
-            "✅ 多种传感器支持",
-            "✅ 实时数据可视化"
-        ]
-        
-        for feature in support_features:
-            feat_label = QLabel(feature)
-            feat_label.setStyleSheet("font-size: 12px; color: #666; padding: 2px;")
-            right_layout.addWidget(feat_label)
-        
-        tech_layout.addWidget(right_tech, stretch=1)
-        tech_group.setLayout(tech_layout)
-        content_layout.addWidget(tech_group)
-        
-        # 快速开始
-        quick_start_group = QGroupBox("🚀 快速开始")
-        quick_start_layout = QVBoxLayout()
-        
-        steps_text = (
-            "<b>步骤 1:</b> 连接 ESP32/ESP8266 到电脑 USB<br>"
-            "<b>步骤 2:</b> 选择左侧对应的功能模块<br>"
-            "<b>步骤 3:</b> 选择串口并点击连接<br>"
-            "<b>步骤 4:</b> 配置参数（校准/采样频率）<br>"
-            "<b>步骤 5:</b> 点击开始采集数据<br>"
-            "<b>步骤 6:</b> 查看图表并保存数据"
+        # ========== 卡片2：物理实验模块 ==========
+        card2 = self.create_module_card(
+            "物理实验模块",
+            "4 个模块",
+            [
+                ("x", "超声波位移", "测量物体位移和运动轨迹"),
+                ("v", "超声波速度", "回声定位法测量物体速度"),
+                ("F", "力传感器", "HX711力/质量传感器测量"),
+                ("V", "电压", "ADC电压采集与分压电路换算"),
+            ]
         )
-        steps_label = QLabel(steps_text)
-        steps_label.setTextFormat(Qt.TextFormat.RichText)
-        steps_label.setStyleSheet("font-size: 13px; line-height: 1.8; color: #444;")
-        quick_start_layout.addWidget(steps_label)
+        content_layout.addWidget(card2)
         
-        quick_start_group.setLayout(quick_start_layout)
-        content_layout.addWidget(quick_start_group)
-        
-        # 底部信息
-        footer_widget = QWidget()
-        footer_layout = QHBoxLayout(footer_widget)
-        
-        status_label = QLabel("就绪 | 点击上方模块卡片快速进入对应功能")
-        status_label.setStyleSheet("color: #888; font-size: 11px;")
-        footer_layout.addWidget(status_label)
-        
-        footer_layout.addStretch()
-        
-        link_label = QLabel(
-            '<a href="https://github.com/wangzhidong2/PhysChem-DigitizerP">'
-            '🌐 GitHub 项目主页</a>'
+        # ========== 卡片3：化学实验模块 ==========
+        card3 = self.create_module_card(
+            "化学实验模块",
+            "1 个模块",
+            [
+                ("pH", "pH传感器", "测量溶液酸碱度"),
+            ]
         )
-        link_label.setTextFormat(Qt.TextFormat.RichText)
-        link_label.setOpenExternalLinks(True)
-        link_label.setStyleSheet("color: #0078d4; font-size: 11px;")
-        link_label.setToolTip("在浏览器中打开 GitHub 仓库页面")
-        footer_layout.addWidget(link_label)
+        content_layout.addWidget(card3)
         
-        copyright_label = QLabel("© 2026 PhysChem-DigitizerP | MIT License")
-        copyright_label.setStyleSheet("color: #999; font-size: 11px;")
-        footer_layout.addWidget(copyright_label)
+        content_layout.addStretch()
         
-        content_layout.addWidget(footer_widget)
-        
-        scroll.setWidget(content_widget)
-        layout.addWidget(scroll)
-        
-        self.setLayout(layout)
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
+        self.setLayout(main_layout)
     
-    def create_clickable_module_card(self, module_info, color):
-        """创建可点击的模块卡片"""
-        card = QPushButton()
-        card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.setFixedHeight(60)
-        card.setStyleSheet(f"""
-            QPushButton {{
-                background-color: white;
-                border: 2px solid {color};
-                border-radius: 8px;
-                padding: 10px;
-                text-align: left;
-            }}
-            QPushButton:hover {{
-                background-color: {color}10;
-                border-color: {color};
-            }}
-            QPushButton:pressed {{
-                background-color: {color}20;
-            }}
-        """)
+    def create_module_card(self, title, subtitle, modules):
+        """创建 Win11 风格模块卡片"""
+        card = QWidget()
+        card.setObjectName("card")
+        card.setStyleSheet(self.CARD_STYLE)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 16, 20, 8)
+        card_layout.setSpacing(0)
         
-        card_layout = QHBoxLayout(card)
-        card_layout.setContentsMargins(15, 10, 15, 10)
+        # 卡片标题
+        title_row = QHBoxLayout()
+        title_row.setSpacing(12)
         
-        icon_label = QLabel(module_info['icon'])
-        icon_label.setFont(QFont("Arial", 22, QFont.Weight.Bold))
-        icon_label.setStyleSheet(f"color: {color};")
-        card_layout.addWidget(icon_label)
+        icon = QLabel("⚛️" if "物理" in title else "🧪")
+        icon.setFont(QFont("Segoe MDL2 Assets", 18))
+        icon.setFixedSize(32, 32)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet("color: #0067c0;")
+        title_row.addWidget(icon)
         
-        name_label = QLabel(module_info['name'])
-        name_label.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        name_label.setStyleSheet("color: #333;")
-        card_layout.addWidget(name_label)
+        title_text = QVBoxLayout()
+        title_text.setSpacing(0)
         
-        card_layout.addStretch()
+        title_label = QLabel(title)
+        title_label.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        title_label.setStyleSheet("color: #1a1a1a;")
+        title_text.addWidget(title_label)
         
-        arrow_label = QLabel("→")
-        arrow_label.setFont(QFont("Arial", 16))
-        arrow_label.setStyleSheet(f"color: {color};")
-        card_layout.addWidget(arrow_label)
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setFont(QFont("Microsoft YaHei", 10))
+        subtitle_label.setStyleSheet("color: #888888;")
+        title_text.addWidget(subtitle_label)
         
-        card.clicked.connect(lambda: self.on_module_clicked(module_info['name']))
+        title_row.addLayout(title_text)
+        title_row.addStretch()
+        
+        card_layout.addLayout(title_row)
+        card_layout.addSpacing(12)
+        
+        # 模块列表
+        for i, (icon_text, name, desc) in enumerate(modules):
+            item = self.create_module_item(icon_text, name, desc)
+            card_layout.addWidget(item)
+            
+            # 分隔线（除了最后一个）
+            if i < len(modules) - 1:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.HLine)
+                sep.setStyleSheet("color: #e8e8e8;")
+                card_layout.addWidget(sep)
+        
+        card_layout.addSpacing(8)
         
         return card
     
+    def create_module_item(self, icon_text, name, desc):
+        """创建单个模块列表项"""
+        btn = QPushButton()
+        btn.setObjectName("module_item")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFixedHeight(56)
+        btn.setStyleSheet(self.CARD_HOVER_STYLE)
+        
+        btn_layout = QHBoxLayout(btn)
+        btn_layout.setContentsMargins(12, 8, 12, 8)
+        btn_layout.setSpacing(14)
+        
+        # 图标
+        icon_label = QLabel(icon_text)
+        icon_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        icon_label.setFixedSize(36, 36)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("""
+            background-color: #e8f0fe;
+            border-radius: 8px;
+            color: #0067c0;
+        """)
+        btn_layout.addWidget(icon_label)
+        
+        # 名称和描述
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        
+        name_label = QLabel(name)
+        name_label.setFont(QFont("Microsoft YaHei", 12))
+        name_label.setStyleSheet("color: #1a1a1a;")
+        text_layout.addWidget(name_label)
+        
+        desc_label = QLabel(desc)
+        desc_label.setFont(QFont("Microsoft YaHei", 9))
+        desc_label.setStyleSheet("color: #888888;")
+        text_layout.addWidget(desc_label)
+        
+        btn_layout.addLayout(text_layout, stretch=1)
+        
+        # 箭头
+        arrow = QLabel(">")
+        arrow.setFont(QFont("Arial", 12))
+        arrow.setStyleSheet("color: #999999;")
+        btn_layout.addWidget(arrow)
+        
+        btn.clicked.connect(lambda: self.on_module_clicked(name))
+        
+        return btn
+    
+    def open_github(self):
+        import webbrowser
+        webbrowser.open("https://github.com/wangzhidong2/PhysChem-DigitizerP")
+    
     def on_module_clicked(self, module_name):
-        """处理模块卡片点击事件"""
         self.module_clicked.emit(module_name)
+    
+    def apply_theme(self, theme):
+        if theme == "dark":
+            self.CARD_STYLE = """
+                QWidget#card {
+                    background-color: #2d2d2d;
+                    border: 1px solid #404040;
+                    border-radius: 8px;
+                }
+                QWidget#card QLabel,
+                QWidget#card QFrame {
+                    background-color: transparent;
+                }
+            """
+            self.CARD_HOVER_STYLE = """
+                QPushButton#module_item {
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 6px;
+                    text-align: left;
+                    padding: 12px 16px;
+                }
+                QPushButton#module_item:hover {
+                    background-color: #404040;
+                }
+                QPushButton#module_item:pressed {
+                    background-color: #505050;
+                }
+            """
+        else:
+            self.CARD_STYLE = """
+                QWidget#card {
+                    background-color: #ffffff;
+                    border: 1px solid #e5e5e5;
+                    border-radius: 8px;
+                }
+                QWidget#card QLabel,
+                QWidget#card QFrame {
+                    background-color: transparent;
+                }
+            """
+            self.CARD_HOVER_STYLE = """
+                QPushButton#module_item {
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 6px;
+                    text-align: left;
+                    padding: 12px 16px;
+                }
+                QPushButton#module_item:hover {
+                    background-color: #f0f0f0;
+                }
+                QPushButton#module_item:pressed {
+                    background-color: #e5e5e5;
+                }
+            """
 
 
 class PhSensorWidget(QWidget):
@@ -3716,7 +3801,7 @@ class SidebarWidget(QWidget):
     
     def init_ui(self):
         self.setFixedWidth(self.expanded_width)
-        self.setStyleSheet("background-color: #f3f3f3; border: none;")
+        self.setStyleSheet("background-color: #f0f0f0; border: none;")
         
         # 主布局
         self.main_layout = QVBoxLayout()
@@ -3845,7 +3930,7 @@ class SidebarWidget(QWidget):
                 }
             """)
         else:
-            self.setStyleSheet("background-color: #f3f3f3; border: none;")
+            self.setStyleSheet("background-color: #f0f0f0; border: none;")
             self.hamburger_btn.setStyleSheet("""
                 QPushButton {
                     background-color: transparent;
@@ -4156,6 +4241,12 @@ class MainWindow(QMainWindow):
         # 更新侧边栏的主题
         if hasattr(self, 'sidebar'):
             self.sidebar.apply_theme(theme)
+        
+        # 更新主页的主题
+        if hasattr(self, 'modules') and "主页" in self.modules:
+            home_widget = self.modules["主页"]
+            if hasattr(home_widget, 'apply_theme'):
+                home_widget.apply_theme(theme)
     
     def apply_theme(self, theme):
         """应用指定主题"""
@@ -4229,7 +4320,7 @@ class MainWindow(QMainWindow):
         else:
             light_style = """
                 QMainWindow {
-                    background-color: #fafafa;
+                    background-color: #f3f3f3;
                     color: black;
                 }
                 QGroupBox {
