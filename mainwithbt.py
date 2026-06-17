@@ -1218,29 +1218,34 @@ class HomePageWidget(QWidget):
         
         content_layout.addWidget(card1)
         
-        # ========== 卡片2：物理实验模块 ==========
-        card2 = self.create_module_card(
+        # ========== 物理实验模块 + 化学实验模块 并排 ==========
+        modules_row = QHBoxLayout()
+        modules_row.setSpacing(16)
+
+        # 物理实验模块（2×2 网格）
+        card2 = self.create_grid_module_card(
             "物理实验模块",
             "4 个模块",
             [
-                ("x", "超声波位移", "测量物体位移和运动轨迹"),
-                ("v", "超声波速度", "回声定位法测量物体速度"),
-                ("F", "力传感器", "HX711力/质量传感器测量"),
-                ("V", "电压", "ADC电压采集与分压电路换算"),
+                ("x", "超声波位移"),
+                ("v", "超声波速度"),
+                ("F", "力传感器"),
+                ("V", "电压"),
             ]
         )
-        content_layout.addWidget(card2)
-        
-        # ========== 卡片3：化学实验模块 ==========
-        card3 = self.create_module_card(
+        modules_row.addWidget(card2, stretch=3)
+
+        # 化学实验模块
+        card3 = self.create_grid_module_card(
             "化学实验模块",
             "1 个模块",
             [
-                ("pH", "pH传感器", "测量溶液酸碱度"),
+                ("pH", "pH传感器"),
             ]
         )
-        content_layout.addWidget(card3)
-        
+        modules_row.addWidget(card3, stretch=1)
+
+        content_layout.addLayout(modules_row)
         content_layout.addStretch()
         
         scroll.setWidget(content)
@@ -1350,6 +1355,74 @@ class HomePageWidget(QWidget):
         
         btn.clicked.connect(lambda: self.on_module_clicked(name))
         
+        return btn
+    
+    def create_grid_module_card(self, title, subtitle, modules):
+        """创建 Win11 设置风格的网格卡片"""
+        card = QWidget()
+        card.setObjectName("card")
+        card.setStyleSheet(self.CARD_STYLE)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 20, 20, 16)
+        card_layout.setSpacing(0)
+
+        title_label = QLabel(title)
+        title_label.setFont(QFont("Microsoft YaHei", 16, QFont.Weight.Bold))
+        title_label.setStyleSheet("color: #1a1a1a;")
+        card_layout.addWidget(title_label)
+
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setFont(QFont("Microsoft YaHei", 10))
+        subtitle_label.setStyleSheet("color: #666666; margin-bottom: 12px;")
+        card_layout.addWidget(subtitle_label)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(8)
+
+        for i, (icon_text, name) in enumerate(modules):
+            row, col = divmod(i, 2)
+            item = self.create_grid_module_item(icon_text, name)
+            grid.addWidget(item, row, col)
+
+        card_layout.addLayout(grid)
+        card_layout.addSpacing(4)
+        return card
+    
+    def create_grid_module_item(self, icon_text, name):
+        """创建网格内的单个模块项：图标 + 名称"""
+        btn = QPushButton()
+        btn.setObjectName("module_item")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFixedHeight(48)
+        btn.setStyleSheet(self.CARD_HOVER_STYLE)
+
+        btn_layout = QHBoxLayout(btn)
+        btn_layout.setContentsMargins(12, 6, 12, 6)
+        btn_layout.setSpacing(10)
+
+        icon_label = QLabel(icon_text)
+        icon_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        icon_label.setFixedSize(32, 32)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("""
+            background-color: #e8f0fe;
+            border-radius: 6px;
+            color: #0067c0;
+        """)
+        btn_layout.addWidget(icon_label)
+
+        name_label = QLabel(name)
+        name_label.setFont(QFont("Microsoft YaHei", 12))
+        name_label.setStyleSheet("color: #1a1a1a;")
+        btn_layout.addWidget(name_label, stretch=1)
+
+        arrow = QLabel(">")
+        arrow.setFont(QFont("Arial", 12))
+        arrow.setStyleSheet("color: #999999;")
+        btn_layout.addWidget(arrow)
+
+        btn.clicked.connect(lambda: self.on_module_clicked(name))
         return btn
     
     def open_github(self):
@@ -4220,7 +4293,7 @@ class MainWindow(QMainWindow):
         """处理主页模块卡片点击事件"""
         # 根据模块名称找到对应的索引
         module_index = None
-        for i, (name, desc) in enumerate(self.sidebar.modules):
+        for i, (icon, name, desc) in enumerate(self.sidebar.modules):
             if name == module_name:
                 module_index = i
                 break
