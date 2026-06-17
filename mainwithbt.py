@@ -2652,9 +2652,9 @@ class VoltageSensorWidget(QWidget):
             self.connect_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(True)
             self.start_btn.setEnabled(True)
-        self.current_voltage_label.setText("--.- V")
-        self.current_raw_label.setText("原始ADC: 连接中...")
-        self.current_vadc_label.setText("ADC端电压: --.- V")
+            self.current_voltage_label.setText("--.- V")
+            self.current_raw_label.setText("原始ADC: 连接中...")
+            self.current_vadc_label.setText("ADC端电压: --.- V")
         except Exception as e:
             QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
 
