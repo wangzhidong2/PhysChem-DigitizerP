@@ -283,127 +283,250 @@ class UltrasonicWidget(QWidget):
         self.init_ui()
     
     def init_ui(self):
-        layout = QVBoxLayout()
-        
-        # 控制面板
-        control_group = QGroupBox("控制面板")
-        control_layout = QHBoxLayout()
-        
-        # 串口选择
-        control_layout.addWidget(QLabel("串口:"))
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
+
+        content = QWidget()
+        content.setStyleSheet("background: #f3f3f3;")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(16)
+
+        # 页面标题
+        title = QLabel("超声波位移")
+        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
+        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        layout.addWidget(title)
+
+        # ========== 卡片1：连接控制 ==========
+        card_conn = QWidget()
+        card_conn.setObjectName("card")
+        card_conn.setStyleSheet(self._card_style())
+        card_layout = QVBoxLayout(card_conn)
+        card_layout.setContentsMargins(20, 16, 20, 16)
+        card_layout.setSpacing(12)
+
+        card_title = QLabel("连接控制")
+        card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        card_title.setStyleSheet("color: #1a1a1a;")
+        card_layout.addWidget(card_title)
+
+        conn_row = QHBoxLayout()
+        conn_row.setSpacing(10)
+
+        conn_row.addWidget(QLabel("串口:"))
         self.port_combo = QComboBox()
         self.refresh_ports()
-        control_layout.addWidget(self.port_combo)
-        
-        # 刷新按钮
+        self.port_combo.setMinimumWidth(160)
+        conn_row.addWidget(self.port_combo)
+
         self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setFixedHeight(36)
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        control_layout.addWidget(self.refresh_btn)
-        
-        # 连接按钮
+        self.refresh_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        conn_row.addWidget(self.refresh_btn)
+
         self.connect_btn = QPushButton("连接")
+        self.connect_btn.setFixedHeight(36)
         self.connect_btn.clicked.connect(self.toggle_connection)
-        control_layout.addWidget(self.connect_btn)
-        
-        control_layout.addStretch()
+        self.connect_btn.setStyleSheet(self._primary_btn_style())
+        conn_row.addWidget(self.connect_btn)
 
-        # 采样频率显示
-        control_layout.addWidget(QLabel("采样:"))
-        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
-        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
-        control_layout.addWidget(self.sample_rate_label)
+        conn_row.addSpacing(20)
 
-        # 采样频率设置按钮
-        sample_settings_btn = QPushButton("⚙️")
-        sample_settings_btn.setFixedWidth(40)
+        conn_row.addWidget(QLabel("采样:"))
+        self.sample_rate_label = QLabel(f"{1000 // self.sample_interval_ms}Hz")
+        self.sample_rate_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.sample_rate_label.setStyleSheet("color: #0078d4;")
+        conn_row.addWidget(self.sample_rate_label)
+
+        sample_settings_btn = QPushButton("⚙")
+        sample_settings_btn.setFixedSize(36, 36)
         sample_settings_btn.setToolTip("设置采样频率")
         sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
+        sample_settings_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        conn_row.addWidget(sample_settings_btn)
+
+        conn_row.addStretch()
+        card_layout.addLayout(conn_row)
+        layout.addWidget(card_conn)
+
+        # ========== 卡片2：实时数据 ==========
+        card_data = QWidget()
+        card_data.setObjectName("card")
+        card_data.setStyleSheet(self._card_style())
+        data_card_layout = QVBoxLayout(card_data)
+        data_card_layout.setContentsMargins(20, 16, 20, 16)
+        data_card_layout.setSpacing(12)
+
+        data_card_title = QLabel("实时数据")
+        data_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        data_card_title.setStyleSheet("color: #1a1a1a;")
+        data_card_layout.addWidget(data_card_title)
+
+        self.current_data_label = QLabel("等待连接...")
+        self.current_data_label.setFont(QFont("Microsoft YaHei", 11))
+        self.current_data_label.setStyleSheet("color: #444444;")
+        data_card_layout.addWidget(self.current_data_label)
+
+        self.stats_label = QLabel("暂无数据")
+        self.stats_label.setFont(QFont("Microsoft YaHei", 10))
+        self.stats_label.setStyleSheet("color: #888888;")
+        data_card_layout.addWidget(self.stats_label)
+
+        layout.addWidget(card_data)
+
+        # ========== 卡片3：图表 + 数据记录 ==========
+        card_chart = QWidget()
+        card_chart.setObjectName("card")
+        card_chart.setStyleSheet(self._card_style())
+        chart_card_layout = QVBoxLayout(card_chart)
+        chart_card_layout.setContentsMargins(20, 16, 20, 16)
+        chart_card_layout.setSpacing(12)
+
+        chart_header = QHBoxLayout()
+        chart_title = QLabel("距离-时间曲线")
+        chart_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        chart_title.setStyleSheet("color: #1a1a1a;")
+        chart_header.addWidget(chart_title)
+        chart_header.addStretch()
+        chart_card_layout.addLayout(chart_header)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+
+        # 左侧：数据记录
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        record_label = QLabel("数据记录")
+        record_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        record_label.setStyleSheet("color: #1a1a1a;")
+        left_layout.addWidget(record_label)
+
+        self.data_text = QTextEdit()
+        self.data_text.setReadOnly(True)
+        self.data_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #fafafa;
+                border: 1px solid #e5e5e5;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 11px;
+                color: #333333;
             }
         """)
-        control_layout.addWidget(sample_settings_btn)
+        left_layout.addWidget(self.data_text)
+        content_row.addWidget(left_panel, stretch=1)
 
-        control_layout.addStretch()
-        
-        control_group.setLayout(control_layout)
-        layout.addWidget(control_group)
-        
-        # 数据显示区域
-        data_group = QGroupBox("实时数据")
-        data_layout = QHBoxLayout()
-        
-        # 左侧：文本数据显示
-        text_widget = QWidget()
-        text_layout = QVBoxLayout()
-        
-        # 当前数据
-        self.current_data_label = QLabel("当前数据: 等待连接...")
-        self.current_data_label.setFont(QFont("Arial", 12))
-        text_layout.addWidget(self.current_data_label)
-        
-        # 数据统计
-        self.stats_label = QLabel("统计信息: 暂无数据")
-        text_layout.addWidget(self.stats_label)
-        
-        # 数据记录
-        self.data_text = QTextEdit()
-        self.data_text.setMaximumHeight(150)
-        text_layout.addWidget(QLabel("数据记录:"))
-        text_layout.addWidget(self.data_text)
-        
-        text_widget.setLayout(text_layout)
-        data_layout.addWidget(text_widget)
-        
-        # 右侧：图表显示
-        self.figure = Figure(figsize=(8, 6))
+        # 右侧：图表
+        self.figure = Figure(figsize=(8, 6), dpi=100)
+        self.figure.set_facecolor('#fafafa')
         self.canvas = FigureCanvas(self.figure)
-        data_layout.addWidget(self.canvas)
-        
-        data_group.setLayout(data_layout)
-        layout.addWidget(data_group)
-        
-        # 控制按钮
-        button_layout = QHBoxLayout()
-        
+        self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
+        content_row.addWidget(self.canvas, stretch=2)
+
+        chart_card_layout.addLayout(content_row)
+        layout.addWidget(card_chart)
+
+        # ========== 卡片4：操作按钮 ==========
+        card_actions = QWidget()
+        card_actions.setObjectName("card")
+        card_actions.setStyleSheet(self._card_style())
+        actions_layout = QHBoxLayout(card_actions)
+        actions_layout.setContentsMargins(20, 12, 20, 12)
+        actions_layout.setSpacing(10)
+
         self.start_btn = QPushButton("开始采集")
+        self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
-        button_layout.addWidget(self.start_btn)
-        
+        self.start_btn.setStyleSheet(self._primary_btn_style())
+        actions_layout.addWidget(self.start_btn)
+
         self.stop_btn = QPushButton("停止采集")
+        self.stop_btn.setFixedHeight(38)
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
-        button_layout.addWidget(self.stop_btn)
-        
+        self.stop_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        actions_layout.addWidget(self.stop_btn)
+
         self.save_btn = QPushButton("保存数据")
+        self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
-        button_layout.addWidget(self.save_btn)
-        
+        self.save_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        actions_layout.addWidget(self.save_btn)
+
         self.clear_btn = QPushButton("清除数据")
+        self.clear_btn.setFixedHeight(38)
         self.clear_btn.clicked.connect(self.clear_data)
-        button_layout.addWidget(self.clear_btn)
-        
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
-        
-        self.setLayout(layout)
-        
+        self.clear_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        actions_layout.addWidget(self.clear_btn)
+
+        actions_layout.addStretch()
+        layout.addWidget(card_actions)
+
+        layout.addStretch()
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
+        self.setLayout(main_layout)
+
         # 定时器用于更新图表
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_chart)
-        self.timer.start(100)  # 每100ms更新一次图表
+        self.timer.start(100)
+    
+    def _card_style(self):
+        return """
+            QWidget#card {
+                background-color: #ffffff;
+                border: 1px solid #e5e5e5;
+                border-radius: 8px;
+            }
+            QWidget#card QLabel,
+            QWidget#card QFrame {
+                background-color: transparent;
+            }
+        """
+
+    def _primary_btn_style(self):
+        return """
+            QPushButton {
+                background-color: #0078d4;
+                border: none;
+                color: white;
+                border-radius: 6px;
+                font-size: 13px;
+                padding: 0 16px;
+            }
+            QPushButton:hover { background-color: #106ebe; }
+            QPushButton:pressed { background-color: #005a9e; }
+            QPushButton:disabled { background-color: #cccccc; color: #888888; }
+        """
+
+    def _accent_btn_style(self, normal, hover, pressed):
+        return f"""
+            QPushButton {{
+                background-color: {normal};
+                border: 1px solid #d0d0d0;
+                color: #1a1a1a;
+                border-radius: 6px;
+                font-size: 13px;
+                padding: 0 16px;
+            }}
+            QPushButton:hover {{ background-color: {hover}; }}
+            QPushButton:pressed {{ background-color: {pressed}; }}
+            QPushButton:disabled {{ background-color: #f5f5f5; color: #aaaaaa; }}
+        """
     
     def refresh_ports(self):
         """刷新可用串口列表"""
@@ -433,7 +556,7 @@ class UltrasonicWidget(QWidget):
             
             self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
-            self.current_data_label.setText("当前数据: 已连接，等待数据...")
+            self.current_data_label.setText("已连接，等待数据...")
             
         except Exception as e:
             QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
@@ -448,7 +571,7 @@ class UltrasonicWidget(QWidget):
         self.connect_btn.setText("连接")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
-        self.current_data_label.setText("当前数据: 已断开")
+        self.current_data_label.setText("已断开")
     
     def start_collection(self):
         """开始数据采集"""
@@ -462,7 +585,7 @@ class UltrasonicWidget(QWidget):
         self.stop_btn.setEnabled(True)
         self.save_btn.setEnabled(False)
         
-        self.current_data_label.setText("当前数据: 采集进行中...")
+        self.current_data_label.setText("采集进行中...")
     
     def stop_collection(self):
         """停止数据采集"""
@@ -470,7 +593,7 @@ class UltrasonicWidget(QWidget):
         self.stop_btn.setEnabled(False)
         self.save_btn.setEnabled(len(self.data_points) > 0)
         
-        self.current_data_label.setText("当前数据: 采集已停止")
+        self.current_data_label.setText("采集已停止")
     
     def handle_data(self, data):
         """处理接收到的数据"""
@@ -482,7 +605,7 @@ class UltrasonicWidget(QWidget):
         
         # 检查是否是启动信号
         if data == "START":
-            self.current_data_label.setText("当前数据: 设备已启动，等待数据...")
+            self.current_data_label.setText("设备已启动，等待数据...")
             return
         
         if not self.stop_btn.isEnabled():  # 如果没有在采集状态，忽略数据
@@ -550,10 +673,7 @@ class UltrasonicWidget(QWidget):
             max_distance = np.max(self.data_points)
             min_distance = np.min(self.data_points)
             
-            stats_text = f"统计信息: 数据点 {len(self.data_points)} | " \
-                        f"平均 {avg_distance:.2f}cm | " \
-                        f"最大 {max_distance:.2f}cm | " \
-                        f"最小 {min_distance:.2f}cm"
+            stats_text = f"数据点 {len(self.data_points)} | 平均 {avg_distance:.2f}cm | 最大 {max_distance:.2f}cm | 最小 {min_distance:.2f}cm"
             self.stats_label.setText(stats_text)
     
     def update_chart(self):
@@ -615,8 +735,8 @@ class UltrasonicWidget(QWidget):
         self.data_points.clear()
         self.timestamps.clear()
         self.data_text.clear()
-        self.stats_label.setText("统计信息: 暂无数据")
-        self.current_data_label.setText("当前数据: 等待数据...")
+        self.stats_label.setText("暂无数据")
+        self.current_data_label.setText("等待数据...")
         self.figure.clear()
         self.canvas.draw()
         self.save_btn.setEnabled(False)
@@ -901,7 +1021,7 @@ class UltrasonicVelocityWidget(QWidget):
                     
                     if velocity is not None:
                         display_text = f"时间: {time_str} | 距离: {distance_cm:.2f}cm | 速度: {velocity:.2f}cm/s"
-                        self.current_data_label.setText(f"当前数据: {display_text}")
+                        self.current_data_label.setText(display_text)
                         
                         # 添加到数据记录
                         self.data_text.append(display_text)
@@ -1233,7 +1353,7 @@ class HomePageWidget(QWidget):
                 ("V", "电压"),
             ]
         )
-        modules_row.addWidget(card2, stretch=3)
+        modules_row.addWidget(card2, stretch=2)
 
         # 化学实验模块
         card3 = self.create_grid_module_card(
@@ -1243,7 +1363,7 @@ class HomePageWidget(QWidget):
                 ("pH", "pH传感器"),
             ]
         )
-        modules_row.addWidget(card3, stretch=1)
+        modules_row.addWidget(card3, stretch=2)
 
         content_layout.addLayout(modules_row)
         content_layout.addStretch()
@@ -1379,6 +1499,8 @@ class HomePageWidget(QWidget):
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(8)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 0)
 
         for i, (icon_text, name) in enumerate(modules):
             row, col = divmod(i, 2)
@@ -1395,6 +1517,7 @@ class HomePageWidget(QWidget):
         btn.setObjectName("module_item")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFixedHeight(48)
+        btn.setMaximumWidth(200)
         btn.setStyleSheet(self.CARD_HOVER_STYLE)
 
         btn_layout = QHBoxLayout(btn)
@@ -1415,7 +1538,7 @@ class HomePageWidget(QWidget):
         name_label = QLabel(name)
         name_label.setFont(QFont("Microsoft YaHei", 12))
         name_label.setStyleSheet("color: #1a1a1a;")
-        btn_layout.addWidget(name_label, stretch=1)
+        btn_layout.addWidget(name_label)
 
         arrow = QLabel(">")
         arrow.setFont(QFont("Arial", 12))
@@ -2077,98 +2200,138 @@ class VoltageSensorWidget(QWidget):
         return actual_voltage
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        conn_group = QGroupBox("连接方式")
-        conn_layout = QHBoxLayout()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
 
-        conn_layout.addWidget(QLabel("连接方式:"))
+        content = QWidget()
+        content.setStyleSheet("background: #f3f3f3;")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("电压")
+        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
+        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        layout.addWidget(title)
+
+        # ========== 卡片1：连接控制 ==========
+        card_conn = QWidget()
+        card_conn.setObjectName("card")
+        card_conn.setStyleSheet(self._card_style())
+        card_layout = QVBoxLayout(card_conn)
+        card_layout.setContentsMargins(20, 16, 20, 16)
+        card_layout.setSpacing(12)
+
+        card_title = QLabel("连接控制")
+        card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        card_title.setStyleSheet("color: #1a1a1a;")
+        card_layout.addWidget(card_title)
+
+        # 第一行：连接方式 + 设备选择 + 按钮
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
+
+        row1.addWidget(QLabel("连接方式:"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
         if not BLE_AVAILABLE:
             self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        conn_layout.addWidget(self.mode_combo)
+        row1.addWidget(self.mode_combo)
 
         self.serial_panel = QWidget()
         serial_layout = QHBoxLayout(self.serial_panel)
         serial_layout.setContentsMargins(0, 0, 0, 0)
-
+        serial_layout.setSpacing(8)
         serial_layout.addWidget(QLabel("串口:"))
         self.port_combo = QComboBox()
         self.refresh_ports()
+        self.port_combo.setMinimumWidth(140)
         serial_layout.addWidget(self.port_combo)
-
         self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setFixedHeight(36)
         self.refresh_btn.clicked.connect(self.refresh_ports)
+        self.refresh_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         serial_layout.addWidget(self.refresh_btn)
 
         self.ble_panel = QWidget()
         ble_layout = QHBoxLayout(self.ble_panel)
         ble_layout.setContentsMargins(0, 0, 0, 0)
-
+        ble_layout.setSpacing(8)
         self.ble_device_combo = QComboBox()
+        self.ble_device_combo.setMinimumWidth(180)
         ble_layout.addWidget(self.ble_device_combo)
-
         self.ble_scan_btn = QPushButton("扫描BLE")
+        self.ble_scan_btn.setFixedHeight(36)
         self.ble_scan_btn.clicked.connect(self.scan_ble)
         if not BLE_AVAILABLE:
             self.ble_scan_btn.setEnabled(False)
         ble_layout.addWidget(self.ble_scan_btn)
 
-        conn_layout.addWidget(self.serial_panel)
-        conn_layout.addWidget(self.ble_panel)
+        row1.addWidget(self.serial_panel)
+        row1.addWidget(self.ble_panel)
         self.ble_panel.hide()
 
-        conn_layout.addStretch()
-
+        row1.addSpacing(16)
         self.connect_btn = QPushButton("连接")
+        self.connect_btn.setFixedHeight(36)
         self.connect_btn.clicked.connect(self.connect_device)
-        conn_layout.addWidget(self.connect_btn)
+        self.connect_btn.setStyleSheet(self._primary_btn_style())
+        row1.addWidget(self.connect_btn)
 
         self.disconnect_btn = QPushButton("断开")
+        self.disconnect_btn.setFixedHeight(36)
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
-        conn_layout.addWidget(self.disconnect_btn)
+        self.disconnect_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        row1.addWidget(self.disconnect_btn)
 
-        conn_layout.addStretch()
+        row1.addStretch()
+        card_layout.addLayout(row1)
 
-        # 采样频率显示
-        conn_layout.addWidget(QLabel("采样:"))
-        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
-        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
-        conn_layout.addWidget(self.sample_rate_label)
+        # 第二行：采样频率
+        row2 = QHBoxLayout()
+        row2.setSpacing(10)
+        row2.addWidget(QLabel("采样频率:"))
+        self.sample_rate_label = QLabel(f"{1000 // self.sample_interval_ms}Hz")
+        self.sample_rate_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.sample_rate_label.setStyleSheet("color: #0078d4;")
+        row2.addWidget(self.sample_rate_label)
 
-        # 采样频率设置按钮
-        sample_settings_btn = QPushButton("⚙️")
-        sample_settings_btn.setFixedWidth(40)
+        sample_settings_btn = QPushButton("⚙")
+        sample_settings_btn.setFixedSize(36, 36)
         sample_settings_btn.setToolTip("设置采样频率")
         sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
-        conn_layout.addWidget(sample_settings_btn)
+        sample_settings_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        row2.addWidget(sample_settings_btn)
+        row2.addStretch()
+        card_layout.addLayout(row2)
 
-        conn_group.setLayout(conn_layout)
-        layout.addWidget(conn_group)
+        layout.addWidget(card_conn)
 
-        adc_group = QGroupBox("ADC 与电路参数")
-        adc_layout = QVBoxLayout()
+        # ========== 卡片2：ADC 与电路参数 ==========
+        card_adc = QWidget()
+        card_adc.setObjectName("card")
+        card_adc.setStyleSheet(self._card_style())
+        adc_card_layout = QVBoxLayout(card_adc)
+        adc_card_layout.setContentsMargins(20, 16, 20, 16)
+        adc_card_layout.setSpacing(12)
 
-        bits_layout = QHBoxLayout()
-        bits_layout.addWidget(QLabel("ADC 位数:"))
+        adc_card_title = QLabel("ADC 与电路参数")
+        adc_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        adc_card_title.setStyleSheet("color: #1a1a1a;")
+        adc_card_layout.addWidget(adc_card_title)
+
+        bits_row = QHBoxLayout()
+        bits_row.setSpacing(10)
+        bits_row.addWidget(QLabel("ADC 位数:"))
         self.adc_bits_combo = QComboBox()
         self.adc_bits_combo.addItems([
             "8 位 (0-255)",
@@ -2184,122 +2347,232 @@ class VoltageSensorWidget(QWidget):
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
         self.adc_bits_combo.setCurrentIndex(bits_map.get(self.adc_bits, 2))
         self.adc_bits_combo.currentIndexChanged.connect(self.on_adc_bits_changed)
-        self.adc_bits_combo.setStyleSheet("QComboBox { padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px; min-width: 160px; }")
-        bits_layout.addWidget(self.adc_bits_combo)
+        bits_row.addWidget(self.adc_bits_combo)
 
-        bits_layout.addWidget(QLabel("  参考电压: 3.3V"))
-        self.range_label = QLabel(f"  量程: 0 ~ {self.VREF:.1f}V")
-        self.range_label.setStyleSheet("color: #0078d4; font-weight: bold;")
-        bits_layout.addWidget(self.range_label)
-        bits_layout.addStretch()
-        adc_layout.addLayout(bits_layout)
+        bits_row.addWidget(QLabel("参考电压: 3.3V"))
+        self.range_label = QLabel(f"量程: 0 ~ {self.VREF:.1f}V")
+        self.range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+        self.range_label.setStyleSheet("color: #0078d4;")
+        bits_row.addWidget(self.range_label)
+        bits_row.addStretch()
+        adc_card_layout.addLayout(bits_row)
 
-        divider_layout = QHBoxLayout()
-        divider_layout.addWidget(QLabel("分压比 (R1+R2)/R2:"))
+        params_row = QHBoxLayout()
+        params_row.setSpacing(10)
+        params_row.addWidget(QLabel("分压比 (R1+R2)/R2:"))
         self.divider_spin = QDoubleSpinBox()
         self.divider_spin.setRange(1.0, 1000.0)
         self.divider_spin.setDecimals(2)
         self.divider_spin.setSingleStep(0.1)
         self.divider_spin.setValue(self.divider_ratio)
         self.divider_spin.setSuffix(" x")
-        self.divider_spin.setToolTip("分压电路中 (R1+R2)/R2 的比值\n例如 R1=10kΩ, R2=10kΩ → 分压比 = 2.0")
+        self.divider_spin.setMinimumWidth(120)
         self.divider_spin.valueChanged.connect(self.on_divider_changed)
-        self.divider_spin.setStyleSheet("QDoubleSpinBox { padding: 6px; border: 1px solid #ccc; border-radius: 4px; min-width: 100px; }")
-        divider_layout.addWidget(self.divider_spin)
+        params_row.addWidget(self.divider_spin)
 
-        divider_layout.addWidget(QLabel("  放大倍数:"))
+        params_row.addWidget(QLabel("放大倍数:"))
         self.amp_spin = QDoubleSpinBox()
         self.amp_spin.setRange(0.01, 1000.0)
         self.amp_spin.setDecimals(2)
         self.amp_spin.setSingleStep(0.1)
         self.amp_spin.setValue(self.amp_ratio)
         self.amp_spin.setSuffix(" x")
-        self.amp_spin.setToolTip("运放放大倍数\n如无放大电路则设为 1.0")
+        self.amp_spin.setMinimumWidth(120)
         self.amp_spin.valueChanged.connect(self.on_amp_changed)
-        self.amp_spin.setStyleSheet("QDoubleSpinBox { padding: 6px; border: 1px solid #ccc; border-radius: 4px; min-width: 100px; }")
-        divider_layout.addWidget(self.amp_spin)
+        params_row.addWidget(self.amp_spin)
 
         self.actual_range_label = QLabel(f"实际量程: 0 ~ {self.VREF * self.divider_ratio / self.amp_ratio:.2f}V")
-        self.actual_range_label.setStyleSheet("color: #28a745; font-weight: bold;")
-        divider_layout.addWidget(self.actual_range_label)
-        divider_layout.addStretch()
-        adc_layout.addLayout(divider_layout)
+        self.actual_range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+        self.actual_range_label.setStyleSheet("color: #28a745;")
+        params_row.addWidget(self.actual_range_label)
+        params_row.addStretch()
+        adc_card_layout.addLayout(params_row)
 
-        hint_label = QLabel("💡 分压比 = (R1+R2)/R2，用于还原分压前的原始电压；放大倍数 = 运放增益，用于还原放大前的信号电压")
-        hint_label.setStyleSheet("color: #888; font-size: 11px;")
+        hint_label = QLabel("分压比 = (R1+R2)/R2，用于还原分压前的原始电压；放大倍数 = 运放增益，用于还原放大前的信号电压")
+        hint_label.setStyleSheet("color: #888888; font-size: 11px;")
         hint_label.setWordWrap(True)
-        adc_layout.addWidget(hint_label)
+        adc_card_layout.addWidget(hint_label)
 
-        adc_group.setLayout(adc_layout)
-        layout.addWidget(adc_group)
+        layout.addWidget(card_adc)
 
-        data_group = QGroupBox("实时数据")
-        data_layout = QHBoxLayout()
+        # ========== 卡片3：实时数据 ==========
+        card_data = QWidget()
+        card_data.setObjectName("card")
+        card_data.setStyleSheet(self._card_style())
+        data_card_layout = QVBoxLayout(card_data)
+        data_card_layout.setContentsMargins(20, 16, 20, 16)
+        data_card_layout.setSpacing(12)
 
-        text_widget = QWidget()
-        text_layout = QVBoxLayout()
+        data_card_title = QLabel("实时数据")
+        data_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        data_card_title.setStyleSheet("color: #1a1a1a;")
+        data_card_layout.addWidget(data_card_title)
 
-        self.current_voltage_label = QLabel("电压: --.- V")
-        self.current_voltage_label.setFont(QFont("Arial", 28, QFont.Weight.Bold))
-        self.current_voltage_label.setStyleSheet("color: #0078d4; padding: 10px;")
-        text_layout.addWidget(self.current_voltage_label)
+        self.current_voltage_label = QLabel("--.- V")
+        self.current_voltage_label.setFont(QFont("Microsoft YaHei", 32, QFont.Weight.Bold))
+        self.current_voltage_label.setStyleSheet("color: #0078d4;")
+        data_card_layout.addWidget(self.current_voltage_label)
 
+        raw_row = QHBoxLayout()
+        raw_row.setSpacing(20)
         self.current_raw_label = QLabel("原始ADC: ------")
-        self.current_raw_label.setFont(QFont("Arial", 14))
-        text_layout.addWidget(self.current_raw_label)
+        self.current_raw_label.setFont(QFont("Microsoft YaHei", 11))
+        self.current_raw_label.setStyleSheet("color: #444444;")
+        raw_row.addWidget(self.current_raw_label)
 
         self.current_vadc_label = QLabel("ADC端电压: --.- V")
-        self.current_vadc_label.setFont(QFont("Arial", 12))
-        self.current_vadc_label.setStyleSheet("color: #666;")
-        text_layout.addWidget(self.current_vadc_label)
+        self.current_vadc_label.setFont(QFont("Microsoft YaHei", 11))
+        self.current_vadc_label.setStyleSheet("color: #444444;")
+        raw_row.addWidget(self.current_vadc_label)
+        raw_row.addStretch()
+        data_card_layout.addLayout(raw_row)
 
-        self.stats_label = QLabel("统计信息: 暂无数据")
-        text_layout.addWidget(self.stats_label)
+        self.stats_label = QLabel("暂无数据")
+        self.stats_label.setFont(QFont("Microsoft YaHei", 10))
+        self.stats_label.setStyleSheet("color: #888888;")
+        data_card_layout.addWidget(self.stats_label)
+
+        layout.addWidget(card_data)
+
+        # ========== 卡片4：图表 + 数据记录 ==========
+        card_chart = QWidget()
+        card_chart.setObjectName("card")
+        card_chart.setStyleSheet(self._card_style())
+        chart_card_layout = QVBoxLayout(card_chart)
+        chart_card_layout.setContentsMargins(20, 16, 20, 16)
+        chart_card_layout.setSpacing(12)
+
+        chart_title = QLabel("电压-时间曲线")
+        chart_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        chart_title.setStyleSheet("color: #1a1a1a;")
+        chart_card_layout.addWidget(chart_title)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        record_label = QLabel("数据记录")
+        record_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        record_label.setStyleSheet("color: #1a1a1a;")
+        left_layout.addWidget(record_label)
 
         self.data_text = QTextEdit()
-        self.data_text.setMaximumHeight(120)
-        text_layout.addWidget(QLabel("数据记录:"))
-        text_layout.addWidget(self.data_text)
+        self.data_text.setReadOnly(True)
+        self.data_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #fafafa;
+                border: 1px solid #e5e5e5;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 11px;
+                color: #333333;
+            }
+        """)
+        left_layout.addWidget(self.data_text)
+        content_row.addWidget(left_panel, stretch=1)
 
-        text_widget.setLayout(text_layout)
-        data_layout.addWidget(text_widget)
-
-        self.figure = Figure(figsize=(8, 5))
+        self.figure = Figure(figsize=(8, 5), dpi=100)
+        self.figure.set_facecolor('#fafafa')
         self.canvas = FigureCanvas(self.figure)
-        data_layout.addWidget(self.canvas)
+        self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
+        content_row.addWidget(self.canvas, stretch=2)
 
-        data_group.setLayout(data_layout)
-        layout.addWidget(data_group)
+        chart_card_layout.addLayout(content_row)
+        layout.addWidget(card_chart)
 
-        button_layout = QHBoxLayout()
+        # ========== 卡片5：操作按钮 ==========
+        card_actions = QWidget()
+        card_actions.setObjectName("card")
+        card_actions.setStyleSheet(self._card_style())
+        actions_layout = QHBoxLayout(card_actions)
+        actions_layout.setContentsMargins(20, 12, 20, 12)
+        actions_layout.setSpacing(10)
 
         self.start_btn = QPushButton("开始采集")
+        self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
-        button_layout.addWidget(self.start_btn)
+        self.start_btn.setStyleSheet(self._primary_btn_style())
+        actions_layout.addWidget(self.start_btn)
 
         self.stop_btn = QPushButton("停止采集")
+        self.stop_btn.setFixedHeight(38)
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
-        button_layout.addWidget(self.stop_btn)
+        self.stop_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        actions_layout.addWidget(self.stop_btn)
 
         self.save_btn = QPushButton("保存数据")
+        self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
-        button_layout.addWidget(self.save_btn)
+        self.save_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        actions_layout.addWidget(self.save_btn)
 
         self.clear_btn = QPushButton("清除数据")
+        self.clear_btn.setFixedHeight(38)
         self.clear_btn.clicked.connect(self.clear_data)
-        button_layout.addWidget(self.clear_btn)
+        self.clear_btn.setStyleSheet(self._accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
+        actions_layout.addWidget(self.clear_btn)
 
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
+        actions_layout.addStretch()
+        layout.addWidget(card_actions)
 
-        self.setLayout(layout)
+        layout.addStretch()
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
+        self.setLayout(main_layout)
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)
+
+    def _card_style(self):
+        return """
+            QWidget#card {
+                background-color: #ffffff;
+                border: 1px solid #e5e5e5;
+                border-radius: 8px;
+            }
+            QWidget#card QLabel,
+            QWidget#card QFrame {
+                background-color: transparent;
+            }
+        """
+
+    def _primary_btn_style(self):
+        return """
+            QPushButton {
+                background-color: #0078d4;
+                border: none;
+                color: white;
+                border-radius: 6px;
+                font-size: 13px;
+                padding: 0 16px;
+            }
+            QPushButton:hover { background-color: #106ebe; }
+            QPushButton:pressed { background-color: #005a9e; }
+            QPushButton:disabled { background-color: #cccccc; color: #888888; }
+        """
+
+    def _accent_btn_style(self, normal, hover, pressed):
+        return f"""
+            QPushButton {{
+                background-color: {normal};
+                border: 1px solid #d0d0d0;
+                color: #1a1a1a;
+                border-radius: 6px;
+                font-size: 13px;
+                padding: 0 16px;
+            }}
+            QPushButton:hover {{ background-color: {hover}; }}
+            QPushButton:pressed {{ background-color: {pressed}; }}
+            QPushButton:disabled {{ background-color: #f5f5f5; color: #aaaaaa; }}
+        """
 
     def on_mode_changed(self, index):
         if index == 0:
@@ -2379,8 +2652,9 @@ class VoltageSensorWidget(QWidget):
             self.connect_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(True)
             self.start_btn.setEnabled(True)
-            self.current_voltage_label.setText("电压: 等待数据...")
-            self.current_raw_label.setText("原始ADC: 连接中...")
+        self.current_voltage_label.setText("--.- V")
+        self.current_raw_label.setText("原始ADC: 连接中...")
+        self.current_vadc_label.setText("ADC端电压: --.- V")
         except Exception as e:
             QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
 
@@ -2405,8 +2679,8 @@ class VoltageSensorWidget(QWidget):
             self.connect_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(True)
             self.start_btn.setEnabled(True)
-            self.current_voltage_label.setText("电压: BLE连接中...")
-            self.current_raw_label.setText("原始ADC: BLE连接中...")
+            self.current_voltage_label.setText("BLE连接中...")
+            self.current_raw_label.setText("ADC: BLE连接中...")
         except Exception as e:
             QMessageBox.critical(self, "连接错误", f"BLE 连接失败: {e}")
 
