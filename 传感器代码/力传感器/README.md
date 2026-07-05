@@ -1,5 +1,18 @@
 # HX711 力/质量传感器模块使用说明
 
+## 📦 上位机模块
+
+本目录的上位机模块为 [force_sensor.py](force_sensor.py)，识别区声明：
+
+| 字段 | 值 |
+|------|-----|
+| 模块名 | 力传感器 |
+| 图标 | F |
+| 类别 | physics |
+| 主类 | `ForceSensorWidget` |
+
+支持去皮（Tare）、两点校准、有线串口和 BLE 两种连接方式。校准参数保存在 `sensor_config.json`。
+
 <p align="center">
   <img src="../../docs/images/实拍图.jpg" alt="力传感器实拍" width="600"/>
 </p>
