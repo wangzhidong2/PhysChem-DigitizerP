@@ -1,26 +1,27 @@
 // ============================================================
-//  HX711 电压测量模块 - ESP32-S3 固件
+//  HX711 电压传感器模块 - ESP32-S3 固件
 //  模块名称：HX711 微小电压采集（通道 B）
-//  功能：使用 HX711 24位 ADC 的通道 B（固定增益 32）测量 ~100mV 级电压
+//  功能：基于 HX711 24位 ADC 的通道 B（固定增益 32）测量 ~100mV 级电压
+//        通过串口输出原始 ADC 值，由上位机进行换算
+//  测量范围：±156mV 差分输入（AVDD=5V，增益 32）
 //  接线：DOUT->GPIO4, PD_SCK->GPIO5
 //        被测电压差分接入 B+ / B- 引脚
-//  数据格式：timestamp_ms,raw_adc_value  （与上位机 ForceSensorWidget 解析一致）
+//  数据格式：时间戳(ms),ADC原始值
 //  说明：
-//    - 通道 B 固定增益 32，AVDD=5V 时满量程差分输入约 ±156mV，适合测量 100mV 信号
+//    - 通道 B 固定增益 32，满量程差分输入约 ±156mV，适合测量 100mV 信号
 //    - 通道 A 增益 128 满量程仅 ±39mV，测量 100mV 会饱和，因此必须使用通道 B
-//    - HX711 上电后默认通道 A 增益 128，首次读取后通过 2 个额外脉冲切换至通道 B 增益 32
+//    - HX711 上电默认通道 A 增益 128，首次读取后通过 2 个额外脉冲切换至通道 B
+//    - HX711 输出为 24 位有符号数，范围 -8388608 ~ +8388607
+//  详细说明：参见 README.md
 // ============================================================
 
 #define HX711_DOUT_PIN 4
 #define HX711_SCK_PIN  5
-#define SAMPLE_INTERVAL 80   // 采样间隔 80ms (12.5Hz)，与 HX711 输出速率匹配
+#define SAMPLE_INTERVAL 100  // 采样间隔 100ms (10Hz)，与 HX711 默认输出速率匹配
 
-long offset = 0;
-float scale = 1.0;
-bool calibrated = false;
+unsigned long lastSampleTime = 0;
 
 // 读取 HX711 原始 24 位有符号值（通道 B，增益 32）
-// 关键：在 24 个数据位之后，发送 2 个额外脉冲以选择下一次读取为 通道B/Gain32
 long readHX711Raw() {
   // 等待 DOUT 拉低，表示数据就绪
   while (digitalRead(HX711_DOUT_PIN) == HIGH) {
@@ -57,34 +58,6 @@ long readHX711Raw() {
   return value;
 }
 
-long readAverage(int times) {
-  long sum = 0;
-  for (int i = 0; i < times; i++) {
-    sum += readHX711Raw();
-  }
-  return sum / times;
-}
-
-void tare(int times) {
-  offset = readAverage(times);
-}
-
-float getUnits(int times) {
-  long raw = readAverage(times);
-  return (raw - offset) * scale;
-}
-
-void powerDown() {
-  digitalWrite(HX711_SCK_PIN, LOW);
-  digitalWrite(HX711_SCK_PIN, HIGH);
-}
-
-void powerUp() {
-  digitalWrite(HX711_SCK_PIN, LOW);
-}
-
-unsigned long lastSampleTime = 0;
-
 void setup() {
   Serial.begin(115200);
 
@@ -92,7 +65,7 @@ void setup() {
   pinMode(HX711_SCK_PIN, OUTPUT);
   digitalWrite(HX711_SCK_PIN, LOW);
 
-  powerUp();
+  // HX711 上电后需要等待芯片就绪
   delay(500);
 
   // HX711 上电默认通道 A 增益 128，先丢弃一次读数以切换到通道 B 增益 32
@@ -100,45 +73,32 @@ void setup() {
   readHX711Raw();
   delay(100);
 
-  // 在通道 B 上做初始去皮
-  tare(10);
-
-  Serial.println("HX711 Voltage Sensor - ESP32-S3 (Channel B)");
-  Serial.println("Configuration:");
+  // 启动信息
+  Serial.println("HX711 Voltage Sensor Collector");
+  Serial.println("ADC Configuration:");
+  Serial.println("- Resolution: 24 bits (signed)");
   Serial.println("- Channel: B (Gain 32, fixed)");
   Serial.println("- Full Scale: ~+-156mV (AVDD=5V)");
-  Serial.println("- Sample Rate: 12.5Hz (80ms interval)");
-  Serial.println("- Output: timestamp_ms,raw_adc_value");
-  Serial.println("- Tare offset: " + String(offset));
+  Serial.println("- Sample Rate: 10Hz");
+  Serial.println("- Output: Raw ADC Value (-8388608 ~ +8388607)");
   Serial.println("START");
 
-  delay(500);
+  delay(1000); // 等待串口稳定
 }
 
 void loop() {
-  // 处理上位机命令
-  if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-    if (cmd == "TARE") {
-      tare(10);
-      Serial.println("TARE_DONE," + String(offset));
-    } else if (cmd == "CALIBRATE") {
-      Serial.println("CALIBRATE_READY,place_known_weight");
-    }
-  }
-
   unsigned long currentTime = millis();
 
-  // 按采样间隔输出原始 ADC 值
+  // 按采样间隔读取 ADC 并通过串口输出
   if (currentTime - lastSampleTime >= SAMPLE_INTERVAL) {
     lastSampleTime = currentTime;
 
-    long rawValue = readHX711Raw();
+    long adcValue = readHX711Raw();
 
+    // 输出格式：时间戳,ADC值 （供上位机解析）
     Serial.print(currentTime);
     Serial.print(",");
-    Serial.println(rawValue);
+    Serial.println(adcValue);
   }
 
   delay(1);
