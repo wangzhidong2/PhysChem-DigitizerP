@@ -44,6 +44,8 @@ pip install bleak
 | pH (SEN0161) | ESP32-S3 | `传感器arduino代码/ph传感器/ph esp32.ino` |
 | HX711 力传感器 | ESP32-S3 | `传感器arduino代码/力传感器/force.ino` |
 | 电压采集 | ESP32-S3 | `传感器arduino代码/电压/ESP32_Voltage_Sensor.ino` |
+| HX711 电压采集 | ESP32-S3 | `传感器arduino代码/HX711电压传感器/HX711_Voltage.ino` |
+| 电流（ADC 原始） | ESP32-S3 | `传感器arduino代码/电流传感器/ESP32_ADC_Raw_Data.ino` |
 
 通过 Arduino IDE 烧录。开发板管理器地址：
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
@@ -52,8 +54,10 @@ pip install bleak
 
 ## 架构说明
 
-- 单文件 Python 应用（`mainwithbt.py`，约 1500+ 行）——所有 Widget、串口线程、BLE 逻辑都在一个文件中
+- 单文件 Python 应用（`mainwithbt.py`，约 5000 行）——所有 Widget、串口线程、BLE 逻辑都在一个文件中
+- UI 采用 Windows 11 风格卡片布局；侧边栏使用自定义 `NavButton` 类（`paintEvent` 自绘图标 + 选中指示条），不再使用 `QListWidget`
 - 每个传感器模块对应一个 `QWidget` 子类（如 `UltrasonicWidget`、`PhSensorWidget`、`ForceSensorWidget`、`VoltageSensorWidget`）
+- `VoltageSensorWidget` 支持：HX711 24 位 ADC 模式（通道 A/B、增益 128/32）、kV/V/mV 单位切换、去皮（Tare）功能
 - `SerialThread`（QThread）处理 USB 串口通信；`BLESerialThread` 通过 `bleak` 处理 BLE 通信
 - 配置持久化：`load_sensor_config()` / `save_sensor_config()` 读写 `sensor_config.json`
 - 无自动化测试——`test_serial.py` 仅为手动诊断工具
@@ -111,6 +115,8 @@ Located in `传感器arduino代码/` (Chinese directory names). Each subfolder h
 | pH (SEN0161) | ESP32-S3 | `传感器arduino代码/ph传感器/ph esp32.ino` |
 | HX711 force | ESP32-S3 | `传感器arduino代码/力传感器/force.ino` |
 | Voltage ADC | ESP32-S3 | `传感器arduino代码/电压/ESP32_Voltage_Sensor.ino` |
+| HX711 voltage | ESP32-S3 | `传感器arduino代码/HX711电压传感器/HX711_Voltage.ino` |
+| Current (raw ADC) | ESP32-S3 | `传感器arduino代码/电流传感器/ESP32_ADC_Raw_Data.ino` |
 
 Flash via Arduino IDE. Board packages:
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
@@ -119,8 +125,10 @@ Flash via Arduino IDE. Board packages:
 
 ## Architecture notes
 
-- Single-file Python app (`mainwithbt.py`, ~1500+ lines) — all widgets, serial threads, BLE logic in one file
+- Single-file Python app (`mainwithbt.py`, ~5000 lines) — all widgets, serial threads, BLE logic in one file
+- UI uses Windows 11-style card layout; sidebar is built on a custom `NavButton` class (custom `paintEvent` for icon + selection indicator), no longer `QListWidget`
 - Each sensor module is a `QWidget` subclass (e.g. `UltrasonicWidget`, `PhSensorWidget`, `ForceSensorWidget`, `VoltageSensorWidget`)
+- `VoltageSensorWidget` supports: HX711 24-bit ADC mode (channel A/B, gain 128/32), kV/V/mV unit switching, Tare function
 - `SerialThread` (QThread) handles USB serial; `BLESerialThread` handles BLE via `bleak`
 - Config persistence: `load_sensor_config()` / `save_sensor_config()` write to `sensor_config.json`
 - No automated tests — `test_serial.py` is a manual diagnostic tool
