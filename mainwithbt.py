@@ -2173,6 +2173,9 @@ class VoltageSensorWidget(QWidget):
         self.hx711_channel = 'B'    # 通道：A=增益128，B=增益32
         # 显示单位：内部 voltage_data 始终存伏特，仅在显示/保存时按当前单位换算
         self.current_unit = 'V'     # 可选：kV / V / mV
+        # 去皮偏移：空载时传感器输出的非零电压，从测量值中扣除
+        self.tare_offset_v = 0.0    # 单位：伏特（与 voltage_data 一致）
+        self.tare_active = False    # 是否启用去皮
 
         self.config = self.load_config()
         self.adc_bits = self.config.get('adc_bits', 12)
@@ -2182,6 +2185,8 @@ class VoltageSensorWidget(QWidget):
         self.hx711_avdd = self.config.get('hx711_avdd', 5.0)
         self.hx711_channel = self.config.get('hx711_channel', 'B')
         self.current_unit = self.config.get('current_unit', 'V')
+        self.tare_offset_v = self.config.get('tare_offset_v', 0.0)
+        self.tare_active = self.config.get('tare_active', False)
 
         self.init_ui()
 
@@ -2196,6 +2201,8 @@ class VoltageSensorWidget(QWidget):
             self.hx711_avdd = config.get('hx711_avdd', 5.0)
             self.hx711_channel = config.get('hx711_channel', 'B')
             self.current_unit = config.get('current_unit', 'V')
+            self.tare_offset_v = config.get('tare_offset_v', 0.0)
+            self.tare_active = config.get('tare_active', False)
         return config
 
     def save_config(self):
@@ -2207,7 +2214,9 @@ class VoltageSensorWidget(QWidget):
             'hx711_mode': self.hx711_mode,
             'hx711_avdd': self.hx711_avdd,
             'hx711_channel': self.hx711_channel,
-            'current_unit': self.current_unit
+            'current_unit': self.current_unit,
+            'tare_offset_v': self.tare_offset_v,
+            'tare_active': self.tare_active
         }
         return save_sensor_config('voltage_sensor', config)
 
@@ -2231,6 +2240,9 @@ class VoltageSensorWidget(QWidget):
         # 实际被测电压 = ADC端电压 × 分压比 / 放大倍数
         v_adc = self.adc_to_vadc(adc_value)
         actual_voltage = v_adc * self.divider_ratio / self.amp_ratio
+        # 启用去皮时扣除空载偏移
+        if self.tare_active:
+            actual_voltage -= self.tare_offset_v
         return actual_voltage
 
     def adc_to_vadc(self, adc_value):
@@ -2482,6 +2494,18 @@ class VoltageSensorWidget(QWidget):
         unit_row.addStretch()
         adc_card_layout.addLayout(unit_row)
 
+        # 去皮状态显示行
+        tare_row = QHBoxLayout()
+        tare_row.setSpacing(10)
+        tare_row.addWidget(QLabel("去皮:"))
+        self.tare_status_label = QLabel("未启用" if not self.tare_active else
+                                        f"已启用 (偏移 {self.format_voltage(self.tare_offset_v)} {self.current_unit})")
+        self.tare_status_label.setStyleSheet("color: green; font-weight: bold;" if self.tare_active
+                                             else "color: #888; font-weight: bold;")
+        tare_row.addWidget(self.tare_status_label)
+        tare_row.addStretch()
+        adc_card_layout.addLayout(tare_row)
+
         layout.addWidget(card_adc)
 
         # ========== 卡片3：实时数据 ==========
@@ -2587,6 +2611,16 @@ class VoltageSensorWidget(QWidget):
         self.start_btn.setEnabled(False)
         self.start_btn.setStyleSheet(self._primary_btn_style())
         actions_layout.addWidget(self.start_btn)
+
+        # 去皮按钮：取最近若干个数据点平均值作为空载偏移
+        self.tare_btn = QPushButton("去皮" if not self.tare_active else "取消去皮")
+        self.tare_btn.setFixedHeight(38)
+        self.tare_btn.clicked.connect(self.toggle_tare)
+        self.tare_btn.setEnabled(False)
+        self.tare_btn.setStyleSheet(self._accent_btn_style("#fd7e14", "#e06b00", "#c75a00")
+                                    if not self.tare_active else
+                                    self._accent_btn_style("#28a745", "#218838", "#1e7e34"))
+        actions_layout.addWidget(self.tare_btn)
 
         self.stop_btn = QPushButton("停止采集")
         self.stop_btn.setFixedHeight(38)
@@ -2717,9 +2751,62 @@ class VoltageSensorWidget(QWidget):
         # 刷新实时数据/统计/图表的显示
         self.update_stats()
         self.update_chart()
+        # 刷新去皮状态标签（单位变了显示值要跟着变）
+        self.update_tare_status_label()
         # 刷新当前电压大字显示（如果有最后一个数据点）
         if self.voltage_data:
             self.current_voltage_label.setText(f"{self.format_voltage(self.voltage_data[-1])} {self.current_unit}")
+
+    def update_tare_status_label(self):
+        """根据当前去皮状态刷新状态标签和按钮文字"""
+        if self.tare_active:
+            self.tare_status_label.setText(
+                f"已启用 (偏移 {self.format_voltage(self.tare_offset_v)} {self.current_unit})")
+            self.tare_status_label.setStyleSheet("color: green; font-weight: bold;")
+            self.tare_btn.setText("取消去皮")
+            self.tare_btn.setStyleSheet(self._accent_btn_style("#28a745", "#218838", "#1e7e34"))
+        else:
+            self.tare_status_label.setText("未启用")
+            self.tare_status_label.setStyleSheet("color: #888; font-weight: bold;")
+            self.tare_btn.setText("去皮")
+            self.tare_btn.setStyleSheet(self._accent_btn_style("#fd7e14", "#e06b00", "#c75a00"))
+
+    def toggle_tare(self):
+        """去皮/取消去皮切换
+        去皮：取最近若干个数据点的平均值作为空载偏移，从测量值中扣除
+        取消：清空偏移，恢复原始测量值
+        """
+        if self.tare_active:
+            # 取消去皮
+            self.tare_active = False
+            self.tare_offset_v = 0.0
+            self.save_config()
+            self.update_tare_status_label()
+            # 重新计算已有数据（按新偏移重算 voltage_data）
+            self.recompute_voltage_data()
+        else:
+            # 执行去皮：要求有数据
+            if not self.voltage_data:
+                QMessageBox.warning(self, "提示", "请先开始采集数据后再去皮")
+                return
+            # 取最近 10 个数据点平均值作为空载偏移
+            recent = self.voltage_data[-10:] if len(self.voltage_data) >= 10 else self.voltage_data
+            self.tare_offset_v = float(np.mean(recent))
+            self.tare_active = True
+            self.save_config()
+            self.update_tare_status_label()
+            self.recompute_voltage_data()
+
+    def recompute_voltage_data(self):
+        """去皮状态变化后，按已有 raw_data 重算 voltage_data"""
+        if not self.raw_data:
+            return
+        self.voltage_data = [self.adc_to_voltage(r) for r in self.raw_data]
+        self.update_stats()
+        self.update_chart()
+        if self.voltage_data:
+            self.current_voltage_label.setText(
+                f"{self.format_voltage(self.voltage_data[-1])} {self.current_unit}")
 
     def update_range_display(self):
         if self.hx711_mode:
@@ -2832,6 +2919,7 @@ class VoltageSensorWidget(QWidget):
         self.disconnect_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
+        self.tare_btn.setEnabled(False)
         self.current_voltage_label.setText(f"--.- {self.current_unit}")
         self.current_raw_label.setText("原始ADC: 已断开")
         self.current_vadc_label.setText("ADC端电压: --.- V")
@@ -2844,6 +2932,7 @@ class VoltageSensorWidget(QWidget):
         self.last_sample_time_ms = 0  # 重置采样时间
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self.tare_btn.setEnabled(True)
         self.save_btn.setEnabled(False)
         self.current_voltage_label.setText("电压: 采集中...")
         self.current_raw_label.setText("原始ADC: 采集中...")
