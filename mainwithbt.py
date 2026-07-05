@@ -2167,11 +2167,18 @@ class VoltageSensorWidget(QWidget):
         self.adc_bits = 12
         self.divider_ratio = 1.0
         self.amp_ratio = 1.0
+        # HX711 专用参数：有符号 24 位 + AVDD/Gain 参考电压
+        self.hx711_mode = False
+        self.hx711_avdd = 5.0       # HX711 模块 AVDD 电压（V），常见为 5.0
+        self.hx711_channel = 'B'    # 通道：A=增益128，B=增益32
 
         self.config = self.load_config()
         self.adc_bits = self.config.get('adc_bits', 12)
         self.divider_ratio = self.config.get('divider_ratio', 1.0)
         self.amp_ratio = self.config.get('amp_ratio', 1.0)
+        self.hx711_mode = self.config.get('hx711_mode', False)
+        self.hx711_avdd = self.config.get('hx711_avdd', 5.0)
+        self.hx711_channel = self.config.get('hx711_channel', 'B')
 
         self.init_ui()
 
@@ -2182,6 +2189,9 @@ class VoltageSensorWidget(QWidget):
             self.divider_ratio = config.get('divider_ratio', 1.0)
             self.amp_ratio = config.get('amp_ratio', 1.0)
             self.sample_interval_ms = config.get('sample_interval_ms', 100)
+            self.hx711_mode = config.get('hx711_mode', False)
+            self.hx711_avdd = config.get('hx711_avdd', 5.0)
+            self.hx711_channel = config.get('hx711_channel', 'B')
         return config
 
     def save_config(self):
@@ -2189,15 +2199,28 @@ class VoltageSensorWidget(QWidget):
             'adc_bits': self.adc_bits,
             'divider_ratio': self.divider_ratio,
             'amp_ratio': self.amp_ratio,
-            'sample_interval_ms': self.sample_interval_ms
+            'sample_interval_ms': self.sample_interval_ms,
+            'hx711_mode': self.hx711_mode,
+            'hx711_avdd': self.hx711_avdd,
+            'hx711_channel': self.hx711_channel
         }
         return save_sensor_config('voltage_sensor', config)
 
     def adc_to_voltage(self, adc_value):
-        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
-        v_adc = (adc_value / max_adc) * self.VREF
+        # 实际被测电压 = ADC端电压 × 分压比 / 放大倍数
+        v_adc = self.adc_to_vadc(adc_value)
         actual_voltage = v_adc * self.divider_ratio / self.amp_ratio
         return actual_voltage
+
+    def adc_to_vadc(self, adc_value):
+        """计算 ADC 输入端电压（未做分压/放大还原）"""
+        # HX711 模式：24位有符号，参考电压 = AVDD / Gain
+        # 通道A 增益128，通道B 增益32（固定）
+        if self.hx711_mode:
+            gain = 128 if self.hx711_channel == 'A' else 32
+            return adc_value / 8388608.0 * (self.hx711_avdd / gain)
+        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
+        return (adc_value / max_adc) * self.VREF
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -2356,6 +2379,38 @@ class VoltageSensorWidget(QWidget):
         bits_row.addWidget(self.range_label)
         bits_row.addStretch()
         adc_card_layout.addLayout(bits_row)
+
+        # HX711 模式行：复选框 + AVDD + 通道选择
+        hx711_row = QHBoxLayout()
+        hx711_row.setSpacing(10)
+        self.hx711_check = QCheckBox("HX711 模式（24位有符号）")
+        self.hx711_check.setChecked(self.hx711_mode)
+        self.hx711_check.setToolTip("启用后按 HX711 有符号 24 位 + AVDD/Gain 换算电压\n通道A=增益128，通道B=增益32")
+        self.hx711_check.toggled.connect(self.on_hx711_mode_changed)
+        hx711_row.addWidget(self.hx711_check)
+
+        hx711_row.addWidget(QLabel("AVDD:"))
+        self.hx711_avdd_spin = QDoubleSpinBox()
+        self.hx711_avdd_spin.setRange(2.7, 5.5)
+        self.hx711_avdd_spin.setDecimals(2)
+        self.hx711_avdd_spin.setSingleStep(0.1)
+        self.hx711_avdd_spin.setValue(self.hx711_avdd)
+        self.hx711_avdd_spin.setSuffix(" V")
+        self.hx711_avdd_spin.setMinimumWidth(90)
+        self.hx711_avdd_spin.valueChanged.connect(self.on_hx711_avdd_changed)
+        self.hx711_avdd_spin.setEnabled(self.hx711_mode)
+        hx711_row.addWidget(self.hx711_avdd_spin)
+
+        hx711_row.addWidget(QLabel("通道:"))
+        self.hx711_channel_combo = QComboBox()
+        self.hx711_channel_combo.addItems(["B (增益 32, ±156mV)", "A (增益 128, ±39mV)"])
+        self.hx711_channel_combo.setCurrentIndex(0 if self.hx711_channel == 'B' else 1)
+        self.hx711_channel_combo.currentIndexChanged.connect(self.on_hx711_channel_changed)
+        self.hx711_channel_combo.setEnabled(self.hx711_mode)
+        hx711_row.addWidget(self.hx711_channel_combo)
+
+        hx711_row.addStretch()
+        adc_card_layout.addLayout(hx711_row)
 
         params_row = QHBoxLayout()
         params_row.setSpacing(10)
@@ -2598,11 +2653,40 @@ class VoltageSensorWidget(QWidget):
         self.save_config()
         self.update_range_display()
 
+    def on_hx711_mode_changed(self, checked):
+        """HX711 模式开关：启用后强制 ADC 位数=24，并切换至有符号换算"""
+        self.hx711_mode = checked
+        self.hx711_avdd_spin.setEnabled(checked)
+        self.hx711_channel_combo.setEnabled(checked)
+        if checked:
+            # 强制切到 24 位选项
+            self.adc_bits_combo.setCurrentIndex(8)
+            self.adc_bits = 24
+        self.save_config()
+        self.update_range_display()
+
+    def on_hx711_avdd_changed(self, value):
+        self.hx711_avdd = value
+        self.save_config()
+        self.update_range_display()
+
+    def on_hx711_channel_changed(self, index):
+        self.hx711_channel = 'B' if index == 0 else 'A'
+        self.save_config()
+        self.update_range_display()
+
     def update_range_display(self):
-        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
-        self.range_label.setText(f"量程: 0 ~ {self.VREF:.1f}V (ADC {max_adc})")
-        actual_max = self.VREF * self.divider_ratio / self.amp_ratio
-        self.actual_range_label.setText(f"实际量程: 0 ~ {actual_max:.2f}V")
+        if self.hx711_mode:
+            gain = 128 if self.hx711_channel == 'A' else 32
+            fs = self.hx711_avdd / gain  # 满量程差分电压（单边）
+            self.range_label.setText(f"量程: ±{fs*1000:.1f}mV (HX711 通道{self.hx711_channel}, Gain{gain})")
+            actual_max = fs * self.divider_ratio / self.amp_ratio
+            self.actual_range_label.setText(f"实际量程: ±{actual_max*1000:.2f}mV")
+        else:
+            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
+            self.range_label.setText(f"量程: 0 ~ {self.VREF:.1f}V (ADC {max_adc})")
+            actual_max = self.VREF * self.divider_ratio / self.amp_ratio
+            self.actual_range_label.setText(f"实际量程: 0 ~ {actual_max:.2f}V")
 
     def refresh_ports(self):
         self.port_combo.clear()
@@ -2744,7 +2828,7 @@ class VoltageSensorWidget(QWidget):
                     if len(parts) == 2:
                         raw_value = int(parts[1])
                         voltage = self.adc_to_voltage(raw_value)
-                        v_adc = (raw_value / (self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1)) * self.VREF
+                        v_adc = self.adc_to_vadc(raw_value)
                         self.current_raw_label.setText(f"原始ADC: {raw_value}")
                         self.current_voltage_label.setText(f"电压: {voltage:.4f} V")
                         self.current_vadc_label.setText(f"ADC端电压: {v_adc:.4f} V")
@@ -2774,7 +2858,7 @@ class VoltageSensorWidget(QWidget):
                     self.raw_data.append(raw_value)
 
                     voltage = self.adc_to_voltage(raw_value)
-                    v_adc = (raw_value / (self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1)) * self.VREF
+                    v_adc = self.adc_to_vadc(raw_value)
 
                     self.voltage_data.append(voltage)
                     self.time_data.append(relative_time_s)
