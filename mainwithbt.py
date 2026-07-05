@@ -2171,6 +2171,8 @@ class VoltageSensorWidget(QWidget):
         self.hx711_mode = False
         self.hx711_avdd = 5.0       # HX711 模块 AVDD 电压（V），常见为 5.0
         self.hx711_channel = 'B'    # 通道：A=增益128，B=增益32
+        # 显示单位：内部 voltage_data 始终存伏特，仅在显示/保存时按当前单位换算
+        self.current_unit = 'V'     # 可选：kV / V / mV
 
         self.config = self.load_config()
         self.adc_bits = self.config.get('adc_bits', 12)
@@ -2179,6 +2181,7 @@ class VoltageSensorWidget(QWidget):
         self.hx711_mode = self.config.get('hx711_mode', False)
         self.hx711_avdd = self.config.get('hx711_avdd', 5.0)
         self.hx711_channel = self.config.get('hx711_channel', 'B')
+        self.current_unit = self.config.get('current_unit', 'V')
 
         self.init_ui()
 
@@ -2192,6 +2195,7 @@ class VoltageSensorWidget(QWidget):
             self.hx711_mode = config.get('hx711_mode', False)
             self.hx711_avdd = config.get('hx711_avdd', 5.0)
             self.hx711_channel = config.get('hx711_channel', 'B')
+            self.current_unit = config.get('current_unit', 'V')
         return config
 
     def save_config(self):
@@ -2202,9 +2206,26 @@ class VoltageSensorWidget(QWidget):
             'sample_interval_ms': self.sample_interval_ms,
             'hx711_mode': self.hx711_mode,
             'hx711_avdd': self.hx711_avdd,
-            'hx711_channel': self.hx711_channel
+            'hx711_channel': self.hx711_channel,
+            'current_unit': self.current_unit
         }
         return save_sensor_config('voltage_sensor', config)
+
+    # 单位换算：内部 voltage_data 始终存伏特，按当前单位返回显示值
+    UNIT_FACTORS = {'kV': 0.001, 'V': 1.0, 'mV': 1000.0}
+
+    def to_current_unit(self, voltage_v):
+        """伏特 → 当前单位"""
+        return voltage_v * self.UNIT_FACTORS.get(self.current_unit, 1.0)
+
+    def format_voltage(self, voltage_v):
+        """格式化显示：根据数量级自动选小数位"""
+        v = self.to_current_unit(voltage_v)
+        if self.current_unit == 'kV':
+            return f"{v:.6f}"
+        elif self.current_unit == 'mV':
+            return f"{v:.3f}"
+        return f"{v:.4f}"
 
     def adc_to_voltage(self, adc_value):
         # 实际被测电压 = ADC端电压 × 分压比 / 放大倍数
@@ -2448,6 +2469,19 @@ class VoltageSensorWidget(QWidget):
         hint_label.setWordWrap(True)
         adc_card_layout.addWidget(hint_label)
 
+        # 显示单位选择
+        unit_row = QHBoxLayout()
+        unit_row.setSpacing(10)
+        unit_row.addWidget(QLabel("显示单位:"))
+        self.unit_combo = QComboBox()
+        self.unit_combo.addItems(["千伏 (kV)", "伏 (V)", "毫伏 (mV)"])
+        unit_map = {'kV': 0, 'V': 1, 'mV': 2}
+        self.unit_combo.setCurrentIndex(unit_map.get(self.current_unit, 1))
+        self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
+        unit_row.addWidget(self.unit_combo)
+        unit_row.addStretch()
+        adc_card_layout.addLayout(unit_row)
+
         layout.addWidget(card_adc)
 
         # ========== 卡片3：实时数据 ==========
@@ -2675,6 +2709,18 @@ class VoltageSensorWidget(QWidget):
         self.save_config()
         self.update_range_display()
 
+    def on_unit_changed(self, index):
+        """切换显示单位：kV / V / mV。内部数据不变，仅刷新显示"""
+        unit_map = {0: 'kV', 1: 'V', 2: 'mV'}
+        self.current_unit = unit_map.get(index, 'V')
+        self.save_config()
+        # 刷新实时数据/统计/图表的显示
+        self.update_stats()
+        self.update_chart()
+        # 刷新当前电压大字显示（如果有最后一个数据点）
+        if self.voltage_data:
+            self.current_voltage_label.setText(f"{self.format_voltage(self.voltage_data[-1])} {self.current_unit}")
+
     def update_range_display(self):
         if self.hx711_mode:
             gain = 128 if self.hx711_channel == 'A' else 32
@@ -2786,7 +2832,7 @@ class VoltageSensorWidget(QWidget):
         self.disconnect_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
-        self.current_voltage_label.setText("电压: --.- V")
+        self.current_voltage_label.setText(f"--.- {self.current_unit}")
         self.current_raw_label.setText("原始ADC: 已断开")
         self.current_vadc_label.setText("ADC端电压: --.- V")
 
@@ -2808,7 +2854,7 @@ class VoltageSensorWidget(QWidget):
         self.save_btn.setEnabled(len(self.voltage_data) > 0)
         if len(self.voltage_data) > 0:
             avg_v = np.mean(self.voltage_data)
-            self.current_voltage_label.setText(f"电压: {avg_v:.4f} V")
+            self.current_voltage_label.setText(f"{self.format_voltage(avg_v)} {self.current_unit}")
 
     def handle_data(self, data):
         if data.startswith("ERROR:"):
@@ -2830,8 +2876,8 @@ class VoltageSensorWidget(QWidget):
                         voltage = self.adc_to_voltage(raw_value)
                         v_adc = self.adc_to_vadc(raw_value)
                         self.current_raw_label.setText(f"原始ADC: {raw_value}")
-                        self.current_voltage_label.setText(f"电压: {voltage:.4f} V")
-                        self.current_vadc_label.setText(f"ADC端电压: {v_adc:.4f} V")
+                        self.current_voltage_label.setText(f"{self.format_voltage(voltage)} {self.current_unit}")
+                        self.current_vadc_label.setText(f"ADC端电压: {self.format_voltage(v_adc)} {self.current_unit}")
             except ValueError:
                 pass
             return
@@ -2866,10 +2912,12 @@ class VoltageSensorWidget(QWidget):
                     current_time = datetime.now()
                     time_str = current_time.strftime("%H:%M:%S.%f")[:-3]
 
-                    display_text = f"时间: {time_str} | ADC: {raw_value} | ADC端: {v_adc:.4f}V | 实际电压: {voltage:.4f}V"
+                    display_text = (f"时间: {time_str} | ADC: {raw_value} | "
+                                    f"ADC端: {self.format_voltage(v_adc)} {self.current_unit} | "
+                                    f"实际电压: {self.format_voltage(voltage)} {self.current_unit}")
                     self.current_raw_label.setText(f"原始ADC: {raw_value}")
-                    self.current_voltage_label.setText(f"电压: {voltage:.4f} V")
-                    self.current_vadc_label.setText(f"ADC端电压: {v_adc:.4f} V")
+                    self.current_voltage_label.setText(f"{self.format_voltage(voltage)} {self.current_unit}")
+                    self.current_vadc_label.setText(f"ADC端电压: {self.format_voltage(v_adc)} {self.current_unit}")
 
                     self.data_text.append(display_text)
                     self.data_text.verticalScrollBar().setValue(
@@ -2887,12 +2935,13 @@ class VoltageSensorWidget(QWidget):
             max_v = np.max(self.voltage_data)
             min_v = np.min(self.voltage_data)
             std_v = np.std(self.voltage_data)
+            u = self.current_unit
 
             stats_text = (f"统计: 数据点 {len(self.voltage_data)} | "
-                         f"平均={avg_v:.4f}V | "
-                         f"最大={max_v:.4f}V | "
-                         f"最小={min_v:.4f}V | "
-                         f"标准差 σ={std_v:.4f}")
+                         f"平均={self.format_voltage(avg_v)}{u} | "
+                         f"最大={self.format_voltage(max_v)}{u} | "
+                         f"最小={self.format_voltage(min_v)}{u} | "
+                         f"标准差 σ={self.format_voltage(std_v)}{u}")
             self.stats_label.setText(stats_text)
 
     def update_chart(self):
@@ -2900,9 +2949,11 @@ class VoltageSensorWidget(QWidget):
             self.figure.clear()
             ax = self.figure.add_subplot(111)
 
-            ax.plot(self.time_data, self.voltage_data, '#0078d4', linewidth=2, label='电压 (V)')
+            # 图表数据按当前单位换算
+            display_data = [self.to_current_unit(v) for v in self.voltage_data]
+            ax.plot(self.time_data, display_data, '#0078d4', linewidth=2, label=f'电压 ({self.current_unit})')
             ax.set_xlabel('时间 (秒)')
-            ax.set_ylabel('电压 (V)')
+            ax.set_ylabel(f'电压 ({self.current_unit})')
             ax.set_title('电压传感器实时数据', fontsize=14, fontweight='bold')
             ax.grid(True, alpha=0.3)
             ax.legend(loc='upper right')
@@ -2934,10 +2985,11 @@ class VoltageSensorWidget(QWidget):
         try:
             filename = f"voltage_sensor_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             with open(filename, 'w', encoding='utf-8') as f:
-                f.write("timestamp_s,raw_adc,voltage_v\n")
+                # CSV 表头按当前单位命名，方便后续分析
+                f.write(f"timestamp_s,raw_adc,voltage_{self.current_unit.lower()}\n")
                 for i, (timestamp, voltage) in enumerate(zip(self.time_data, self.voltage_data)):
                     raw = self.raw_data[i] if i < len(self.raw_data) else 0
-                    f.write(f"{timestamp:.3f},{raw},{voltage:.6f}\n")
+                    f.write(f"{timestamp:.3f},{raw},{self.to_current_unit(voltage):.6f}\n")
             QMessageBox.information(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存失败: {e}")
@@ -2947,9 +2999,9 @@ class VoltageSensorWidget(QWidget):
         self.time_data.clear()
         self.raw_data.clear()
         self.data_text.clear()
-        self.current_voltage_label.setText("电压: --.- V")
+        self.current_voltage_label.setText(f"--.- {self.current_unit}")
         self.current_raw_label.setText("原始ADC: ------")
-        self.current_vadc_label.setText("ADC端电压: --.- V")
+        self.current_vadc_label.setText(f"ADC端电压: --.- {self.current_unit}")
         self.stats_label.setText("统计信息: 暂无数据")
         self.figure.clear()
         self.canvas.draw()
