@@ -30,7 +30,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     SerialThread, SampleRateDialog, CalibrationDialog,
     load_sensor_config, save_sensor_config, _get_config_file_path,
-    card_style, primary_btn_style, accent_btn_style, win11_combo_style,
+    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
 )
 
 
@@ -142,7 +142,7 @@ class PhSensorWidget(QWidget):
         # 串口选择
         control_layout.addWidget(QLabel("串口:"))
         self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(win11_combo_style())
+        self.port_combo.setStyleSheet(modern_combo_style())
         self.refresh_ports()
         control_layout.addWidget(self.port_combo)
 

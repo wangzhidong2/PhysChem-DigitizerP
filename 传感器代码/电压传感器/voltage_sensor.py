@@ -32,7 +32,7 @@ from core import (
     SerialThread, BLESerialThread, scan_ble_devices,
     SampleRateDialog,
     load_sensor_config, save_sensor_config,
-    card_style, primary_btn_style, accent_btn_style, win11_combo_style,
+    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     BLE_AVAILABLE,
 )
 
@@ -187,7 +187,7 @@ class VoltageSensorWidget(QWidget):
 
         row1.addWidget(QLabel("连接方式:"))
         self.mode_combo = QComboBox()
-        self.mode_combo.setStyleSheet(win11_combo_style())
+        self.mode_combo.setStyleSheet(modern_combo_style())
         self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
         if not BLE_AVAILABLE:
             self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
@@ -201,7 +201,7 @@ class VoltageSensorWidget(QWidget):
         serial_layout.setSpacing(8)
         serial_layout.addWidget(QLabel("串口:"))
         self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(win11_combo_style())
+        self.port_combo.setStyleSheet(modern_combo_style())
         self.refresh_ports()
         self.port_combo.setMinimumWidth(140)
         serial_layout.addWidget(self.port_combo)
@@ -216,7 +216,7 @@ class VoltageSensorWidget(QWidget):
         ble_layout.setContentsMargins(0, 0, 0, 0)
         ble_layout.setSpacing(8)
         self.ble_device_combo = QComboBox()
-        self.ble_device_combo.setStyleSheet(win11_combo_style())
+        self.ble_device_combo.setStyleSheet(modern_combo_style())
         self.ble_device_combo.setMinimumWidth(180)
         ble_layout.addWidget(self.ble_device_combo)
         self.ble_scan_btn = QPushButton("扫描BLE")
@@ -284,7 +284,7 @@ class VoltageSensorWidget(QWidget):
         bits_row.setSpacing(10)
         bits_row.addWidget(QLabel("ADC 位数:"))
         self.adc_bits_combo = QComboBox()
-        self.adc_bits_combo.setStyleSheet(win11_combo_style())
+        self.adc_bits_combo.setStyleSheet(modern_combo_style())
         self.adc_bits_combo.addItems([
             "8 位 (0-255)",
             "10 位 (0-1023)",
@@ -332,7 +332,7 @@ class VoltageSensorWidget(QWidget):
 
         hx711_row.addWidget(QLabel("通道:"))
         self.hx711_channel_combo = QComboBox()
-        self.hx711_channel_combo.setStyleSheet(win11_combo_style())
+        self.hx711_channel_combo.setStyleSheet(modern_combo_style())
         self.hx711_channel_combo.addItems(["B (增益 32, ±156mV)", "A (增益 128, ±39mV)"])
         self.hx711_channel_combo.setCurrentIndex(0 if self.hx711_channel == 'B' else 1)
         self.hx711_channel_combo.currentIndexChanged.connect(self.on_hx711_channel_changed)
@@ -383,7 +383,7 @@ class VoltageSensorWidget(QWidget):
         unit_row.setSpacing(10)
         unit_row.addWidget(QLabel("显示单位:"))
         self.unit_combo = QComboBox()
-        self.unit_combo.setStyleSheet(win11_combo_style())
+        self.unit_combo.setStyleSheet(modern_combo_style())
         self.unit_combo.addItems(["千伏 (kV)", "伏 (V)", "毫伏 (mV)"])
         unit_map = {'kV': 0, 'V': 1, 'mV': 2}
         self.unit_combo.setCurrentIndex(unit_map.get(self.current_unit, 1))

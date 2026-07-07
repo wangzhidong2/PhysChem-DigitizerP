@@ -31,7 +31,7 @@ from core import (
     SerialThread, SampleRateDialog,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style,
-    win11_combo_style,
+    modern_combo_style,
 )
 
 
@@ -92,7 +92,7 @@ class UltrasonicWidget(QWidget):
 
         conn_row.addWidget(QLabel("串口:"))
         self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(win11_combo_style())
+        self.port_combo.setStyleSheet(modern_combo_style())
         self.refresh_ports()
         self.port_combo.setMinimumWidth(160)
         conn_row.addWidget(self.port_combo)

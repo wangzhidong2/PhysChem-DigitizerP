@@ -13,7 +13,7 @@
 ## 入口文件
 
 - **Python 主程序**: `python main.py`（模块化架构，动态加载各传感器模块）
-- **公共模块**: `core.py`（SerialThread / BLESerialThread / 配置管理 / 通用对话框 / Win11 样式）
+- **公共模块**: `core.py`（SerialThread / BLESerialThread / 配置管理 / 通用对话框 / 现代化样式）
 - **串口诊断工具**: `python test_serial.py`
 - **历史存档**: `main_legacy.py`（迁移前单文件版本，5000 行，**不再维护**，仅供对照参考）
 
@@ -88,10 +88,10 @@ PhysChem-DigitizerP/
 ## 架构说明
 
 - **模块化架构**：主程序 `main.py` 启动时扫描 `传感器代码/` 目录，用 `importlib` 动态加载各模块
-- **core.py**：集中存放共享代码——`SerialThread`、`BLESerialThread`、`scan_ble_devices`、`load/save_sensor_config`、`CalibrationDialog`、`SampleRateDialog`、Win11 样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`win11_combo_style`）
+- **core.py**：集中存放共享代码——`SerialThread`、`BLESerialThread`、`scan_ble_devices`、`load/save_sensor_config`、`CalibrationDialog`、`SampleRateDialog`、现代化样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`）
 - **main.py**：主页（`HomePageWidget`）、侧边栏（`SidebarWidget` + `NavButton`）、设置（`SettingsWidget`）、主窗口（`MainWindow`）+ 动态加载器（`scan_modules`/`parse_module_meta`）
-- UI 采用 Windows 11 风格卡片布局；侧边栏 `NavButton` 自绘图标 + 选中指示条
-- 下拉框 `QComboBox` 使用 `win11_combo_style()` 统一为 WinUI3 风格
+- UI 采用现代化风格卡片布局；侧边栏 `NavButton` 自绘图标 + 选中指示条
+- 下拉框 `QComboBox` 使用 `modern_combo_style()` 统一为现代化风格
 - `VoltageSensorWidget` 支持：HX711 24 位 ADC 模式（通道 A/B、增益 128/32）、kV/V/mV 单位切换、去皮（Tare）功能
 - 配置持久化：`load_sensor_config()` / `save_sensor_config()` 读写 `sensor_config.json`
 - 无自动化测试——`test_serial.py` 仅为手动诊断工具
@@ -127,7 +127,7 @@ PhysChem-DigitizerP/
 
 from core import (
     SerialThread, load_sensor_config, save_sensor_config,
-    card_style, primary_btn_style, accent_btn_style, win11_combo_style,
+    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
 )
 
 class TemperatureSensorWidget(QWidget):
@@ -169,7 +169,7 @@ PyQt6 GUI application + Arduino/ESP32 firmware for low-cost physics/chemistry la
 ## Entry points
 
 - **Python app**: `python main.py` (modular architecture, dynamically loads sensor modules)
-- **Core module**: `core.py` (SerialThread / BLESerialThread / config / dialogs / Win11 styles)
+- **Core module**: `core.py` (SerialThread / BLESerialThread / config / dialogs / modern styles)
 - **Serial diagnostics**: `python test_serial.py`
 - **Legacy archive**: `main_legacy.py` (pre-refactor single-file version, 5000 lines, **no longer maintained**, kept for reference only)
 
@@ -244,10 +244,10 @@ Flash via Arduino IDE. Board packages:
 ## Architecture notes
 
 - **Modular architecture**: `main.py` scans `传感器代码/` at startup, dynamically loads modules via `importlib`
-- **core.py**: shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices`, `load/save_sensor_config`, `CalibrationDialog`, `SampleRateDialog`, Win11 style functions (`card_style`/`primary_btn_style`/`accent_btn_style`/`win11_combo_style`)
+- **core.py**: shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices`, `load/save_sensor_config`, `CalibrationDialog`, `SampleRateDialog`, modern style functions (`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`)
 - **main.py**: home (`HomePageWidget`), sidebar (`SidebarWidget` + `NavButton`), settings (`SettingsWidget`), main window (`MainWindow`) + dynamic loader (`scan_modules`/`parse_module_meta`)
-- UI uses Windows 11-style card layout; sidebar `NavButton` custom-paints icon + selection indicator
-- `QComboBox` uses `win11_combo_style()` for unified WinUI3 look
+- UI uses modern-style card layout; sidebar `NavButton` custom-paints icon + selection indicator
+- `QComboBox` uses `modern_combo_style()` for unified modern look
 - `VoltageSensorWidget` supports: HX711 24-bit ADC mode (channel A/B, gain 128/32), kV/V/mV unit switching, Tare function
 - Config persistence: `load_sensor_config()` / `save_sensor_config()` write to `sensor_config.json`
 - No automated tests — `test_serial.py` is a manual diagnostic tool
@@ -283,7 +283,7 @@ Create a subfolder under `传感器代码/`, drop in firmware `.ino` and host `.
 
 from core import (
     SerialThread, load_sensor_config, save_sensor_config,
-    card_style, primary_btn_style, accent_btn_style, win11_combo_style,
+    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
 )
 
 class TemperatureSensorWidget(QWidget):

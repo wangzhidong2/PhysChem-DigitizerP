@@ -7,7 +7,7 @@ core.py — PhysChem-DigitizerP 公共模块
 - 串口通信线程（SerialThread）
 - BLE 通信线程（BLESerialThread）+ 设备扫描
 - 通用对话框（CalibrationDialog / SampleRateDialog）
-- 共享样式（卡片 / 按钮 / Win11 风格 ComboBox）
+- 共享样式（卡片 / 按钮 / 现代化风格 ComboBox）
 - 主题工具函数
 
 各传感器模块应通过 `from core import ...` 调用本模块的内容，
@@ -277,7 +277,7 @@ def scan_ble_devices():
 
 
 # ============================================================
-# 共享样式 — Win11 风格
+# 共享样式 — 现代化风格
 # ============================================================
 def card_style():
     """卡片容器样式（浅色主题）"""
@@ -328,8 +328,8 @@ def accent_btn_style(normal, hover, pressed):
     """
 
 
-def win11_combo_style():
-    """Win11 WinUI3 风格 QComboBox 样式（浅色主题）。
+def modern_combo_style():
+    """现代化风格 QComboBox 样式（浅色主题）。
 
     特征：
     - 圆角 6px，浅灰背景
@@ -404,8 +404,8 @@ def win11_combo_style():
     """
 
 
-def win11_combo_style_dark():
-    """Win11 WinUI3 风格 QComboBox 样式（深色主题）"""
+def modern_combo_style_dark():
+    """现代化风格 QComboBox 样式（深色主题）"""
     return """
         QComboBox {
             background-color: #2d2d2d;

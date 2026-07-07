@@ -218,7 +218,7 @@ A-          →    通道A负极（白色线）
 ```
 PhysChem-DigitizerP/
 ├── main.py                     # 主程序：主页 + 侧边栏 + 动态加载器
-├── core.py                     # 公共模块：SerialThread / BLESerialThread / 配置 / 对话框 / Win11 样式
+├── core.py                     # 公共模块：SerialThread / BLESerialThread / 配置 / 对话框 / 现代化样式
 ├── main_legacy.py              # 历史存档（迁移前单文件版本，不再维护）
 ├── test_serial.py              # 串口连接测试工具
 ├── sensor_config.json          # 传感器校准配置（运行时自动生成）
@@ -571,7 +571,7 @@ python test_serial.py
 
 from core import (
     SerialThread, load_sensor_config, save_sensor_config,
-    card_style, primary_btn_style, accent_btn_style, win11_combo_style,
+    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
 )
 
 class TemperatureSensorWidget(QWidget):

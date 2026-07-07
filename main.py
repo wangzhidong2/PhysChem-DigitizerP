@@ -156,7 +156,7 @@ def scan_modules(modules_dir):
 # 主页
 # ============================================================
 class HomePageWidget(QWidget):
-    """主页面 - Win11 风格卡片布局（动态接收模块列表）"""
+    """主页面 - 现代化风格卡片布局（动态接收模块列表）"""
 
     module_clicked = pyqtSignal(str)
 
@@ -371,7 +371,7 @@ class HomePageWidget(QWidget):
             self.modules_container_layout.addLayout(row_layout)
 
     def _create_grid_module_card(self, title, subtitle, modules, title_icon, title_color):
-        """创建 Win11 设置风格的网格卡片"""
+        """创建现代化设置风格的网格卡片"""
         card = QWidget()
         card.setObjectName("card")
         card.setStyleSheet(self.CARD_STYLE)
@@ -507,7 +507,7 @@ class HomePageWidget(QWidget):
 # 侧边栏导航按钮
 # ============================================================
 class NavButton(QPushButton):
-    """Win11 风格侧边栏导航按钮"""
+    """现代化风格侧边栏导航按钮"""
 
     def __init__(self, icon_text, label, tooltip="", parent=None):
         super().__init__(parent)
@@ -631,7 +631,7 @@ class NavButton(QPushButton):
 # 侧边栏
 # ============================================================
 class SidebarWidget(QWidget):
-    """Win11 风格可折叠侧边栏组件（动态接收模块列表）"""
+    """现代化风格可折叠侧边栏组件（动态接收模块列表）"""
 
     module_changed = pyqtSignal(int)
 
@@ -968,7 +968,7 @@ class MainWindow(QMainWindow):
         self.module_widgets = []  # 按注册顺序排列的 widget 列表
 
         self.init_ui()
-        self.apply_win11_style()
+        self.apply_modern_style()
 
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
@@ -1149,7 +1149,7 @@ class MainWindow(QMainWindow):
                 QLabel { font-size: 14px; color: black; }
             """)
 
-    def apply_win11_style(self):
+    def apply_modern_style(self):
         self.current_theme = "light"
         self.apply_theme("light")
 
