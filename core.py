@@ -15,7 +15,6 @@ core.py — PhysChem-DigitizerP 公共模块
 """
 
 import os
-import sys
 import json
 import asyncio
 import threading
@@ -46,18 +45,12 @@ CONFIG_FILENAME = 'sensor_config.json'
 def _get_config_file_path():
     """获取统一配置文件的绝对路径。
 
-    配置文件位置：
-    - 开发模式：core.py 所在目录（即仓库根目录）
-    - PyInstaller 打包模式：EXE 所在目录（用户可见、可编辑、可备份）
-
-    与具体模块文件位置无关，所有模块共享同一份配置。
+    配置文件始终位于主程序所在目录（即仓库根目录），与具体模块文件位置无关。
     """
-    if getattr(sys, 'frozen', False):
-        # PyInstaller 打包模式：配置文件放在 EXE 同级目录
-        # sys.executable 在 onefile/onedir 模式下都指向实际 EXE 路径
-        return os.path.join(os.path.dirname(sys.executable), CONFIG_FILENAME)
-    # 开发模式：core.py 所在目录（仓库根目录）
+    # 取 main.py 所在目录：模块文件位于 传感器代码/xxx/ 下，
+    # 上溯两级即为仓库根目录。
     here = os.path.dirname(os.path.abspath(__file__))
+    # core.py 在根目录，直接用 here
     return os.path.join(here, CONFIG_FILENAME)
 
 

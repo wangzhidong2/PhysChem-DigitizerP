@@ -47,8 +47,3 @@ sensor_config.json
 sensor_config.json
 voltage_sensor_data_20260612_182909.csv
 voltage_sensor_data_20260612_190922.csv
-
-# PyInstaller 打包输出
-build/
-dist/
-*.spec.bak

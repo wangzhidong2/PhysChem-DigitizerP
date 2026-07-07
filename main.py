@@ -19,18 +19,6 @@ import re
 import glob
 import importlib.util
 
-
-def get_app_dir():
-    """获取应用根目录，兼容开发模式和 PyInstaller 打包模式。
-
-    - 开发模式：返回 main.py 所在目录
-    - PyInstaller onefile 模式：返回 sys._MEIPASS（临时解压目录）
-    - PyInstaller onedir 模式：返回 sys._MEIPASS（EXE 所在目录）
-    """
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        return sys._MEIPASS
-    return os.path.dirname(os.path.abspath(__file__))
-
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QStackedWidget, QScrollArea, QGroupBox,
@@ -1001,8 +989,8 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.content_stack)
 
         # === 加载模块 ===
-        # 确定传感器代码目录（开发模式与 main.py 同级；打包模式从 _MEIPASS 读取）
-        app_dir = get_app_dir()
+        # 确定传感器代码目录（与 main.py 同级）
+        app_dir = os.path.dirname(os.path.abspath(__file__))
         modules_dir = os.path.join(app_dir, '传感器代码')
 
         discovered = scan_modules(modules_dir)
