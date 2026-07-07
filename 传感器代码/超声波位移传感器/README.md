@@ -1,5 +1,16 @@
 # HC-SR04 超声波模块使用说明
 
+## 📦 上位机模块
+
+本目录包含 2 个上位机模块，均带识别区，由 `main.py` 自动加载：
+
+| 模块文件 | 模块名 | 类别 | 主类 |
+|----------|--------|------|------|
+| [ultrasonic_displacement.py](ultrasonic_displacement.py) | 超声波位移 | physics | `UltrasonicWidget` |
+| [ultrasonic_velocity.py](ultrasonic_velocity.py) | 超声波速度 | physics | `UltrasonicVelocityWidget` |
+
+两个模块共享本目录下的 `.ino` 固件。位移模块用于实时距离测量，速度模块基于回声定位法计算瞬时速度。
+
 ## 📋 BOM 物料清单
 
 | 组件 | 规格/型号 | 数量 | 备注 |

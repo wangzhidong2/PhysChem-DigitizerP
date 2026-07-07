@@ -39,7 +39,7 @@
 
 # debug information files
 *.dwo
-__pycache__/mainwithbt.cpython-313.pyc
+__pycache__/
 .gitignore
 sensor_config.json
 .vscode/settings.json

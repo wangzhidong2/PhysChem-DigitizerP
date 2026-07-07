@@ -1,5 +1,18 @@
 # pH 传感器模块使用说明
 
+## 📦 上位机模块
+
+本目录的上位机模块为 [ph_sensor.py](ph_sensor.py)，识别区声明：
+
+| 字段 | 值 |
+|------|-----|
+| 模块名 | pH传感器 |
+| 图标 | pH |
+| 类别 | chemistry |
+| 主类 | `PhSensorWidget` |
+
+支持单点 / 两点 / 三点校准，校准参数保存在 `sensor_config.json`。
+
 ## 🔗 模块介绍
 
 详细模块介绍请参考：[DFRobot SEN0161 pH 计 Wiki](https://wiki.dfrobot.com.cn/_SKU_SEN0161_pH_meter_pH%E8%AE%A1)

@@ -57,14 +57,14 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 ## 🔌 接线指南
 
 > ⚠️ **以下为简要接线参考，具体接线、注意事项及故障排查请参阅各模块详细文档：**
-> - [超声波位移传感器](传感器arduino代码/超声波位移传感器/README.md)
-> - [pH 传感器](传感器arduino代码/ph传感器/README.md)
-> - [力传感器](传感器arduino代码/力传感器/README.md)
-> - [电压传感器](传感器arduino代码/电压/README.md)
+> - [超声波位移传感器](传感器代码/超声波位移传感器/README.md)
+> - [pH 传感器](传感器代码/ph传感器/README.md)
+> - [力传感器](传感器代码/力传感器/README.md)
+> - [电压传感器](传感器代码/电压传感器/README.md)
 
 ### HC-SR04 超声波传感器接线
 
-> 📖 详细接线说明和注意事项请参考：[超声波位移传感器使用说明](传感器arduino代码/超声波位移传感器/README.md)
+> 📖 详细接线说明和注意事项请参考：[超声波位移传感器使用说明](传感器代码/超声波位移传感器/README.md)
 
 **ESP8266 (WeMOS D1) 连接：**
 ```
@@ -90,7 +90,7 @@ GPIO 18     →     ECHO
 
 ### HX711 力/质量传感器接线
 
-> 📖 详细接线说明、校准方法和常见问题请参考：[力传感器使用说明](传感器arduino代码/力传感器/README.md)
+> 📖 详细接线说明、校准方法和常见问题请参考：[力传感器使用说明](传感器代码/力传感器/README.md)
 
 **ESP32-S3 连接：**
 ```
@@ -160,7 +160,7 @@ A-          →    通道A负极（白色线）
    - Python 程序内校准（非模块校准）
    - 数据统计（平均值、标准差）
 
-> 📖 详细接线、校准方法和电极保养请参考：[pH 传感器使用说明](传感器arduino代码/ph传感器/README.md)
+> 📖 详细接线、校准方法和电极保养请参考：[pH 传感器使用说明](传感器代码/ph传感器/README.md)
 
 <p align="center">
   <img src="docs/images/ph_sensor.png" alt="pH传感器" width="800"/>
@@ -175,7 +175,7 @@ A-          →    通道A负极（白色线）
    - 数据统计（平均值、最大值、最小值、标准差）
    - CSV 格式数据导出
 
-> 📖 详细接线、校准方法和常见问题请参考：[力传感器使用说明](传感器arduino代码/力传感器/README.md)
+> 📖 详细接线、校准方法和常见问题请参考：[力传感器使用说明](传感器代码/力传感器/README.md)
 
 <p align="center">
   <img src="docs/images/force.png" alt="力传感器" width="800"/>
@@ -190,7 +190,7 @@ A-          →    通道A负极（白色线）
    - CSV 格式数据导出
    - 支持偏移校准和增益校准
 
-> 📖 详细接线、固件说明和扩展建议请参考：[电压传感器使用说明](传感器arduino代码/电压/README.md)
+> 📖 详细接线、固件说明和扩展建议请参考：[电压传感器使用说明](传感器代码/电压传感器/README.md)
 
 <p align="center">
   <img src="docs/images/voltage.png" alt="电压传感器" width="800"/>
@@ -213,36 +213,46 @@ A-          →    通道A负极（白色线）
 
 ## 📦 项目结构
 
+项目采用**模块化架构**——主程序启动时扫描 `传感器代码/` 目录，自动加载每个传感器的上位机模块（`.py`）。新增传感器无需修改主程序，只需在子目录中放入模块文件并在文件头写好识别区即可。
+
 ```
 PhysChem-DigitizerP/
-├── mainwithbt.py               # Python 主程序（PyQt6 界面 + BLE 支持）
+├── main.py                     # 主程序：主页 + 侧边栏 + 动态加载器
+├── core.py                     # 公共模块：SerialThread / BLESerialThread / 配置 / 对话框 / 现代化样式
+├── main_legacy.py              # 历史存档（迁移前单文件版本，不再维护）
 ├── test_serial.py              # 串口连接测试工具
 ├── sensor_config.json          # 传感器校准配置（运行时自动生成）
 ├── README.md                   # 主文档（本文件）
-├── AGENTS.md                   # 开发者指南
+├── AGENTS.md                   # 开发者指南（含添加新模块教程）
 ├── .gitignore                  # Git 忽略配置
 ├── LICENSE                     # MIT 许可证
 ├── docs/
 │   └── images/                 # 文档图片
-└── 传感器arduino代码/
-    ├── README.md               # Arduino 代码说明
-    ├── ESP32_ADC_Raw_Data.ino  # 通用 ADC 采集代码
+└── 传感器代码/                  # 下位机 .ino + 上位机 .py 同目录
+    ├── README.md               # 各传感器固件与模块总览
     ├── 超声波位移传感器/
     │   ├── HC-SR04esp32.ino    # ESP32 传感器固件
     │   ├── HC-SR04esp8266.ino  # ESP8266 传感器固件
-    │   └── csbwithbt.ino       # ESP32-S3 + BLE 固件
+    │   ├── csbwithbt.ino       # ESP32-S3 + BLE 固件
+    │   ├── ultrasonic_displacement.py  # 位移测量上位机模块
+    │   └── ultrasonic_velocity.py      # 速度测量上位机模块
     ├── ph传感器/
     │   ├── ph esp32.ino        # ESP32-S3 pH 传感器固件
-    │   └── PH传感器原理图.pdf
+    │   ├── PH传感器原理图.pdf
+    │   └── ph_sensor.py        # pH 上位机模块
     ├── 力传感器/
     │   ├── force.ino           # ESP32-S3 HX711 传感器固件
+    │   ├── force_sensor.py     # 力/质量上位机模块
     │   └── 资料（HX711称重模块商家提供的）/
-    ├── 电压/
+    ├── 电压传感器/
     │   ├── ESP32_Voltage_Sensor.ino  # ESP32-S3 ADC 采集固件
-    │   └── README.md
-    └── 电流传感器/
+    │   ├── HX711_Voltage.ino         # HX711 24 位 ADC 电压采集固件
+    │   └── voltage_sensor.py         # 电压上位机模块（支持 HX711 模式）
+    └── 电流传感器/              # 仅下位机，上位机模块待添加
         └── ESP32_ADC_Raw_Data.ino
 ```
+
+> 📖 模块加载机制、识别区格式与添加新模块的完整教程请参考 [AGENTS.md](AGENTS.md)。
 
 ---
 
@@ -288,7 +298,7 @@ pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 ### 启动软件
 
 ```bash
-python mainwithbt.py
+python main.py
 ```
 
 ### 操作流程
@@ -365,7 +375,7 @@ v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
 - `Δt`：两次发射的时间间隔 (s)
 - `vₛ`：声速 = 34000 cm/s
 
-**代码实现**（参考 `mainwithbt.py` 中的 `calculate_velocity` 方法）：
+**代码实现**（参考 [ultrasonic_velocity.py](传感器代码/超声波位移传感器/ultrasonic_velocity.py) 中的 `calculate_velocity` 方法）：
 
 ```python
 def calculate_velocity(self):
@@ -426,7 +436,7 @@ pH = a·ADC² + b·ADC + c
 - `k`、`b`：线性拟合系数（通过两点校准获得）
 - `ADC`：传感器输出的原始 ADC 值（0-4095），或电压值（适配信号调理传感器）
 
-**代码实现**（参考 `mainwithbt.py` 中的校准相关方法）：
+**代码实现**（参考 [ph_sensor.py](传感器代码/ph传感器/ph_sensor.py) 中的校准相关方法）：
 
 ```python
 def calculate_calibration_coefficients(self):
@@ -530,11 +540,12 @@ python test_serial.py
 
 ## 📚 技术文档
 
-- **[Arduino 代码说明](传感器arduino代码/README.md)** - 传感器固件开发指南、目录结构与代码规范
-- **[超声波位移传感器使用说明](传感器arduino代码/超声波位移传感器/README.md)** - HC-SR04 接线指南、固件说明、校准方法与性能优化
-- **[pH 传感器使用说明](传感器arduino代码/ph传感器/README.md)** - pH 传感器接线、多模式校准步骤（单点/两点/三点）、电极保养与常见问题
-- **[力传感器使用说明](传感器arduino代码/力传感器/README.md)** - HX711 力/质量传感器接线、去皮校准、数据采集与常见问题
-- **[电压传感器使用说明](传感器arduino代码/电压/README.md)** - ESP32 ADC 电压采集接线指南、分压扩展方法、精度优化与常见问题
+- **[AGENTS.md](AGENTS.md)** — 开发者指南：模块化架构说明、识别区格式、添加新模块完整教程
+- **[传感器代码总览](传感器代码/README.md)** — 各传感器固件与上位机模块对照表
+- **[超声波位移传感器使用说明](传感器代码/超声波位移传感器/README.md)** - HC-SR04 接线指南、固件说明、校准方法与性能优化
+- **[pH 传感器使用说明](传感器代码/ph传感器/README.md)** - pH 传感器接线、多模式校准步骤（单点/两点/三点）、电极保养与常见问题
+- **[力传感器使用说明](传感器代码/力传感器/README.md)** - HX711 力/质量传感器接线、去皮校准、数据采集与常见问题
+- **[电压传感器使用说明](传感器代码/电压传感器/README.md)** - ESP32 ADC 电压采集接线指南、分压扩展方法、精度优化与常见问题
 
 ---
 
@@ -542,29 +553,35 @@ python test_serial.py
 
 ### 添加新传感器模块
 
-项目采用模块化设计，添加新传感器非常简单：
+项目采用**模块化架构**——主程序 `main.py` 启动时通过 `importlib` 扫描 `传感器代码/` 目录，自动加载带有识别区的 `.py` 模块文件。新增传感器**无需修改主程序**，只需 2 步：
 
-1. **硬件层**：编写 Arduino 代码，定义数据输出格式
-2. **软件层**：创建新的 `QWidget` 子类，实现数据采集和显示逻辑
-3. **集成**：在 `MainWindow` 中注册新模块
-
-### 示例代码结构
+1. 在 `传感器代码/` 下新建子目录，放入下位机 `.ino` 和上位机 `.py`
+2. 在 `.py` 文件头写识别区（`icon` / `name` / `category` / `class`）
 
 ```python
-class NewSensorWidget(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.init_ui()
-    
-    def init_ui(self):
-        # 创建界面布局和控件
-        pass
+# === MODULE META ===
+# icon: T
+# name: 温度传感器
+# category: physics          # physics 或 chemistry
+# class: TemperatureSensorWidget
+# ===================
 
-# 在主窗口中添加
-new_module = NewSensorWidget()
-self.content_stack.addWidget(new_module)
-self.modules["新模块名称"] = new_module
+# -*- coding: utf-8 -*-
+"""温度传感器模块"""
+
+from core import (
+    SerialThread, load_sensor_config, save_sensor_config,
+    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
+)
+
+class TemperatureSensorWidget(QWidget):
+    def __init__(self):
+        ...
 ```
+
+重启 `main.py` 即自动出现在侧边栏 + 主页卡片 + 内容栈。
+
+> 📖 完整字段说明、目录结构示例与注意事项请参考 [AGENTS.md - 添加新传感器模块](AGENTS.md#添加新传感器模块)。
 
 
 ## 🖥️ 软件界面
@@ -602,6 +619,8 @@ git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
 
 cd PhysChem-DigitizerP
 pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+# 可选（BLE 无线通信）:
+pip install bleak
 ```
 
 
