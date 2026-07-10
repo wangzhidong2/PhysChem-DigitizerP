@@ -2,7 +2,7 @@
 
 基于 Arduino/ESP32/ESP8266 开发的低成本理化实验数字化采集系统
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
@@ -225,7 +225,7 @@ PhysChem-DigitizerP/
 ├── README.md                   # 主文档（本文件）
 ├── AGENTS.md                   # 开发者指南（含添加新模块教程）
 ├── .gitignore                  # Git 忽略配置
-├── LICENSE                     # MIT 许可证
+├── LICENSE                     # GPL-3.0 许可证
 ├── docs/
 │   └── images/                 # 文档图片
 └── 传感器代码/                  # 下位机 .ino + 上位机 .py 同目录
@@ -628,7 +628,7 @@ pip install bleak
 
 ## 📄 许可证
 
-本项目采用 **MIT 许可证** - 详见 [LICENSE](LICENSE) 文件
+本项目采用 **GNU General Public License v3.0** - 详见 [LICENSE](LICENSE) 文件
 
 ---
 
