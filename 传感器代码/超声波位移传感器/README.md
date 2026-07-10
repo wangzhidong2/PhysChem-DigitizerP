@@ -171,8 +171,47 @@ void loop() {
 
 ### 2. 速度测量实验（回声定位法）
 - **实验目的**：通过连续距离测量计算瞬时速度
-- **计算公式**：v = Δs / Δt
 - **应用场景**：匀加速运动、自由落体
+
+#### 计算原理
+
+通过连续两次超声波回波时间的差值，结合声速和测量间隔计算物体运动速度。
+
+**数学表达式**：
+
+```
+v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
+```
+
+其中：
+- `t₀`：第一次回波时间 (µs)
+- `t₁`：第二次回波时间 (µs)
+- `Δt`：两次发射的时间间隔 (s)
+- `vₛ`：声速 = 34000 cm/s
+
+**代码实现**（参考 [ultrasonic_velocity.py](ultrasonic_velocity.py) 中的 `calculate_velocity` 方法）：
+
+```python
+def calculate_velocity(self):
+    # 获取最近两次测量的数据
+    t0 = self.echo_time_data[-2]  # 第一次回波时间 (µs)
+    t1 = self.echo_time_data[-1]  # 第二次回波时间 (µs)
+
+    # 计算两次发射的时间间隔 Δt (秒)
+    delta_t = 0.02  # 默认 20ms
+
+    # 声速 (cm/s)
+    v_sound = 34000  # 340 m/s = 34000 cm/s
+
+    # 计算速度 (cm/s)
+    # v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
+    numerator = (t0 - t1) / 2.0 * v_sound
+    denominator = (t1 + t0) / 2.0 + delta_t * 1000000  # 将 Δt 转换为 µs
+
+    velocity_cm_s = numerator / denominator
+
+    return velocity_cm_s
+```
 
 ### 3. 简谐振动实验
 - **实验目的**：分析周期性运动的规律
