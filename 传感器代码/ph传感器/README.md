@@ -136,6 +136,45 @@ pH 9.18 → ADC 2030
 pH 7.00 → ADC 2300  （仅需要一个参考点，其余由理论斜率计算）
 ```
 
+### 代码实现
+
+参考 [ph_sensor.py](ph_sensor.py) 中的校准相关方法：
+
+```python
+def calculate_calibration_coefficients(self):
+    """根据校准点数量自动选择拟合方法"""
+    ph_values = [p[0] for p in self.calibration_points]
+    adc_values = [p[1] for p in self.calibration_points]
+    n_points = len(ph_values)
+
+    if n_points == 1:
+        # 单点校准：使用 Nernst 理论斜率
+        pass  # 使用固定斜率计算
+    elif n_points == 2:
+        # 两点校准：线性拟合
+        coefficients = np.polyfit(adc_values, ph_values, 1)
+        self.cal_coeffs = coefficients  # [k, b]
+    elif n_points >= 3:
+        # 三点校准：二次多项式拟合
+        coefficients = np.polyfit(adc_values, ph_values, 2)
+        self.cal_coeffs = coefficients  # [a, b, c]
+
+def adc_to_ph(self, adc_value):
+    """将ADC原始值转换为pH值"""
+    # 根据校准模式动态选择转换公式
+    ...
+```
+
+### 默认校准参数
+
+```python
+default_calibration = [
+    (4.00, 2555),   # 酸性缓冲液 (pH 4.00 → ADC 2555)
+    (6.86, 2281),   # 中性缓冲液 (pH 6.86 → ADC 2281)
+    (9.18, 2030)    # 碱性缓冲液 (pH 9.18 → ADC 2030)
+]
+```
+
 ---
 
 ## 💻 固件说明
