@@ -60,8 +60,9 @@ PhysChem-DigitizerP/
     │   ├── ESP32_Voltage_Sensor.ino
     │   ├── HX711_Voltage.ino
     │   └── voltage_sensor.py
-    └── 电流传感器/              ← 仅下位机，上位机模块待添加
-        └── ESP32_ADC_Raw_Data.ino
+    └── 电流传感器/
+        ├── ESP32_ADC_Raw_Data.ino
+        └── current_sensor.py      ← ACS712 电流（5A/20A/30A 量程，AC/DC）
 ```
 
 ## Arduino 固件
@@ -78,7 +79,7 @@ PhysChem-DigitizerP/
 | HX711 力传感器 | ESP32-S3 | `传感器代码/力传感器/force.ino` | `force_sensor.py` |
 | 电压采集 | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
 | HX711 电压采集 | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py`（含 HX711 模式） |
-| 电流（ADC 原始） | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | （待添加） |
+| 电流 (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py`（5A/20A/30A 量程，AC/DC，零点校准） |
 
 通过 Arduino IDE 烧录。开发板管理器地址：
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
@@ -216,8 +217,9 @@ PhysChem-DigitizerP/
     │   ├── ESP32_Voltage_Sensor.ino
     │   ├── HX711_Voltage.ino
     │   └── voltage_sensor.py
-    └── 电流传感器/              ← Firmware only, host module TBD
-        └── ESP32_ADC_Raw_Data.ino
+    └── 电流传感器/
+        ├── ESP32_ADC_Raw_Data.ino
+        └── current_sensor.py      ← ACS712 current (5A/20A/30A ranges, AC/DC)
 ```
 
 ## Arduino firmware
@@ -234,7 +236,7 @@ Located in `传感器代码/` (Chinese directory names). Each subfolder contains
 | HX711 force | ESP32-S3 | `传感器代码/力传感器/force.ino` | `force_sensor.py` |
 | Voltage ADC | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
 | HX711 voltage | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py` (HX711 mode) |
-| Current (raw ADC) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | (TBD) |
+| Current (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py` (5A/20A/30A ranges, AC/DC, zero calibration) |
 
 Flash via Arduino IDE. Board packages:
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
