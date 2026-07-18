@@ -14,7 +14,7 @@ import threading
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QFrame, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
@@ -32,7 +32,7 @@ from core import (
     SerialThread, BLESerialThread, scan_ble_devices,
     SampleRateDialog,
     load_sensor_config, save_sensor_config,
-    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
+    card_style, primary_btn_style, accent_btn_style, ModernComboBox,
     BLE_AVAILABLE,
 )
 
@@ -204,13 +204,13 @@ class CurrentSensorWidget(QWidget):
         row1.setSpacing(10)
 
         row1.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.setStyleSheet(modern_combo_style())
-        self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
+        self.mode_combo = ModernComboBox(
+            items=["有线串口", "BLE蓝牙"],
+            on_change=self.on_mode_changed,
+        )
         if not BLE_AVAILABLE:
             self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         row1.addWidget(self.mode_combo)
 
         self.serial_panel = QWidget()
@@ -218,10 +218,8 @@ class CurrentSensorWidget(QWidget):
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setSpacing(8)
         serial_layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ModernComboBox(min_width=140)
         self.refresh_ports()
-        self.port_combo.setMinimumWidth(140)
         serial_layout.addWidget(self.port_combo)
         self.refresh_btn = QPushButton("刷新")
         self.refresh_btn.setFixedHeight(36)
@@ -233,9 +231,7 @@ class CurrentSensorWidget(QWidget):
         ble_layout = QHBoxLayout(self.ble_panel)
         ble_layout.setContentsMargins(0, 0, 0, 0)
         ble_layout.setSpacing(8)
-        self.ble_device_combo = QComboBox()
-        self.ble_device_combo.setStyleSheet(modern_combo_style())
-        self.ble_device_combo.setMinimumWidth(180)
+        self.ble_device_combo = ModernComboBox(min_width=180)
         ble_layout.addWidget(self.ble_device_combo)
         self.ble_scan_btn = QPushButton("扫描BLE")
         self.ble_scan_btn.setFixedHeight(36)
@@ -302,36 +298,34 @@ class CurrentSensorWidget(QWidget):
         range_row = QHBoxLayout()
         range_row.setSpacing(10)
         range_row.addWidget(QLabel("量程:"))
-        self.range_combo = QComboBox()
-        self.range_combo.setStyleSheet(modern_combo_style())
+        self.range_combo = ModernComboBox(on_change=self.on_range_changed)
         for key in ['5A', '20A', '30A']:
             self.range_combo.addItem(self.ACS712_RANGES[key]['desc'])
         range_idx = {'5A': 0, '20A': 1, '30A': 2}.get(self.acs_range, 0)
         self.range_combo.setCurrentIndex(range_idx)
-        self.range_combo.currentIndexChanged.connect(self.on_range_changed)
         range_row.addWidget(self.range_combo)
 
         range_row.addWidget(QLabel("测量类型:"))
-        self.mode_type_combo = QComboBox()
-        self.mode_type_combo.setStyleSheet(modern_combo_style())
-        self.mode_type_combo.addItems(["直流 DC", "交流 AC"])
-        self.mode_type_combo.setCurrentIndex(0 if self.current_mode == 'DC' else 1)
-        self.mode_type_combo.currentIndexChanged.connect(self.on_current_mode_changed)
+        self.mode_type_combo = ModernComboBox(
+            items=["直流 DC", "交流 AC"],
+            on_change=self.on_current_mode_changed,
+            default=0 if self.current_mode == 'DC' else 1,
+        )
         range_row.addWidget(self.mode_type_combo)
 
         range_row.addWidget(QLabel("ADC 位数:"))
-        self.adc_bits_combo = QComboBox()
-        self.adc_bits_combo.setStyleSheet(modern_combo_style())
-        self.adc_bits_combo.addItems([
-            "8 位 (0-255)",
-            "10 位 (0-1023)",
-            "12 位 (0-4095)  ESP32内置",
-            "14 位 (0-16383)",
-            "16 位 (0-65535)",
-        ])
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16}
-        self.adc_bits_combo.setCurrentIndex({v: k for k, v in bits_map.items()}.get(self.adc_bits, 2))
-        self.adc_bits_combo.currentIndexChanged.connect(self.on_adc_bits_changed)
+        self.adc_bits_combo = ModernComboBox(
+            items=[
+                "8 位 (0-255)",
+                "10 位 (0-1023)",
+                "12 位 (0-4095)  ESP32内置",
+                "14 位 (0-16383)",
+                "16 位 (0-65535)",
+            ],
+            on_change=self.on_adc_bits_changed,
+            default={v: k for k, v in bits_map.items()}.get(self.adc_bits, 2),
+        )
         range_row.addWidget(self.adc_bits_combo)
         range_row.addStretch()
         acs_card_layout.addLayout(range_row)
@@ -401,11 +395,11 @@ class CurrentSensorWidget(QWidget):
         unit_row = QHBoxLayout()
         unit_row.setSpacing(10)
         unit_row.addWidget(QLabel("显示单位:"))
-        self.unit_combo = QComboBox()
-        self.unit_combo.setStyleSheet(modern_combo_style())
-        self.unit_combo.addItems(["安培 (A)", "毫安 (mA)"])
-        self.unit_combo.setCurrentIndex(0 if self.current_unit == 'A' else 1)
-        self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
+        self.unit_combo = ModernComboBox(
+            items=["安培 (A)", "毫安 (mA)"],
+            on_change=self.on_unit_changed,
+            default=0 if self.current_unit == 'A' else 1,
+        )
         unit_row.addWidget(self.unit_combo)
 
         unit_row.addWidget(QLabel("零点校准:"))

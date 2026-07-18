@@ -21,7 +21,7 @@ import threading
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox,
-    QLineEdit, QSpinBox, QRadioButton,
+    QLineEdit, QSpinBox, QRadioButton, QComboBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QFont
@@ -492,6 +492,44 @@ def modern_combo_style_dark():
             border-left: 3px solid #60cdff;
         }
     """
+
+
+# ============================================================
+# ModernComboBox — WinUI3 风格下拉框封装
+# ============================================================
+class ModernComboBox(QComboBox):
+    """WinUI3 风格下拉框 — 封装样式 + 常用配置。
+
+    把原来每个模块重复的 4 行样板压成 1 行：
+        combo = QComboBox()
+        combo.setStyleSheet(modern_combo_style())
+        combo.addItems([...])
+        combo.currentIndexChanged.connect(cb)
+
+    用法：
+        self.port_combo = ModernComboBox(
+            items=["有线串口", "BLE蓝牙"],
+            on_change=self.on_mode_changed,
+            default=0,
+            min_width=140,
+        )
+
+    所有传感器模块需要下拉框时，统一通过本类构造，样式与行为
+    由 core.py 单点维护；模块无需再调用 modern_combo_style()。
+    """
+
+    def __init__(self, items=None, on_change=None, default=None,
+                 min_width=None, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(modern_combo_style())
+        if items:
+            self.addItems(items)
+        if default is not None and 0 <= default < self.count():
+            self.setCurrentIndex(default)
+        if on_change:
+            self.currentIndexChanged.connect(on_change)
+        if min_width:
+            self.setMinimumWidth(min_width)
 
 
 # ============================================================

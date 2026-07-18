@@ -14,7 +14,7 @@ import threading
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QFrame, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
@@ -32,7 +32,7 @@ from core import (
     SerialThread, BLESerialThread, scan_ble_devices,
     SampleRateDialog, CalibrationDialog,
     load_sensor_config, save_sensor_config,
-    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
+    card_style, primary_btn_style, accent_btn_style, ModernComboBox,
     BLE_AVAILABLE, _get_config_file_path,
 )
 
@@ -139,13 +139,13 @@ class ForceSensorWidget(QWidget):
         conn_layout = QHBoxLayout()
 
         conn_layout.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.setStyleSheet(modern_combo_style())
-        self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
+        self.mode_combo = ModernComboBox(
+            items=["有线串口", "BLE蓝牙"],
+            on_change=self.on_mode_changed,
+        )
         if not BLE_AVAILABLE:
             self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         conn_layout.addWidget(self.mode_combo)
 
         # 串口面板
@@ -154,8 +154,7 @@ class ForceSensorWidget(QWidget):
         serial_layout.setContentsMargins(0, 0, 0, 0)
 
         serial_layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ModernComboBox()
         self.refresh_ports()
         serial_layout.addWidget(self.port_combo)
 
@@ -168,8 +167,7 @@ class ForceSensorWidget(QWidget):
         ble_layout = QHBoxLayout(self.ble_panel)
         ble_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.ble_device_combo = QComboBox()
-        self.ble_device_combo.setStyleSheet(modern_combo_style())
+        self.ble_device_combo = ModernComboBox()
         ble_layout.addWidget(self.ble_device_combo)
 
         self.ble_scan_btn = QPushButton("扫描BLE")
@@ -268,18 +266,13 @@ class ForceSensorWidget(QWidget):
 
         unit_layout = QHBoxLayout()
         unit_layout.addWidget(QLabel("显示单位:"))
-        self.unit_combo = QComboBox()
-        self.unit_combo.setStyleSheet(modern_combo_style())
-        self.unit_combo.addItems(["克 (g)", "千克 (kg)", "牛顿 (N)"])
         unit_map = {"g": 0, "kg": 1, "N": 2}
-        self.unit_combo.setCurrentIndex(unit_map.get(self.current_unit, 0))
-        self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
-        self.unit_combo.setStyleSheet("""
-            QComboBox {
-                padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px;
-                min-width: 120px;
-            }
-        """)
+        self.unit_combo = ModernComboBox(
+            items=["克 (g)", "千克 (kg)", "牛顿 (N)"],
+            on_change=self.on_unit_changed,
+            default=unit_map.get(self.current_unit, 0),
+            min_width=120,
+        )
         unit_layout.addWidget(self.unit_combo)
 
         unit_layout.addWidget(QLabel("  g = 9.8 m/s²"))

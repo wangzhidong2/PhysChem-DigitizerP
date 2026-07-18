@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QFrame, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QGridLayout, QStyle, QScrollArea, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
@@ -31,7 +31,7 @@ from core import (
     SerialThread, SampleRateDialog,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style,
-    modern_combo_style,
+    ModernComboBox,
 )
 
 
@@ -91,10 +91,8 @@ class UltrasonicWidget(QWidget):
         conn_row.setSpacing(10)
 
         conn_row.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ModernComboBox(min_width=160)
         self.refresh_ports()
-        self.port_combo.setMinimumWidth(160)
         conn_row.addWidget(self.port_combo)
 
         self.refresh_btn = QPushButton("刷新")
