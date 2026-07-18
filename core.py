@@ -329,41 +329,45 @@ def accent_btn_style(normal, hover, pressed):
 
 
 def modern_combo_style():
-    """现代化风格 QComboBox 样式（浅色主题）。
+    """WinUI3 风格 QComboBox 样式（浅色主题）。
 
     特征：
-    - 圆角 6px，浅灰背景
-    - 悬停时边框加深
-    - 聚焦时蓝色边框
-    - 下拉箭头使用 Segoe Fluent Icons 字符
-    - 下拉列表圆角，选中项蓝色高亮
+    - 圆角 6px，纯净白底，极淡边框（WinUI3 CardStroke）
+    - 悬停时背景轻微变灰，边框保持克制
+    - 聚焦/展开时蓝色 accent 边框（#0078d4）
+    - 下拉列表底部圆角，顶部紧贴组合框
+    - 列表项圆角 4px，悬停浅灰
+    - 选中项：浅蓝底 + 蓝字 + 左侧 accent 小蓝条
+      小蓝条通过 item 的 margin 实现垂直居中且较短（不占满整行高）
     """
     return """
         QComboBox {
             background-color: #ffffff;
-            border: 1px solid #d0d0d0;
+            border: 1px solid #e5e5e5;
             border-radius: 6px;
             padding: 6px 32px 6px 12px;
-            min-height: 20px;
+            min-height: 22px;
             font-size: 13px;
             color: #1a1a1a;
         }
         QComboBox:hover {
-            border: 1px solid #b0b0b0;
-            background-color: #fafafa;
+            background-color: #f9f9f9;
+            border: 1px solid #e5e5e5;
         }
         QComboBox:focus {
             border: 1px solid #0078d4;
+            background-color: #ffffff;
         }
         QComboBox:on {
             border: 1px solid #0078d4;
             border-bottom-left-radius: 0px;
             border-bottom-right-radius: 0px;
+            background-color: #ffffff;
         }
         QComboBox::drop-down {
             subcontrol-origin: padding;
-            subcontrol-position: top right;
-            width: 28px;
+            subcontrol-position: center right;
+            width: 32px;
             border: none;
             background: transparent;
         }
@@ -375,58 +379,76 @@ def modern_combo_style():
         QComboBox::down-arrow {
             image: none;
             border: none;
-            width: 14px;
-            height: 14px;
+            width: 12px;
+            height: 12px;
         }
         QComboBox QAbstractItemView {
             background-color: #ffffff;
-            border: 1px solid #d0d0d0;
-            border-radius: 6px;
+            border: 1px solid #e5e5e5;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
             padding: 4px;
             outline: none;
-            selection-background-color: #f0f6ff;
-            selection-color: #0078d4;
+            selection-background-color: transparent;
+            selection-color: #1a1a1a;
             color: #1a1a1a;
         }
         QComboBox QAbstractItemView::item {
-            min-height: 32px;
-            padding: 4px 12px;
+            min-height: 22px;
+            padding: 4px 14px;
+            margin: 6px 4px;
+            border-left: 3px solid transparent;
             border-radius: 4px;
             color: #1a1a1a;
         }
         QComboBox QAbstractItemView::item:hover {
             background-color: #f5f5f5;
+            border-left: 3px solid transparent;
         }
         QComboBox QAbstractItemView::item:selected {
             background-color: #f0f6ff;
             color: #0078d4;
+            border-left: 3px solid #0078d4;
         }
     """
 
 
 def modern_combo_style_dark():
-    """现代化风格 QComboBox 样式（深色主题）"""
+    """WinUI3 风格 QComboBox 样式（深色主题）。
+
+    与浅色版本结构一致，仅替换为深色配色：
+    - 深灰底 (#2d2d2d) + 极淡边框 (#3d3d3d)
+    - accent 色使用 #60cdff（WinUI3 Dark accent）
+    - 选中项左侧小蓝条同样通过 margin 居中且较短
+    """
     return """
         QComboBox {
             background-color: #2d2d2d;
             border: 1px solid #3d3d3d;
             border-radius: 6px;
             padding: 6px 32px 6px 12px;
-            min-height: 20px;
+            min-height: 22px;
             font-size: 13px;
             color: #ffffff;
         }
         QComboBox:hover {
-            border: 1px solid #5d5d5d;
             background-color: #323232;
+            border: 1px solid #3d3d3d;
         }
-        QComboBox:focus, QComboBox:on {
+        QComboBox:focus {
             border: 1px solid #60cdff;
+            background-color: #2d2d2d;
+        }
+        QComboBox:on {
+            border: 1px solid #60cdff;
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+            background-color: #2d2d2d;
         }
         QComboBox::drop-down {
             subcontrol-origin: padding;
-            subcontrol-position: top right;
-            width: 28px;
+            subcontrol-position: center right;
+            width: 32px;
             border: none;
             background: transparent;
         }
@@ -438,31 +460,36 @@ def modern_combo_style_dark():
         QComboBox::down-arrow {
             image: none;
             border: none;
-            width: 14px;
-            height: 14px;
+            width: 12px;
+            height: 12px;
         }
         QComboBox QAbstractItemView {
             background-color: #2d2d2d;
             border: 1px solid #3d3d3d;
-            border-radius: 6px;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
             padding: 4px;
             outline: none;
-            selection-background-color: #1f3a5f;
-            selection-color: #60cdff;
+            selection-background-color: transparent;
+            selection-color: #ffffff;
             color: #ffffff;
         }
         QComboBox QAbstractItemView::item {
-            min-height: 32px;
-            padding: 4px 12px;
+            min-height: 22px;
+            padding: 4px 14px;
+            margin: 6px 4px;
+            border-left: 3px solid transparent;
             border-radius: 4px;
             color: #ffffff;
         }
         QComboBox QAbstractItemView::item:hover {
             background-color: #3d3d3d;
+            border-left: 3px solid transparent;
         }
         QComboBox QAbstractItemView::item:selected {
             background-color: #1f3a5f;
             color: #60cdff;
+            border-left: 3px solid #60cdff;
         }
     """
 
