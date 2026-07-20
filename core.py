@@ -22,9 +22,10 @@ import threading
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox,
     QLineEdit, QSpinBox, QRadioButton, QComboBox,
+    QStyledItemDelegate, QStyle,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QThread
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QRect
+from PyQt6.QtGui import QFont, QColor, QPainter
 
 import serial
 import serial.tools.list_ports
@@ -396,19 +397,16 @@ def modern_combo_style():
         QComboBox QAbstractItemView::item {
             min-height: 22px;
             padding: 4px 14px;
-            margin: 6px 4px;
-            border-left: 3px solid transparent;
+            margin: 4px 4px;
             border-radius: 4px;
             color: #1a1a1a;
         }
         QComboBox QAbstractItemView::item:hover {
             background-color: #f5f5f5;
-            border-left: 3px solid transparent;
         }
         QComboBox QAbstractItemView::item:selected {
             background-color: #f0f6ff;
             color: #0078d4;
-            border-left: 3px solid #0078d4;
         }
     """
 
@@ -477,28 +475,66 @@ def modern_combo_style_dark():
         QComboBox QAbstractItemView::item {
             min-height: 22px;
             padding: 4px 14px;
-            margin: 6px 4px;
-            border-left: 3px solid transparent;
+            margin: 4px 4px;
             border-radius: 4px;
             color: #ffffff;
         }
         QComboBox QAbstractItemView::item:hover {
             background-color: #3d3d3d;
-            border-left: 3px solid transparent;
         }
         QComboBox QAbstractItemView::item:selected {
             background-color: #1f3a5f;
             color: #60cdff;
-            border-left: 3px solid #60cdff;
         }
     """
+
+
+# ============================================================
+# ComboItemDelegate — 选中项左侧 accent 小蓝条（WinUI3 列表选中指示器）
+# ============================================================
+class ComboItemDelegate(QStyledItemDelegate):
+    """QComboBox 列表项 delegate —— 选中项左侧绘制 accent 小蓝条。
+
+    用 QStyledItemDelegate 自绘而非 QSS border-left，原因：
+    Qt 对 QAbstractItemView::item 的 border 渲染行为在不同版本/平台
+    下不稳定（border 常被画在整个 item rect 上，忽略 margin），
+    无法可靠实现"较短、垂直居中"的视觉。本 delegate 用 QRect 精确
+    控制蓝条位置与尺寸，跨版本一致。
+
+    蓝条规格（贴近 WinUI3 列表选中指示器）：
+    - 宽 3px
+    - 高度 = item 高度 × 0.4（约 9px，视觉较短）
+    - 垂直居中
+    - 紧贴 item 左侧（考虑 viewport padding 后的 item rect.x）
+    """
+
+    def __init__(self, accent_color="#0078d4", parent=None):
+        super().__init__(parent)
+        self._accent = QColor(accent_color)
+
+    def paint(self, painter, option, index):
+        # 先调父类 paint 画完整 item（QSS 的背景色/文字色仍生效）
+        super().paint(painter, option, index)
+        # 选中时叠一层短蓝条
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._accent)
+            rect = option.rect
+            bar_h = int(rect.height() * 0.4)
+            bar_w = 3
+            bar_x = rect.left() + 4
+            bar_y = rect.top() + (rect.height() - bar_h) // 2
+            painter.drawRoundedRect(QRect(bar_x, bar_y, bar_w, bar_h),
+                                    1, 1)
+            painter.restore()
 
 
 # ============================================================
 # ModernComboBox — WinUI3 风格下拉框封装
 # ============================================================
 class ModernComboBox(QComboBox):
-    """WinUI3 风格下拉框 — 封装样式 + 常用配置。
+    """WinUI3 风格下拉框 — 封装样式 + 常用配置 + 选中蓝条 delegate。
 
     把原来每个模块重复的 4 行样板压成 1 行：
         combo = QComboBox()
@@ -516,12 +552,18 @@ class ModernComboBox(QComboBox):
 
     所有传感器模块需要下拉框时，统一通过本类构造，样式与行为
     由 core.py 单点维护；模块无需再调用 modern_combo_style()。
+
+    选中项的左侧 accent 小蓝条（较短、垂直居中）由 ComboItemDelegate
+    自绘保证，不依赖 QSS border 渲染。
     """
 
     def __init__(self, items=None, on_change=None, default=None,
-                 min_width=None, parent=None):
+                 min_width=None, accent_color=None, parent=None):
         super().__init__(parent)
         self.setStyleSheet(modern_combo_style())
+        # 选中蓝条 delegate；accent_color 不传则用默认蓝
+        accent = accent_color or "#0078d4"
+        self.setItemDelegate(ComboItemDelegate(accent_color=accent, parent=self))
         if items:
             self.addItems(items)
         if default is not None and 0 <= default < self.count():
