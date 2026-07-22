@@ -298,11 +298,13 @@ class CurrentSensorWidget(QWidget):
         range_row = QHBoxLayout()
         range_row.setSpacing(10)
         range_row.addWidget(QLabel("量程:"))
-        self.range_combo = ModernComboBox(on_change=self.on_range_changed)
-        for key in ['5A', '20A', '30A']:
-            self.range_combo.addItem(self.ACS712_RANGES[key]['desc'])
+        range_items = [self.ACS712_RANGES[k]['desc'] for k in ['5A', '20A', '30A']]
         range_idx = {'5A': 0, '20A': 1, '30A': 2}.get(self.acs_range, 0)
-        self.range_combo.setCurrentIndex(range_idx)
+        self.range_combo = ModernComboBox(
+            items=range_items,
+            on_change=self.on_range_changed,
+            default=range_idx,
+        )
         range_row.addWidget(self.range_combo)
 
         range_row.addWidget(QLabel("测量类型:"))

@@ -564,10 +564,16 @@ class ModernComboBox(QComboBox):
         # 选中蓝条 delegate；accent_color 不传则用默认蓝
         accent = accent_color or "#0078d4"
         self.setItemDelegate(ComboItemDelegate(accent_color=accent, parent=self))
-        if items:
-            self.addItems(items)
-        if default is not None and 0 <= default < self.count():
-            self.setCurrentIndex(default)
+        # 初始化期屏蔽信号，避免 addItems/setCurrentIndex 误触发 on_change
+        # （回调此时往往依赖的其它控件/属性尚未创建）
+        self.blockSignals(True)
+        try:
+            if items:
+                self.addItems(items)
+            if default is not None and 0 <= default < self.count():
+                self.setCurrentIndex(default)
+        finally:
+            self.blockSignals(False)
         if on_change:
             self.currentIndexChanged.connect(on_change)
         if min_width:
