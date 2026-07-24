@@ -19,12 +19,12 @@ import re
 import glob
 import importlib.util
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QStackedWidget, QScrollArea, QGroupBox,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect
-from PyQt6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics
+from PySide6.QtCore import Qt, Signal, QSize, QRect
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics
 
 # 公共模块（与各传感器模块共享）
 from core import card_style, primary_btn_style, accent_btn_style
@@ -158,7 +158,7 @@ def scan_modules(modules_dir):
 class HomePageWidget(QWidget):
     """主页面 - 现代化风格卡片布局（动态接收模块列表）"""
 
-    module_clicked = pyqtSignal(str)
+    module_clicked = Signal(str)
 
     CARD_STYLE = """
         QWidget#card {
@@ -389,7 +389,7 @@ class HomePageWidget(QWidget):
         subtitle_label.setStyleSheet("color: #666666; margin-bottom: 12px;")
         card_layout.addWidget(subtitle_label)
 
-        from PyQt6.QtWidgets import QGridLayout
+        from PySide6.QtWidgets import QGridLayout
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(8)
@@ -633,7 +633,7 @@ class NavButton(QPushButton):
 class SidebarWidget(QWidget):
     """现代化风格可折叠侧边栏组件（动态接收模块列表）"""
 
-    module_changed = pyqtSignal(int)
+    module_changed = Signal(int)
 
     def __init__(self):
         super().__init__()
@@ -797,7 +797,7 @@ class SidebarWidget(QWidget):
 class SettingsWidget(QWidget):
     """设置界面组件"""
 
-    theme_changed = pyqtSignal(str)
+    theme_changed = Signal(str)
 
     def __init__(self):
         super().__init__()

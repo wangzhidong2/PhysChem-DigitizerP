@@ -8,7 +8,7 @@
 
 ## 项目简介
 
-基于 PyQt6 的 GUI 应用 + Arduino/ESP32 固件，用于低成本物理化学实验室数据采集（传感器：超声波、pH、HX711 力传感器、电压）。采用**模块化架构**，新增传感器只需丢文件，无需修改主程序。
+基于 PySide6 的 GUI 应用 + Arduino/ESP32 固件，用于低成本物理化学实验室数据采集（传感器：超声波、pH、HX711 力传感器、电压）。采用**模块化架构**，新增传感器只需丢文件，无需修改主程序。
 
 ## 入口文件
 
@@ -20,7 +20,7 @@
 ## 安装依赖
 
 ```bash
-pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 # 可选（BLE 无线通信）:
 pip install bleak
 ```
@@ -165,7 +165,7 @@ class TemperatureSensorWidget(QWidget):
 
 ## What is this
 
-PyQt6 GUI application + Arduino/ESP32 firmware for low-cost physics/chemistry lab data acquisition (sensors: ultrasonic, pH, HX711 force, voltage). Uses a **modular architecture** — adding a sensor requires only dropping a file, no changes to the main program.
+PySide6 GUI application + Arduino/ESP32 firmware for low-cost physics/chemistry lab data acquisition (sensors: ultrasonic, pH, HX711 force, voltage). Uses a **modular architecture** — adding a sensor requires only dropping a file, no changes to the main program.
 
 ## Entry points
 
@@ -177,7 +177,7 @@ PyQt6 GUI application + Arduino/ESP32 firmware for low-cost physics/chemistry la
 ## Install
 
 ```bash
-pip install PyQt6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
 # Optional (for BLE wireless):
 pip install bleak
 ```
