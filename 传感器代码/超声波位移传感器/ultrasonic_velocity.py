@@ -11,16 +11,16 @@
 import sys
 import os
 from datetime import datetime
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer, QSize
-from PyQt6.QtGui import QFont, QIcon, QPixmap, QPainter
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 import serial
 import serial.tools.list_ports
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
 

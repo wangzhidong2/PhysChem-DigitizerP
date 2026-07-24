@@ -19,12 +19,12 @@ import json
 import asyncio
 import threading
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox,
     QLineEdit, QSpinBox, QRadioButton,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QThread
-from PyQt6.QtGui import QFont
+from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtGui import QFont
 
 import serial
 import serial.tools.list_ports
@@ -117,7 +117,7 @@ def save_sensor_config(module_name, config_dict):
 # ============================================================
 class SerialThread(QThread):
     """串口通信线程"""
-    data_received = pyqtSignal(str)
+    data_received = Signal(str)
 
     def __init__(self, port, baudrate=115200):
         super().__init__()
@@ -167,8 +167,8 @@ except ImportError:
 
 class BLESerialThread(QThread):
     """BLE 串口通信线程 — 基于 bleak 库连接 ESP32-S3 的 NUS 服务"""
-    data_received = pyqtSignal(str)
-    connection_status = pyqtSignal(str)
+    data_received = Signal(str)
+    connection_status = Signal(str)
 
     def __init__(self, device_address, device_name=""):
         super().__init__()
