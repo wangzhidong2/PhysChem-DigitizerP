@@ -26,6 +26,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize, QRect
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics
 
+# FluentWidgets — WinUI3 风格组件库（社区版，GPLv3 + 商业双协议）
+# 文档：https://qfluentwidgets.com/
+from qfluentwidgets import (
+    FluentWindow, FluentIcon as FIF, NavigationItemPosition,
+    Theme, setTheme, setThemeColor, PushButton, PrimaryPushButton,
+    ComboBox, InfoBar, InfoBarPosition, CardWidget, BodyLabel,
+    TitleLabel, SubtitleLabel, CaptionLabel,
+)
+
 # 公共模块（与各传感器模块共享）
 from core import card_style, primary_btn_style, accent_btn_style
 
@@ -954,8 +963,13 @@ class SettingsWidget(QWidget):
 # ============================================================
 # 主窗口 + 动态加载器
 # ============================================================
-class MainWindow(QMainWindow):
-    """主窗口 - 启动时扫描模块目录并动态加载各传感器模块"""
+class MainWindow(FluentWindow):
+    """主窗口 - 启动时扫描模块目录并动态加载各传感器模块
+
+    基于 FluentWindow（PySide6-Fluent-Widgets），自动获得 WinUI3 风格的
+    NavigationInterface（左侧导航）+ stackedWidget（内容栈）+ 主题切换。
+    各传感器 widget 通过 addSubInterface 注册到导航。
+    """
 
     def __init__(self):
         super().__init__()
@@ -972,21 +986,8 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
-        self.setGeometry(100, 100, 1200, 800)
-
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-
-        main_layout = QHBoxLayout()
-
-        # 侧边栏
-        self.sidebar = SidebarWidget()
-        self.sidebar.module_changed.connect(self.switch_module)
-        main_layout.addWidget(self.sidebar)
-
-        # 内容栈
-        self.content_stack = QStackedWidget()
-        main_layout.addWidget(self.content_stack)
+        self.resize(1200, 800)
+        # FluentWindow 自带 NavigationInterface + stackedWidget，无需手动布局
 
         # === 加载模块 ===
         # 确定传感器代码目录（与 main.py 同级）
@@ -995,15 +996,16 @@ class MainWindow(QMainWindow):
 
         discovered = scan_modules(modules_dir)
 
-        # 主页（始终在第 0 位）
+        # 主页（始终在第 0 位）—— 用 FluentIcon.HOME 注册到导航顶部
         home_page = HomePageWidget()
         home_page.module_clicked.connect(self.on_home_module_clicked)
-        self.content_stack.addWidget(home_page)
+        home_page.setObjectName("home_page")
+        self.addSubInterface(home_page, FIF.HOME, "主页")
         self.modules["主页"] = home_page
         self.module_widgets.append(home_page)
 
-        # 各传感器模块（按发现顺序加载）
-        sidebar_modules = []  # [(icon, name, desc), ...] 给侧边栏用
+        # 各传感器模块（按发现顺序加载）—— 用 FluentIcon.PLAY 统一占位
+        # TODO: 后续可为每个传感器定制图标
         home_modules = []  # [(icon, name, category), ...] 给主页用
 
         for info in discovered:
@@ -1014,27 +1016,32 @@ class MainWindow(QMainWindow):
                 print(f"❌ 实例化模块 {info['name']} 失败: {e}")
                 continue
 
-            self.content_stack.addWidget(widget)
+            # FluentWindow.addSubInterface 要求 widget 有 objectName
+            # 用模块名作为唯一标识（去掉空格等特殊字符）
+            obj_name = "module_" + info['name'].replace(" ", "_").replace("（", "_").replace("）", "_")
+            widget.setObjectName(obj_name)
+            self.addSubInterface(widget, FIF.PLAY, info['name'])
             self.modules[info['name']] = widget
             self.module_widgets.append(widget)
 
-            desc = self._get_module_desc(info['name'])
-            sidebar_modules.append((info['icon'], info['name'], desc))
             home_modules.append((info['icon'], info['name'], info['category']))
 
-        # 设置（始终在最后）
+        # 设置（始终在最后）—— 用 FluentIcon.SETTING 注册到导航底部
         settings_widget = SettingsWidget()
         settings_widget.theme_changed.connect(self.change_app_theme)
-        self.content_stack.addWidget(settings_widget)
+        settings_widget.setObjectName("settings_page")
+        self.addSubInterface(
+            settings_widget, FIF.SETTING, "设置",
+            position=NavigationItemPosition.BOTTOM
+        )
         self.modules["设置"] = settings_widget
         self.module_widgets.append(settings_widget)
 
-        # 把模块列表传给侧边栏和主页
-        self.sidebar.set_modules(sidebar_modules)
+        # 把模块列表传给主页
         home_page.set_modules(home_modules)
 
-        central_widget.setLayout(main_layout)
-        self.sidebar.set_current_row(0)
+        # 默认显示主页
+        self.switchTo(home_page)
 
     def _get_module_desc(self, name):
         """根据模块名返回简短描述"""
@@ -1049,23 +1056,19 @@ class MainWindow(QMainWindow):
         return descs.get(name, '传感器数据采集')
 
     def switch_module(self, index):
-        if 0 <= index < self.content_stack.count():
-            self.content_stack.setCurrentIndex(index)
+        """兼容旧接口：按索引切换（实际用 switchTo(widget)）"""
+        if 0 <= index < len(self.module_widgets):
+            self.switchTo(self.module_widgets[index])
 
     def on_home_module_clicked(self, module_name):
         """主页模块卡片点击 → 切换到对应模块"""
-        for i, (icon, name, desc) in enumerate(self.sidebar.modules):
-            if name == module_name:
-                self.sidebar.set_current_row(i)
-                self.switch_module(i)
-                return
+        if module_name in self.modules:
+            self.switchTo(self.modules[module_name])
 
     def change_app_theme(self, theme):
+        """切换应用主题（light/dark）"""
         self.current_theme = theme
         self.apply_theme(theme)
-
-        if hasattr(self, 'sidebar'):
-            self.sidebar.apply_theme(theme)
 
         if "设置" in self.modules:
             self.modules["设置"].apply_theme(theme)
@@ -1084,70 +1087,15 @@ class MainWindow(QMainWindow):
                     print(f"⚠️ 模块 {name} 主题切换失败: {e}")
 
     def apply_theme(self, theme):
+        """切换 FluentWidgets 主题（light/dark）。
+
+        FluentWindow 自带 WinUI3 风格样式，不再需要手动 QSS。
+        setTheme 会自动刷新所有 FluentWidgets 组件的颜色。
+        """
         if theme == "dark":
-            self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #202020;
-                    color: white;
-                }
-                QGroupBox {
-                    font-weight: bold;
-                    border: 2px solid #3d3d3d;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: white;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: white;
-                }
-                QPushButton {
-                    background-color: #0078d4;
-                    border: none;
-                    color: white;
-                    padding: 8px 16px;
-                    border-radius: 4px;
-                    font-size: 14px;
-                }
-                QPushButton:hover { background-color: #106ebe; }
-                QPushButton:disabled { background-color: #444444; color: #888888; }
-                QLabel { font-size: 14px; color: white; }
-            """)
+            setTheme(Theme.DARK)
         else:
-            self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #f3f3f3;
-                    color: black;
-                }
-                QGroupBox {
-                    font-weight: bold;
-                    border: 2px solid #e0e0e0;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: black;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: black;
-                }
-                QPushButton {
-                    background-color: #0078d4;
-                    border: none;
-                    color: white;
-                    padding: 8px 16px;
-                    border-radius: 4px;
-                    font-size: 14px;
-                }
-                QPushButton:hover { background-color: #106ebe; }
-                QPushButton:disabled { background-color: #cccccc; color: #666666; }
-                QLabel { font-size: 14px; color: black; }
-            """)
+            setTheme(Theme.LIGHT)
 
     def apply_modern_style(self):
         self.current_theme = "light"
@@ -1156,7 +1104,7 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyle('Fusion')
+    # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
