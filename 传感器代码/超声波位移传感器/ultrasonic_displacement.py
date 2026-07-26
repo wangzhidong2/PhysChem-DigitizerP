@@ -12,12 +12,13 @@ import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QGridLayout, QStyle, QScrollArea, QMessageBox,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -91,22 +92,19 @@ class UltrasonicWidget(QWidget):
         conn_row.setSpacing(10)
 
         conn_row.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(160)
         conn_row.addWidget(self.port_combo)
 
-        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn = PushButton("刷新")
         self.refresh_btn.setFixedHeight(36)
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        self.refresh_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         conn_row.addWidget(self.refresh_btn)
 
-        self.connect_btn = QPushButton("连接")
+        self.connect_btn = PrimaryPushButton("连接")
         self.connect_btn.setFixedHeight(36)
         self.connect_btn.clicked.connect(self.toggle_connection)
-        self.connect_btn.setStyleSheet(primary_btn_style())
         conn_row.addWidget(self.connect_btn)
 
         conn_row.addSpacing(20)
@@ -117,11 +115,10 @@ class UltrasonicWidget(QWidget):
         self.sample_rate_label.setStyleSheet("color: #0078d4;")
         conn_row.addWidget(self.sample_rate_label)
 
-        sample_settings_btn = QPushButton("⚙")
+        sample_settings_btn = PushButton("⚙")
         sample_settings_btn.setFixedSize(36, 36)
         sample_settings_btn.setToolTip("设置采样频率")
         sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         conn_row.addWidget(sample_settings_btn)
 
         conn_row.addStretch()
@@ -183,18 +180,8 @@ class UltrasonicWidget(QWidget):
         record_label.setStyleSheet("color: #1a1a1a;")
         left_layout.addWidget(record_label)
 
-        self.data_text = QTextEdit()
+        self.data_text = TextEdit()
         self.data_text.setReadOnly(True)
-        self.data_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #fafafa;
-                border: 1px solid #e5e5e5;
-                border-radius: 6px;
-                padding: 8px;
-                font-size: 11px;
-                color: #333333;
-            }
-        """)
         left_layout.addWidget(self.data_text)
         content_row.addWidget(left_panel, stretch=1)
 
@@ -216,31 +203,27 @@ class UltrasonicWidget(QWidget):
         actions_layout.setContentsMargins(20, 12, 20, 12)
         actions_layout.setSpacing(10)
 
-        self.start_btn = QPushButton("开始采集")
+        self.start_btn = PrimaryPushButton("开始采集")
         self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
-        self.start_btn.setStyleSheet(primary_btn_style())
         actions_layout.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn = PushButton("停止采集")
         self.stop_btn.setFixedHeight(38)
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.stop_btn)
 
-        self.save_btn = QPushButton("保存数据")
+        self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
-        self.save_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.save_btn)
 
-        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn = PushButton("清除数据")
         self.clear_btn.setFixedHeight(38)
         self.clear_btn.clicked.connect(self.clear_data)
-        self.clear_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()

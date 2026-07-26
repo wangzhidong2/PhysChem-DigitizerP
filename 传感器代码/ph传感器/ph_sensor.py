@@ -12,12 +12,13 @@ import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QMessageBox,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -141,18 +142,17 @@ class PhSensorWidget(QWidget):
 
         # 串口选择
         control_layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ComboBox()
         self.refresh_ports()
         control_layout.addWidget(self.port_combo)
 
         # 刷新按钮
-        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn = PushButton("刷新")
         self.refresh_btn.clicked.connect(self.refresh_ports)
         control_layout.addWidget(self.refresh_btn)
 
         # 连接按钮
-        self.connect_btn = QPushButton("连接")
+        self.connect_btn = PrimaryPushButton("连接")
         self.connect_btn.clicked.connect(self.toggle_connection)
         control_layout.addWidget(self.connect_btn)
 
@@ -165,24 +165,10 @@ class PhSensorWidget(QWidget):
         control_layout.addWidget(self.sample_rate_label)
 
         # 采样频率设置按钮
-        sample_settings_btn = QPushButton("⚙️")
+        sample_settings_btn = PushButton("⚙️")
         sample_settings_btn.setFixedWidth(40)
         sample_settings_btn.setToolTip("设置采样频率")
         sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
         control_layout.addWidget(sample_settings_btn)
 
         control_layout.addStretch()
@@ -211,24 +197,8 @@ class PhSensorWidget(QWidget):
         cal_info_layout.addWidget(self.cal_text)
 
         # 编辑按钮
-        edit_btn = QPushButton("✏️ 编辑校准参数")
+        edit_btn = PrimaryPushButton("✏️ 编辑校准参数")
         edit_btn.clicked.connect(self.edit_calibration)
-        edit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:pressed {
-                background-color: #005a9e;
-            }
-        """)
         cal_info_layout.addWidget(edit_btn)
 
         cal_info_group.setLayout(cal_info_layout)
@@ -258,7 +228,7 @@ class PhSensorWidget(QWidget):
         text_layout.addWidget(self.stats_label)
 
         # 数据记录
-        self.data_text = QTextEdit()
+        self.data_text = TextEdit()
         self.data_text.setMaximumHeight(120)
         text_layout.addWidget(QLabel("数据记录:"))
         text_layout.addWidget(self.data_text)
@@ -277,22 +247,22 @@ class PhSensorWidget(QWidget):
         # 控制按钮
         button_layout = QHBoxLayout()
 
-        self.start_btn = QPushButton("开始采集")
+        self.start_btn = PrimaryPushButton("开始采集")
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
         button_layout.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn = PushButton("停止采集")
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
         button_layout.addWidget(self.stop_btn)
 
-        self.save_btn = QPushButton("保存数据")
+        self.save_btn = PushButton("保存数据")
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
         button_layout.addWidget(self.save_btn)
 
-        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn = PushButton("清除数据")
         self.clear_btn.clicked.connect(self.clear_data)
         button_layout.addWidget(self.clear_btn)
 

@@ -13,12 +13,13 @@ import os
 import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -204,11 +205,10 @@ class CurrentSensorWidget(QWidget):
         row1.setSpacing(10)
 
         row1.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.setStyleSheet(modern_combo_style())
+        self.mode_combo = ComboBox()
         self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
         if not BLE_AVAILABLE:
-            self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
+            self.mode_combo.setItemEnabled(1, False)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         row1.addWidget(self.mode_combo)
@@ -218,26 +218,23 @@ class CurrentSensorWidget(QWidget):
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setSpacing(8)
         serial_layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(140)
         serial_layout.addWidget(self.port_combo)
-        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn = PushButton("刷新")
         self.refresh_btn.setFixedHeight(36)
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        self.refresh_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         serial_layout.addWidget(self.refresh_btn)
 
         self.ble_panel = QWidget()
         ble_layout = QHBoxLayout(self.ble_panel)
         ble_layout.setContentsMargins(0, 0, 0, 0)
         ble_layout.setSpacing(8)
-        self.ble_device_combo = QComboBox()
-        self.ble_device_combo.setStyleSheet(modern_combo_style())
+        self.ble_device_combo = ComboBox()
         self.ble_device_combo.setMinimumWidth(180)
         ble_layout.addWidget(self.ble_device_combo)
-        self.ble_scan_btn = QPushButton("扫描BLE")
+        self.ble_scan_btn = PushButton("扫描BLE")
         self.ble_scan_btn.setFixedHeight(36)
         self.ble_scan_btn.clicked.connect(self.scan_ble)
         if not BLE_AVAILABLE:
@@ -249,17 +246,15 @@ class CurrentSensorWidget(QWidget):
         self.ble_panel.hide()
 
         row1.addSpacing(16)
-        self.connect_btn = QPushButton("连接")
+        self.connect_btn = PrimaryPushButton("连接")
         self.connect_btn.setFixedHeight(36)
         self.connect_btn.clicked.connect(self.connect_device)
-        self.connect_btn.setStyleSheet(primary_btn_style())
         row1.addWidget(self.connect_btn)
 
-        self.disconnect_btn = QPushButton("断开")
+        self.disconnect_btn = PushButton("断开")
         self.disconnect_btn.setFixedHeight(36)
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
-        self.disconnect_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         row1.addWidget(self.disconnect_btn)
 
         row1.addStretch()
@@ -274,11 +269,10 @@ class CurrentSensorWidget(QWidget):
         self.sample_rate_label.setStyleSheet("color: #0078d4;")
         row2.addWidget(self.sample_rate_label)
 
-        sample_settings_btn = QPushButton("⚙")
+        sample_settings_btn = PushButton("⚙")
         sample_settings_btn.setFixedSize(36, 36)
         sample_settings_btn.setToolTip("设置采样频率")
         sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         row2.addWidget(sample_settings_btn)
         row2.addStretch()
         card_layout.addLayout(row2)
@@ -302,8 +296,7 @@ class CurrentSensorWidget(QWidget):
         range_row = QHBoxLayout()
         range_row.setSpacing(10)
         range_row.addWidget(QLabel("量程:"))
-        self.range_combo = QComboBox()
-        self.range_combo.setStyleSheet(modern_combo_style())
+        self.range_combo = ComboBox()
         for key in ['5A', '20A', '30A']:
             self.range_combo.addItem(self.ACS712_RANGES[key]['desc'])
         range_idx = {'5A': 0, '20A': 1, '30A': 2}.get(self.acs_range, 0)
@@ -312,16 +305,14 @@ class CurrentSensorWidget(QWidget):
         range_row.addWidget(self.range_combo)
 
         range_row.addWidget(QLabel("测量类型:"))
-        self.mode_type_combo = QComboBox()
-        self.mode_type_combo.setStyleSheet(modern_combo_style())
+        self.mode_type_combo = ComboBox()
         self.mode_type_combo.addItems(["直流 DC", "交流 AC"])
         self.mode_type_combo.setCurrentIndex(0 if self.current_mode == 'DC' else 1)
         self.mode_type_combo.currentIndexChanged.connect(self.on_current_mode_changed)
         range_row.addWidget(self.mode_type_combo)
 
         range_row.addWidget(QLabel("ADC 位数:"))
-        self.adc_bits_combo = QComboBox()
-        self.adc_bits_combo.setStyleSheet(modern_combo_style())
+        self.adc_bits_combo = ComboBox()
         self.adc_bits_combo.addItems([
             "8 位 (0-255)",
             "10 位 (0-1023)",
@@ -401,8 +392,7 @@ class CurrentSensorWidget(QWidget):
         unit_row = QHBoxLayout()
         unit_row.setSpacing(10)
         unit_row.addWidget(QLabel("显示单位:"))
-        self.unit_combo = QComboBox()
-        self.unit_combo.setStyleSheet(modern_combo_style())
+        self.unit_combo = ComboBox()
         self.unit_combo.addItems(["安培 (A)", "毫安 (mA)"])
         self.unit_combo.setCurrentIndex(0 if self.current_unit == 'A' else 1)
         self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
@@ -504,18 +494,8 @@ class CurrentSensorWidget(QWidget):
         record_label.setStyleSheet("color: #1a1a1a;")
         left_layout.addWidget(record_label)
 
-        self.data_text = QTextEdit()
+        self.data_text = TextEdit()
         self.data_text.setReadOnly(True)
-        self.data_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #fafafa;
-                border: 1px solid #e5e5e5;
-                border-radius: 6px;
-                padding: 8px;
-                font-size: 11px;
-                color: #333333;
-            }
-        """)
         left_layout.addWidget(self.data_text)
         content_row.addWidget(left_panel, stretch=1)
 
@@ -536,41 +516,37 @@ class CurrentSensorWidget(QWidget):
         actions_layout.setContentsMargins(20, 12, 20, 12)
         actions_layout.setSpacing(10)
 
-        self.start_btn = QPushButton("开始采集")
+        self.start_btn = PrimaryPushButton("开始采集")
         self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
-        self.start_btn.setStyleSheet(primary_btn_style())
         actions_layout.addWidget(self.start_btn)
 
         # 零点校准按钮：取最近若干个数据点平均的传感器输出作为零点电压
-        self.zero_cal_btn = QPushButton("零点校准" if not self.zero_cal_active else "取消零点")
+        self.zero_cal_btn = PushButton("零点校准" if not self.zero_cal_active else "取消零点")
         self.zero_cal_btn.setFixedHeight(38)
         self.zero_cal_btn.clicked.connect(self.toggle_zero_cal)
         self.zero_cal_btn.setEnabled(False)
-        self.zero_cal_btn.setStyleSheet(accent_btn_style("#fd7e14", "#e06b00", "#c75a00")
+        self.zero_cal_btn.setStyleSheet("background-color: #fd7e14; color: white;"
                                         if not self.zero_cal_active else
-                                        accent_btn_style("#28a745", "#218838", "#1e7e34"))
+                                        "background-color: #28a745; color: white;")
         actions_layout.addWidget(self.zero_cal_btn)
 
-        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn = PushButton("停止采集")
         self.stop_btn.setFixedHeight(38)
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.stop_btn)
 
-        self.save_btn = QPushButton("保存数据")
+        self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
-        self.save_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.save_btn)
 
-        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn = PushButton("清除数据")
         self.clear_btn.setFixedHeight(38)
         self.clear_btn.clicked.connect(self.clear_data)
-        self.clear_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
@@ -670,10 +646,10 @@ class CurrentSensorWidget(QWidget):
     def update_zero_cal_btn(self):
         if self.zero_cal_active:
             self.zero_cal_btn.setText("取消零点")
-            self.zero_cal_btn.setStyleSheet(accent_btn_style("#28a745", "#218838", "#1e7e34"))
+            self.zero_cal_btn.setStyleSheet("background-color: #28a745; color: white;")
         else:
             self.zero_cal_btn.setText("零点校准")
-            self.zero_cal_btn.setStyleSheet(accent_btn_style("#fd7e14", "#e06b00", "#c75a00"))
+            self.zero_cal_btn.setStyleSheet("background-color: #fd7e14; color: white;")
 
     def toggle_zero_cal(self):
         """零点校准/取消切换

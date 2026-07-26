@@ -32,7 +32,7 @@ from qfluentwidgets import (
     FluentWindow, FluentIcon as FIF, NavigationItemPosition,
     Theme, setTheme, setThemeColor, PushButton, PrimaryPushButton,
     ComboBox, InfoBar, InfoBarPosition, CardWidget, BodyLabel,
-    TitleLabel, SubtitleLabel, CaptionLabel,
+    TitleLabel, SubtitleLabel, CaptionLabel, RadioButton,
 )
 
 # 公共模块（与各传感器模块共享）
@@ -269,21 +269,9 @@ class HomePageWidget(QWidget):
         top_layout.addLayout(info_layout)
         top_layout.addStretch()
 
-        github_btn = QPushButton("  GitHub")
+        github_btn = PrimaryPushButton("  GitHub")
         github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         github_btn.setFixedHeight(36)
-        github_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0067c0;
-                border: none;
-                border-radius: 6px;
-                color: white;
-                font-size: 13px;
-                padding: 0 16px;
-            }
-            QPushButton:hover { background-color: #005a9e; }
-            QPushButton:pressed { background-color: #004578; }
-        """)
         github_btn.clicked.connect(self.open_github)
         top_layout.addWidget(github_btn)
 
@@ -845,31 +833,10 @@ class SettingsWidget(QWidget):
         ]
 
         for theme_id, theme_name in themes:
-            btn = QPushButton(f"  {theme_name}")
-            btn.setCheckable(True)
+            # RadioButton 是 Fluent 风格的单选按钮，符合 WinUI3 设置页风格
+            btn = RadioButton(theme_name)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setMinimumHeight(40)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: white;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    text-align: left;
-                    padding-left: 15px;
-                    font-size: 13px;
-                    color: #333;
-                }
-                QPushButton:hover {
-                    background-color: #f5f5f5;
-                    border-color: #0078d4;
-                }
-                QPushButton:checked {
-                    background-color: #e6f2ff;
-                    border-left: 3px solid #0078d4;
-                    color: #0078d4;
-                    font-weight: bold;
-                }
-            """)
+            btn.setMinimumHeight(32)
             btn.clicked.connect(lambda checked, tid=theme_id: self.change_theme(tid))
             self.theme_buttons[theme_id] = btn
             self.theme_button_group.addWidget(btn)
@@ -890,74 +857,9 @@ class SettingsWidget(QWidget):
         self.theme_changed.emit(theme_id)
 
     def apply_theme(self, theme):
-        if theme == "dark":
-            self.setStyleSheet("""
-                QWidget { background-color: #202020; color: #ffffff; }
-                QGroupBox {
-                    font-weight: bold;
-                    border: 2px solid #3d3d3d;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: #ffffff;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: #ffffff;
-                }
-                QLabel { color: #ffffff; }
-                QPushButton {
-                    background-color: #333333;
-                    border: 1px solid #444444;
-                    color: #ffffff;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-size: 14px;
-                }
-                QPushButton:hover { background-color: #404040; border-color: #0078d4; }
-                QPushButton:checked {
-                    background-color: #003366;
-                    border-left: 3px solid #0078d4;
-                    color: #0078d4;
-                    font-weight: bold;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QWidget { background-color: #fafafa; color: #000000; }
-                QGroupBox {
-                    font-weight: bold;
-                    border: 2px solid #e0e0e0;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: #000000;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: #000000;
-                }
-                QLabel { color: #000000; }
-                QPushButton {
-                    background-color: white;
-                    border: 1px solid #e0e0e0;
-                    color: #333333;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-size: 14px;
-                }
-                QPushButton:hover { background-color: #f5f5f5; border-color: #0078d4; }
-                QPushButton:checked {
-                    background-color: #e6f2ff;
-                    border-left: 3px solid #0078d4;
-                    color: #0078d4;
-                    font-weight: bold;
-                }
-            """)
+        # FluentWidgets 的 setTheme 已自动刷新所有组件颜色，
+        # 设置页本身不需要再手写 QSS。
+        pass
 
 
 # ============================================================

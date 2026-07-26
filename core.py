@@ -20,11 +20,15 @@ import asyncio
 import threading
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox,
-    QLineEdit, QSpinBox, QRadioButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
+    QSpinBox, QRadioButton,
 )
 from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QFont
+
+from qfluentwidgets import (
+    PushButton, PrimaryPushButton, ComboBox, LineEdit, TextEdit, Dialog, MessageBox,
+)
 
 import serial
 import serial.tools.list_ports
@@ -533,34 +537,12 @@ class CalibrationDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
 
-        cancel_btn = QPushButton("取消")
+        cancel_btn = PushButton("取消")
         cancel_btn.clicked.connect(self.reject)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                color: #333;
-                border: 1px solid #ccc;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #e0e0e0; }
-        """)
         button_layout.addWidget(cancel_btn)
 
-        ok_btn = QPushButton("确定")
+        ok_btn = PrimaryPushButton("确定")
         ok_btn.clicked.connect(self.accept)
-        ok_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #106ebe; }
-            QPushButton:pressed { background-color: #005a9e; }
-        """)
         button_layout.addWidget(ok_btn)
 
         layout.addLayout(button_layout)
@@ -592,7 +574,8 @@ class CalibrationDialog(QDialog):
             ph_label = QLabel("pH 值:")
             group_layout.addWidget(ph_label)
 
-            ph_input = QLineEdit(str(default_points[i][0]) if i < len(default_points) else "7.00")
+            ph_input = LineEdit()
+            ph_input.setText(str(default_points[i][0]) if i < len(default_points) else "7.00")
             ph_input.setFixedWidth(80)
             ph_input.setAlignment(Qt.AlignmentFlag.AlignRight)
             group_layout.addWidget(ph_input)
@@ -602,7 +585,8 @@ class CalibrationDialog(QDialog):
             adc_label = QLabel("ADC/电压:")
             group_layout.addWidget(adc_label)
 
-            adc_input = QLineEdit(str(default_points[i][1]) if i < len(default_points) else "2281")
+            adc_input = LineEdit()
+            adc_input.setText(str(default_points[i][1]) if i < len(default_points) else "2281")
             adc_input.setFixedWidth(80)
             adc_input.setAlignment(Qt.AlignmentFlag.AlignRight)
             group_layout.addWidget(adc_input)
@@ -721,34 +705,12 @@ class SampleRateDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
 
-        cancel_btn = QPushButton("取消")
+        cancel_btn = PushButton("取消")
         cancel_btn.clicked.connect(self.reject)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                color: #333;
-                border: 1px solid #ccc;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #e0e0e0; }
-        """)
         button_layout.addWidget(cancel_btn)
 
-        ok_btn = QPushButton("确定")
+        ok_btn = PrimaryPushButton("确定")
         ok_btn.clicked.connect(self.accept)
-        ok_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #106ebe; }
-            QPushButton:pressed { background-color: #005a9e; }
-        """)
         button_layout.addWidget(ok_btn)
 
         layout.addLayout(button_layout)

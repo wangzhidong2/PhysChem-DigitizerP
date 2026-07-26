@@ -13,12 +13,13 @@ import os
 import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QMessageBox,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -139,11 +140,10 @@ class ForceSensorWidget(QWidget):
         conn_layout = QHBoxLayout()
 
         conn_layout.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.setStyleSheet(modern_combo_style())
+        self.mode_combo = ComboBox()
         self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
         if not BLE_AVAILABLE:
-            self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
+            self.mode_combo.setItemEnabled(1, False)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         conn_layout.addWidget(self.mode_combo)
@@ -154,12 +154,11 @@ class ForceSensorWidget(QWidget):
         serial_layout.setContentsMargins(0, 0, 0, 0)
 
         serial_layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ComboBox()
         self.refresh_ports()
         serial_layout.addWidget(self.port_combo)
 
-        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn = PushButton("刷新")
         self.refresh_btn.clicked.connect(self.refresh_ports)
         serial_layout.addWidget(self.refresh_btn)
 
@@ -168,11 +167,10 @@ class ForceSensorWidget(QWidget):
         ble_layout = QHBoxLayout(self.ble_panel)
         ble_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.ble_device_combo = QComboBox()
-        self.ble_device_combo.setStyleSheet(modern_combo_style())
+        self.ble_device_combo = ComboBox()
         ble_layout.addWidget(self.ble_device_combo)
 
-        self.ble_scan_btn = QPushButton("扫描BLE")
+        self.ble_scan_btn = PushButton("扫描BLE")
         self.ble_scan_btn.clicked.connect(self.scan_ble)
         if not BLE_AVAILABLE:
             self.ble_scan_btn.setEnabled(False)
@@ -184,11 +182,11 @@ class ForceSensorWidget(QWidget):
 
         conn_layout.addStretch()
 
-        self.connect_btn = QPushButton("连接")
+        self.connect_btn = PrimaryPushButton("连接")
         self.connect_btn.clicked.connect(self.connect_device)
         conn_layout.addWidget(self.connect_btn)
 
-        self.disconnect_btn = QPushButton("断开")
+        self.disconnect_btn = PushButton("断开")
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
         conn_layout.addWidget(self.disconnect_btn)
@@ -202,24 +200,10 @@ class ForceSensorWidget(QWidget):
         conn_layout.addWidget(self.sample_rate_label)
 
         # 采样频率设置按钮
-        sample_settings_btn = QPushButton("⚙️")
+        sample_settings_btn = PushButton("⚙️")
         sample_settings_btn.setFixedWidth(40)
         sample_settings_btn.setToolTip("设置采样频率")
         sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
         conn_layout.addWidget(sample_settings_btn)
 
         conn_group.setLayout(conn_layout)
@@ -237,30 +221,15 @@ class ForceSensorWidget(QWidget):
 
         cal_btn_layout = QHBoxLayout()
 
-        self.tare_btn = QPushButton("去皮（TARE）")
+        self.tare_btn = PrimaryPushButton("去皮（TARE）")
         self.tare_btn.clicked.connect(self.send_tare)
         self.tare_btn.setEnabled(False)
-        self.tare_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4; color: white;
-                border: none; padding: 8px 16px; border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #106ebe; }
-            QPushButton:pressed { background-color: #005a9e; }
-        """)
         cal_btn_layout.addWidget(self.tare_btn)
 
-        self.calibrate_btn = QPushButton("校准（CALIBRATE）")
+        self.calibrate_btn = PushButton("校准（CALIBRATE）")
         self.calibrate_btn.clicked.connect(self.start_calibration)
         self.calibrate_btn.setEnabled(False)
-        self.calibrate_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #fd7e14; color: white;
-                border: none; padding: 8px 16px; border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #e06b00; }
-            QPushButton:pressed { background-color: #c55a00; }
-        """)
+        self.calibrate_btn.setStyleSheet("background-color: #fd7e14; color: white;")
         cal_btn_layout.addWidget(self.calibrate_btn)
 
         cal_btn_layout.addStretch()
@@ -268,18 +237,11 @@ class ForceSensorWidget(QWidget):
 
         unit_layout = QHBoxLayout()
         unit_layout.addWidget(QLabel("显示单位:"))
-        self.unit_combo = QComboBox()
-        self.unit_combo.setStyleSheet(modern_combo_style())
+        self.unit_combo = ComboBox()
         self.unit_combo.addItems(["克 (g)", "千克 (kg)", "牛顿 (N)"])
         unit_map = {"g": 0, "kg": 1, "N": 2}
         self.unit_combo.setCurrentIndex(unit_map.get(self.current_unit, 0))
         self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
-        self.unit_combo.setStyleSheet("""
-            QComboBox {
-                padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px;
-                min-width: 120px;
-            }
-        """)
         unit_layout.addWidget(self.unit_combo)
 
         unit_layout.addWidget(QLabel("  g = 9.8 m/s²"))
@@ -312,7 +274,7 @@ class ForceSensorWidget(QWidget):
         self.stats_label = QLabel("统计信息: 暂无数据")
         text_layout.addWidget(self.stats_label)
 
-        self.data_text = QTextEdit()
+        self.data_text = TextEdit()
         self.data_text.setMaximumHeight(120)
         text_layout.addWidget(QLabel("数据记录:"))
         text_layout.addWidget(self.data_text)
@@ -330,22 +292,22 @@ class ForceSensorWidget(QWidget):
         # 控制按钮
         button_layout = QHBoxLayout()
 
-        self.start_btn = QPushButton("开始采集")
+        self.start_btn = PrimaryPushButton("开始采集")
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
         button_layout.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn = PushButton("停止采集")
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
         button_layout.addWidget(self.stop_btn)
 
-        self.save_btn = QPushButton("保存数据")
+        self.save_btn = PushButton("保存数据")
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
         button_layout.addWidget(self.save_btn)
 
-        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn = PushButton("清除数据")
         self.clear_btn.clicked.connect(self.clear_data)
         button_layout.addWidget(self.clear_btn)
 
@@ -540,13 +502,7 @@ class ForceSensorWidget(QWidget):
         if self.cal_step == 0:
             self.cal_step = 1
             self.calibrate_btn.setText("1. 请空载，点击记录零点")
-            self.calibrate_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #dc3545; color: white;
-                    border: none; padding: 8px 16px; border-radius: 4px;
-                }
-                QPushButton:hover { background-color: #c82333; }
-            """)
+            self.calibrate_btn.setStyleSheet("background-color: #dc3545; color: white;")
         elif self.cal_step == 1:
             if len(self.raw_data) > 0:
                 self.cal_raw_before = self.raw_data[-1]
@@ -562,13 +518,7 @@ class ForceSensorWidget(QWidget):
             else:
                 self.cal_step = 0
                 self.calibrate_btn.setText("校准（CALIBRATE）")
-                self.calibrate_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #fd7e14; color: white;
-                        border: none; padding: 8px 16px; border-radius: 4px;
-                    }
-                    QPushButton:hover { background-color: #e06b00; }
-                """)
+                self.calibrate_btn.setStyleSheet("background-color: #fd7e14; color: white;")
         elif self.cal_step == 2:
             if len(self.raw_data) > 0:
                 self.cal_raw_after = self.raw_data[-1]
@@ -593,13 +543,7 @@ class ForceSensorWidget(QWidget):
 
             self.cal_step = 0
             self.calibrate_btn.setText("校准（CALIBRATE）")
-            self.calibrate_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #fd7e14; color: white;
-                    border: none; padding: 8px 16px; border-radius: 4px;
-                }
-                QPushButton:hover { background-color: #e06b00; }
-            """)
+            self.calibrate_btn.setStyleSheet("background-color: #fd7e14; color: white;")
 
     def start_collection(self):
         self.force_data.clear()
