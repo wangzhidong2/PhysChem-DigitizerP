@@ -40,6 +40,53 @@ from core import card_style, primary_btn_style, accent_btn_style
 
 
 # ============================================================
+# 模块图标工具
+# ============================================================
+def make_text_icon(text: str, size: int = 64) -> QIcon:
+    """把识别区里的文字（如 V/F/x/pH/v/A）画成方形 QIcon。
+
+    传感器模块识别区写的是文字图标（# icon: V），
+    FluentIcon 枚举里没有对应"电压/电流/pH/力/超声波"的图标，
+    所以直接用文字渲染成图标，保留模块化设计。
+
+    Args:
+        text: 图标文字（1-3 个字符，如 "V"、"pH"）
+        size: 画布像素尺寸（实际显示时按比例缩放）
+
+    Returns:
+        QIcon: 带 theme（Normal/Active/Selected）的文字图标
+    """
+    icon = QIcon()
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.TextAntialiasing)
+
+    # 字体大小按文字长度自适应（pH 要小一点，单字符大一点）
+    font = QFont("Microsoft YaHei", int(size * 0.45) if len(text) <= 1 else int(size * 0.32))
+    font.setBold(True)
+    p.setFont(font)
+
+    # 三种状态：Normal(深色文字)/Active(强调色)/Selected(白色，选中时背景已是 accent)
+    for mode, color in (
+        (QIcon.Normal, QColor("#1a1a1a")),
+        (QIcon.Active, QColor("#005fb8")),
+        (QIcon.Selected, QColor("#ffffff")),
+    ):
+        p.setCompositionMode(QPainter.CompositionMode_Clear)
+        p.eraseRect(0, 0, size, size)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        p.setPen(color)
+        p.drawText(QRect(0, 0, size, size), Qt.AlignCenter, text)
+        icon.addPixmap(pix, mode, QIcon.Off)
+        icon.addPixmap(pix, mode, QIcon.On)
+
+    p.end()
+    return icon
+
+
+# ============================================================
 # 模块元数据解析
 # ============================================================
 META_PATTERN = re.compile(
@@ -906,8 +953,9 @@ class MainWindow(FluentWindow):
         self.modules["主页"] = home_page
         self.module_widgets.append(home_page)
 
-        # 各传感器模块（按发现顺序加载）—— 用 FluentIcon.PLAY 统一占位
-        # TODO: 后续可为每个传感器定制图标
+        # 各传感器模块（按发现顺序加载）
+        # 图标：用识别区里的文字（V/F/x/pH/v/A）渲染成 QIcon，
+        #       而不是 FluentIcon.PLAY（那个是三角形播放图标，不适合传感器）
         home_modules = []  # [(icon, name, category), ...] 给主页用
 
         for info in discovered:
@@ -922,7 +970,9 @@ class MainWindow(FluentWindow):
             # 用模块名作为唯一标识（去掉空格等特殊字符）
             obj_name = "module_" + info['name'].replace(" ", "_").replace("（", "_").replace("）", "_")
             widget.setObjectName(obj_name)
-            self.addSubInterface(widget, FIF.PLAY, info['name'])
+            # 把识别区文字图标（V/F/x/pH/v/A）画成 QIcon
+            text_icon = make_text_icon(info.get('icon', '?'))
+            self.addSubInterface(widget, text_icon, info['name'])
             self.modules[info['name']] = widget
             self.module_widgets.append(widget)
 
