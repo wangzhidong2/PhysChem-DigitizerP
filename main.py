@@ -42,7 +42,7 @@ from core import card_style, primary_btn_style, accent_btn_style
 # ============================================================
 # 模块图标工具
 # ============================================================
-def make_text_icon(text: str, size: int = 64) -> QIcon:
+def make_text_icon(text: str, size: int = 128) -> QIcon:
     """把识别区里的文字（如 V/F/x/pH/v/A）画成方形 QIcon。
 
     传感器模块识别区写的是文字图标（# icon: V），
@@ -63,9 +63,20 @@ def make_text_icon(text: str, size: int = 64) -> QIcon:
     p.setRenderHint(QPainter.Antialiasing)
     p.setRenderHint(QPainter.TextAntialiasing)
 
-    # 字体大小按文字长度自适应（pH 要小一点，单字符大一点）
-    font = QFont("Microsoft YaHei", int(size * 0.45) if len(text) <= 1 else int(size * 0.32))
+    # 字号自适应：从大字号起用 QFontMetrics 测量，缩到刚好填满画布（留 8% 边距）。
+    # 这样 "V"、"pH"、"x" 都能最大化显示，不会因固定比例而偏小。
+    # 之前用 0.55/0.40 固定比例，单字符偏小、多字符更小，实测不够大。
+    font = QFont("Microsoft YaHei", int(size * 0.9))
     font.setBold(True)
+    margin = int(size * 0.08)  # 上下左右各留 8% 边距
+    target = QSize(size - margin * 2, size - margin * 2)
+    fm = QFontMetrics(font)
+    while font.pointSize() > 4:
+        br = fm.boundingRect(text)
+        if br.width() <= target.width() and br.height() <= target.height():
+            break
+        font.setPointSize(font.pointSize() - 2)
+        fm = QFontMetrics(font)
     p.setFont(font)
 
     # 三种状态：Normal(深色文字)/Active(强调色)/Selected(白色，选中时背景已是 accent)
