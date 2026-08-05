@@ -21,7 +21,7 @@ import importlib.util
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QStackedWidget, QScrollArea, QGroupBox,
+    QPushButton, QFrame, QStackedWidget, QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics
@@ -32,7 +32,7 @@ from qfluentwidgets import (
     FluentWindow, FluentIcon as FIF, NavigationItemPosition,
     Theme, setTheme, setThemeColor, PushButton, PrimaryPushButton,
     ComboBox, InfoBar, InfoBarPosition, CardWidget, BodyLabel,
-    TitleLabel, SubtitleLabel, CaptionLabel, RadioButton,
+    TitleLabel, SubtitleLabel, CaptionLabel,
 )
 
 # 公共模块（与各传感器模块共享）
@@ -847,76 +847,36 @@ class SidebarWidget(QWidget):
 
 
 # ============================================================
-# 设置
+# 设置（功能开发中，占位页面）
 # ============================================================
-class SettingsWidget(QWidget):
-    """设置界面组件"""
+class SettingsPlaceholderWidget(QWidget):
+    """设置页占位组件 —— 功能正在开发中。
 
-    theme_changed = Signal(str)
+    侧边栏底部保留"设置"图标（FIF.SETTING）以便未来接入，
+    但内容区只显示"功能正在开发中"提示。
+    """
 
     def __init__(self):
         super().__init__()
-        self.current_theme = "light"
-        self.init_ui()
-
-    def init_ui(self):
         layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(20)
+        layout.setContentsMargins(40, 32, 40, 32)
+        layout.setSpacing(16)
 
         title = QLabel("设置")
-        title.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
+        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
+        title.setObjectName("settings_title")
         layout.addWidget(title)
 
-        appearance_group = QGroupBox("外观")
-        appearance_layout = QVBoxLayout()
-        appearance_layout.setSpacing(15)
-
-        theme_label = QLabel("应用主题")
-        theme_label.setFont(QFont("Microsoft YaHei", 12, QFont.Weight.Bold))
-        appearance_layout.addWidget(theme_label)
-
-        theme_desc = QLabel("选择要显示的应用主题")
-        theme_desc.setStyleSheet("color: #666; font-size: 11px;")
-        appearance_layout.addWidget(theme_desc)
-
-        self.theme_button_group = QVBoxLayout()
-        self.theme_button_group.setSpacing(8)
-
-        self.theme_buttons = {}
-        themes = [
-            ("system", "使用系统设置"),
-            ("light", "浅色"),
-            ("dark", "深色"),
-        ]
-
-        for theme_id, theme_name in themes:
-            # RadioButton 是 Fluent 风格的单选按钮，符合 WinUI3 设置页风格
-            btn = RadioButton(theme_name)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setMinimumHeight(32)
-            btn.clicked.connect(lambda checked, tid=theme_id: self.change_theme(tid))
-            self.theme_buttons[theme_id] = btn
-            self.theme_button_group.addWidget(btn)
-
-        appearance_layout.addLayout(self.theme_button_group)
-        appearance_group.setLayout(appearance_layout)
-        layout.addWidget(appearance_group)
+        placeholder = QLabel("功能正在开发中")
+        placeholder.setFont(QFont("Microsoft YaHei", 14))
+        placeholder.setStyleSheet("color: #888888;")
+        layout.addWidget(placeholder)
 
         layout.addStretch()
         self.setLayout(layout)
-        self.theme_buttons["light"].setChecked(True)
-
-    def change_theme(self, theme_id):
-        for btn in self.theme_buttons.values():
-            btn.setChecked(False)
-        self.theme_buttons[theme_id].setChecked(True)
-        self.current_theme = theme_id
-        self.theme_changed.emit(theme_id)
 
     def apply_theme(self, theme):
-        # FluentWidgets 的 setTheme 已自动刷新所有组件颜色，
-        # 设置页本身不需要再手写 QSS。
+        # 占位页面，暂无主题相关样式需要刷新
         pass
 
 
@@ -990,8 +950,8 @@ class MainWindow(FluentWindow):
             home_modules.append((info['icon'], info['name'], info['category']))
 
         # 设置（始终在最后）—— 用 FluentIcon.SETTING 注册到导航底部
-        settings_widget = SettingsWidget()
-        settings_widget.theme_changed.connect(self.change_app_theme)
+        # 内容暂为占位页，侧边栏图标保留以便未来接入完整设置
+        settings_widget = SettingsPlaceholderWidget()
         settings_widget.setObjectName("settings_page")
         self.addSubInterface(
             settings_widget, FIF.SETTING, "设置",
