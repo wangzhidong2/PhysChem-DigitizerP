@@ -362,7 +362,6 @@ class HomePageWidget(QWidget):
             ("GPL-3.0 开源", "#e8f5e9", "#2e7d32"),
             ("教学实验", "#f3e5f5", "#7b1fa2"),
             ("模块化架构", "#e3f2fd", "#1565c0"),
-            ("3 平台镜像", "#fff3e0", "#ef6c00"),
         ]
         for text, bg, fg in tags:
             tag = QLabel(text)
