@@ -20,14 +20,15 @@ import sys
 import os
 import re
 import glob
+import webbrowser
 import importlib.util
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QStackedWidget, QScrollArea,
+    QPushButton, QFrame, QStackedWidget, QScrollArea, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics, QGuiApplication
 
 # FluentWidgets — WinUI3 风格组件库（社区版，GPLv3 + 商业双协议）
 # 文档：https://qfluentwidgets.com/
@@ -322,7 +323,7 @@ class HomePageWidget(QWidget):
         app_name.setStyleSheet("color: #1a1a1a;")
         info_layout.addWidget(app_name)
 
-        version_label = QLabel("版本 1.3.0 | MIT 开源协议 | 模块化架构")
+        version_label = QLabel("版本 1.3.0 | GPL-3.0 开源协议 | 模块化架构")
         version_label.setFont(QFont("Microsoft YaHei", 10))
         version_label.setStyleSheet("color: #666666;")
         info_layout.addWidget(version_label)
@@ -330,11 +331,23 @@ class HomePageWidget(QWidget):
         top_layout.addLayout(info_layout)
         top_layout.addStretch()
 
-        github_btn = PrimaryPushButton("  GitHub")
-        github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        github_btn.setFixedHeight(36)
-        github_btn.clicked.connect(self.open_github)
-        top_layout.addWidget(github_btn)
+        # 三个仓库入口按钮（GitHub / Gitee / GitCode）
+        repo_btn_row = QHBoxLayout()
+        repo_btn_row.setSpacing(8)
+        for label, url in [
+            ("GitHub", "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
+            ("Gitee",  "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
+            ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"),
+        ]:
+            btn = PushButton(label)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(34)
+            btn.setMinimumWidth(80)
+            btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
+            repo_btn_row.addWidget(btn)
+        repo_btn_wrap = QWidget()
+        repo_btn_wrap.setLayout(repo_btn_row)
+        top_layout.addWidget(repo_btn_wrap)
 
         card1_layout.addWidget(top_row)
 
@@ -355,9 +368,10 @@ class HomePageWidget(QWidget):
         tags_layout = QHBoxLayout()
         tags_layout.setSpacing(8)
         tags = [
-            ("MIT 开源", "#e8f5e9", "#2e7d32"),
+            ("GPL-3.0 开源", "#e8f5e9", "#2e7d32"),
             ("教学实验", "#f3e5f5", "#7b1fa2"),
             ("模块化架构", "#e3f2fd", "#1565c0"),
+            ("3 平台镜像", "#fff3e0", "#ef6c00"),
         ]
         for text, bg, fg in tags:
             tag = QLabel(text)
@@ -373,6 +387,74 @@ class HomePageWidget(QWidget):
         card1_layout.addLayout(tags_layout)
 
         self.content_layout.addWidget(card1)
+
+        # ========== 卡片2：项目地址（3 平台，可复制可访问） ==========
+        card_repo = QWidget()
+        card_repo.setObjectName("card")
+        card_repo.setStyleSheet(self.CARD_STYLE)
+        repo_card_layout = QVBoxLayout(card_repo)
+        repo_card_layout.setContentsMargins(20, 16, 20, 16)
+        repo_card_layout.setSpacing(10)
+
+        repo_title = QLabel("项目地址")
+        repo_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        repo_title.setStyleSheet("color: #1a1a1a;")
+        repo_card_layout.addWidget(repo_title)
+
+        repo_hint = QLabel("点击 URL 文本可全选复制，点「访问」用浏览器打开，点「复制」拷到剪贴板。")
+        repo_hint.setFont(QFont("Microsoft YaHei", 9))
+        repo_hint.setStyleSheet("color: #888888;")
+        repo_hint.setWordWrap(True)
+        repo_card_layout.addWidget(repo_hint)
+
+        # 3 个平台 URL 行
+        repo_urls = [
+            ("GitHub",  "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
+            ("Gitee",   "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
+            ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"),
+        ]
+        for name, url in repo_urls:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+
+            name_lbl = QLabel(name)
+            name_lbl.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+            name_lbl.setStyleSheet("color: #0078d4;")
+            name_lbl.setFixedWidth(60)
+            row.addWidget(name_lbl)
+
+            url_edit = QLineEdit(url)
+            url_edit.setReadOnly(True)
+            url_edit.setFont(QFont("Consolas", 10))
+            url_edit.setStyleSheet("""
+                QLineEdit {
+                    background-color: #f7f7f7;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    color: #333333;
+                }
+                QLineEdit:focus { border: 1px solid #0078d4; }
+            """)
+            url_edit.setCursor(Qt.CursorShape.IBeam)
+            url_edit.setToolTip("点击全选，Ctrl+C 复制")
+            row.addWidget(url_edit, stretch=1)
+
+            copy_btn = PushButton("复制")
+            copy_btn.setFixedHeight(30)
+            copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            copy_btn.clicked.connect(lambda _=False, u=url: self._copy_to_clipboard(u))
+            row.addWidget(copy_btn)
+
+            open_btn = PushButton("访问")
+            open_btn.setFixedHeight(30)
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            open_btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
+            row.addWidget(open_btn)
+
+            repo_card_layout.addLayout(row)
+
+        self.content_layout.addWidget(card_repo)
 
         # 模块卡片容器（动态填充）
         self.modules_container = QWidget()
@@ -499,8 +581,25 @@ class HomePageWidget(QWidget):
         return btn
 
     def open_github(self):
-        import webbrowser
         webbrowser.open("https://github.com/wangzhidong2/PhysChem-DigitizerP")
+
+    def _copy_to_clipboard(self, text: str):
+        """把文本拷到系统剪贴板，并在状态栏给一个轻提示。"""
+        clip = QGuiApplication.clipboard()
+        if clip:
+            clip.setText(text)
+        try:
+            InfoBar.success(
+                title="已复制",
+                content=text,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.BOTTOM_RIGHT,
+                duration=1500,
+                parent=self,
+            )
+        except Exception:
+            pass
 
     def on_module_clicked(self, module_name):
         self.module_clicked.emit(module_name)
