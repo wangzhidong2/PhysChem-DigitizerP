@@ -24,13 +24,14 @@ import threading
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
-    QSpinBox, QRadioButton,
+    QRadioButton,
 )
 from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QFont
 
 from qfluentwidgets import (
-    PushButton, PrimaryPushButton, ComboBox, LineEdit, TextEdit, Dialog, MessageBox,
+    PushButton, PrimaryPushButton, ComboBox, EditableComboBox,
+    LineEdit, TextEdit, Dialog, MessageBox,
 )
 
 import serial
@@ -624,86 +625,70 @@ class CalibrationDialog(QDialog):
 
 
 class SampleRateDialog(QDialog):
-    """采样频率设置对话框"""
+    """采样频率设置对话框
+
+    使用 EditableComboBox：既可从预设频率下拉选择，也可直接输入自定义频率值。
+    输入格式：纯数字（视为 Hz）或带 "Hz"/"hz" 后缀，范围 0.1~10 Hz，
+    对应采样间隔 100~10000 ms（下位机最大输出频率为 10 Hz）。
+    """
+
+    # 预设频率：(interval_ms, 显示文本, 说明)
+    PRESETS = [
+        (100,  "10 Hz",   "全速接收（下位机最大频率），适合大多数实验"),
+        (200,  "5 Hz",    "中速采样，适合一般变化信号"),
+        (500,  "2 Hz",    "低速采样，适合缓慢变化的信号"),
+        (1000, "1 Hz",    "超低速采样，长时间监测"),
+        (2000, "0.5 Hz",  "极低速采样，每2秒一个点"),
+        (5000, "0.2 Hz",  "最低速采样，每5秒一个点"),
+    ]
+
+    # 允许的频率范围（Hz）：下位机最大 10 Hz，最低 0.1 Hz（10000ms）
+    FREQ_MIN = 0.1
+    FREQ_MAX = 10.0
 
     def __init__(self, current_interval_ms, parent=None):
         super().__init__(parent)
         self.current_interval_ms = current_interval_ms
+        self._interval_ms = current_interval_ms  # 当前选中/输入对应的间隔
         self.init_ui()
 
     def init_ui(self):
         self.setWindowTitle("设置采样频率")
         self.setModal(True)
-        self.setFixedSize(400, 260)
+        self.setFixedSize(420, 280)
 
         layout = QVBoxLayout()
+        layout.setSpacing(12)
 
         info_label = QLabel(
-            "请选择数据采集的采样频率：\n"
-            "下位机最大输出频率为 10Hz，设定高于此值将接收全部数据。\n"
+            "请选择或输入数据采集的采样频率：\n"
+            "下位机最大输出频率为 10 Hz，设定高于此值将接收全部数据。\n"
             "频率越低，数据点越稀疏，适合长时间监测。"
         )
-        info_label.setStyleSheet("color: #666; padding: 10px;")
+        info_label.setStyleSheet("color: #666; padding: 4px;")
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
 
-        preset_group = QGroupBox("预设频率")
-        preset_layout = QVBoxLayout()
+        # 可编辑下拉框：预设项 + 自由输入
+        self.combo = EditableComboBox()
+        self.combo.setPlaceholderText("选择预设频率，或直接输入 Hz 值（如 3 或 0.5Hz）")
+        for interval_ms, label, _ in self.PRESETS:
+            self.combo.addItem(label, userData=interval_ms)
 
-        self.preset_buttons = []
-        presets = [
-            (100, "10 Hz", "全速接收（下位机最大频率），适合大多数实验"),
-            (200, "5 Hz", "中速采样，适合一般变化信号"),
-            (500, "2 Hz", "低速采样，适合缓慢变化的信号"),
-            (1000, "1 Hz", "超低速采样，长时间监测"),
-            (2000, "0.5 Hz", "极低速采样，每2秒一个点"),
-            (5000, "0.2 Hz", "最低速采样，每5秒一个点")
-        ]
+        # 当前值回填：优先匹配预设，否则显示换算后的 Hz 文本
+        current_text = self._interval_to_text(self.current_interval_ms)
+        self.combo.setCurrentText(current_text)
+        self.combo.currentTextChanged.connect(self._on_text_changed)
+        self.combo.setFixedHeight(34)
+        layout.addWidget(self.combo)
 
-        for interval_ms, label, desc in presets:
-            rb_layout = QHBoxLayout()
-            rb = QRadioButton(f"{label}")
-            rb.setProperty("interval", interval_ms)
-            rb.setToolTip(desc)
+        # 实时反馈：显示当前频率 ↔ 采样间隔，以及合法性提示
+        self.feedback_label = QLabel()
+        self.feedback_label.setWordWrap(True)
+        self.feedback_label.setStyleSheet("padding: 4px;")
+        layout.addWidget(self.feedback_label)
 
-            if interval_ms == self.current_interval_ms:
-                rb.setChecked(True)
-
-            rb_layout.addWidget(rb)
-            rb_layout.addWidget(QLabel(f"({desc})"))
-            rb_layout.addStretch()
-            preset_layout.addLayout(rb_layout)
-
-            self.preset_buttons.append(rb)
-
-        preset_group.setLayout(preset_layout)
-        layout.addWidget(preset_group)
-
-        custom_group = QGroupBox("自定义频率")
-        custom_layout = QHBoxLayout()
-
-        custom_layout.addWidget(QLabel("采样间隔:"))
-        self.custom_input = QSpinBox()
-        self.custom_input.setRange(100, 10000)
-        self.custom_input.setValue(self.current_interval_ms)
-        self.custom_input.setSuffix(" ms")
-        self.custom_input.setFixedWidth(120)
-        custom_layout.addWidget(self.custom_input)
-
-        custom_layout.addWidget(QLabel("(对应 "))
-        self.custom_freq_label = QLabel(f"{1000//self.current_interval_ms} Hz")
-        self.custom_freq_label.setStyleSheet("font-weight: bold; color: #0078d4;")
-        custom_layout.addWidget(self.custom_freq_label)
-        custom_layout.addWidget(QLabel(")"))
-
-        custom_layout.addStretch()
-        custom_group.setLayout(custom_layout)
-        layout.addWidget(custom_group)
-
-        for rb in self.preset_buttons:
-            rb.toggled.connect(self.on_preset_changed)
-
-        self.custom_input.valueChanged.connect(self.on_custom_changed)
+        layout.addStretch()
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -713,21 +698,67 @@ class SampleRateDialog(QDialog):
         button_layout.addWidget(cancel_btn)
 
         ok_btn = PrimaryPushButton("确定")
-        ok_btn.clicked.connect(self.accept)
+        ok_btn.clicked.connect(self._on_accept)
         button_layout.addWidget(ok_btn)
 
         layout.addLayout(button_layout)
         self.setLayout(layout)
 
-    def on_preset_changed(self, checked):
-        if checked:
-            rb = self.sender()
-            interval = rb.property("interval")
-            self.custom_input.setValue(interval)
+        self._on_text_changed(self.combo.currentText())
 
-    def on_custom_changed(self, value):
-        freq = 1000 // value
-        self.custom_freq_label.setText(f"{freq} Hz")
+    # ---------- 解析与反馈 ----------
+    def _interval_to_text(self, interval_ms):
+        """采样间隔 → 显示文本（优先匹配预设项，否则换算 Hz）"""
+        for iv, label, _ in self.PRESETS:
+            if iv == interval_ms:
+                return label
+        freq = 1000.0 / interval_ms
+        return f"{freq:g} Hz"
+
+    def _parse_freq(self, text):
+        """解析输入文本为频率（Hz）。失败返回 None。
+
+        接受格式：'10'、'10Hz'、'10 Hz'、'0.5hz' 等
+        """
+        s = text.strip().lower().replace("hz", "").strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    def _on_text_changed(self, text):
+        freq = self._parse_freq(text)
+        if freq is None or freq <= 0:
+            self._interval_ms = None
+            self.feedback_label.setText(
+                '<span style="color:#c0392b;">⚠ 无法识别，请输入数字频率（Hz），如 10、2、0.5</span>'
+            )
+            return
+
+        # 超出范围时仍换算显示，但标红提示
+        interval_ms = round(1000.0 / freq)
+        self._interval_ms = interval_ms
+
+        in_range = self.FREQ_MIN <= freq <= self.FREQ_MAX
+        color = "#0078d4" if in_range else "#c0392b"
+        warn = "" if in_range else "  （超出 0.1~10 Hz 范围，将被限制）"
+        self.feedback_label.setText(
+            f'<span style="color:#444;">当前：'
+            f'<b style="color:{color};">{freq:g} Hz</b> '
+            f'（采样间隔 {interval_ms} ms）{warn}</span>'
+        )
+
+    def _on_accept(self):
+        # 输入非法时不允许确定
+        if self._interval_ms is None:
+            return
+        # 限制到允许范围
+        interval = max(100, min(10000, self._interval_ms))
+        self._interval_ms = interval
+        self.accept()
 
     def get_sample_interval(self):
-        return self.custom_input.value()
+        """返回当前采样间隔（ms）。"""
+        return self._interval_ms if self._interval_ms is not None else self.current_interval_ms
