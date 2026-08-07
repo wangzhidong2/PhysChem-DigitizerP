@@ -313,11 +313,6 @@ class HomePageWidget(QWidget):
         app_name.setStyleSheet("color: #1a1a1a;")
         info_layout.addWidget(app_name)
 
-        version_label = QLabel("版本 1.3.0  ·  GPL-3.0 开源协议  ·  模块化架构")
-        version_label.setFont(QFont("Microsoft YaHei", 10))
-        version_label.setStyleSheet("color: #888888;")
-        info_layout.addWidget(version_label)
-
         header_row.addLayout(info_layout)
         header_row.addStretch()
 
