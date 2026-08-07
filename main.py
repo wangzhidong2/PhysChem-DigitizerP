@@ -291,80 +291,71 @@ class HomePageWidget(QWidget):
         title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
         self.content_layout.addWidget(title)
 
-        # ========== 卡片1：版本信息 + 项目简介 ==========
+        # ========== 卡片1：项目信息 ==========
         card1 = QWidget()
         card1.setObjectName("card")
         card1.setStyleSheet(self.CARD_STYLE)
         card1_layout = QVBoxLayout(card1)
-        card1_layout.setContentsMargins(20, 20, 20, 20)
-        card1_layout.setSpacing(12)
+        card1_layout.setContentsMargins(24, 22, 24, 22)
+        card1_layout.setSpacing(14)
 
-        top_row = QWidget()
-        top_layout = QHBoxLayout(top_row)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(16)
+        # 顶部：标题区（左）+ 仓库按钮（右）
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(20)
 
-        icon_label = QLabel("🔬")
-        icon_label.setFont(QFont("Segoe MDL2 Assets", 36))
-        icon_label.setFixedSize(64, 64)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet("""
-            background-color: #e8f0fe;
-            border-radius: 12px;
-            color: #0067c0;
-        """)
-        top_layout.addWidget(icon_label)
-
+        # 左：项目名 + 版本
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
+        info_layout.setSpacing(4)
 
         app_name = QLabel("PhysChem-DigitizerP")
-        app_name.setFont(QFont("Microsoft YaHei", 18, QFont.Weight.Bold))
+        app_name.setFont(QFont("Microsoft YaHei", 22, QFont.Weight.Bold))
         app_name.setStyleSheet("color: #1a1a1a;")
         info_layout.addWidget(app_name)
 
-        version_label = QLabel("版本 1.3.0 | GPL-3.0 开源协议 | 模块化架构")
+        version_label = QLabel("版本 1.3.0  ·  GPL-3.0 开源协议  ·  模块化架构")
         version_label.setFont(QFont("Microsoft YaHei", 10))
-        version_label.setStyleSheet("color: #666666;")
+        version_label.setStyleSheet("color: #888888;")
         info_layout.addWidget(version_label)
 
-        top_layout.addLayout(info_layout)
-        top_layout.addStretch()
+        header_row.addLayout(info_layout)
+        header_row.addStretch()
 
-        # 三个仓库入口按钮（GitHub / Gitee / GitCode）
-        repo_btn_row = QHBoxLayout()
-        repo_btn_row.setSpacing(8)
+        # 右：3 个仓库入口按钮（垂直排列，紧凑）
+        repo_btn_col = QVBoxLayout()
+        repo_btn_col.setSpacing(6)
         for label, url in [
-            ("GitHub", "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
-            ("Gitee",  "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
+            ("GitHub",  "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
+            ("Gitee",   "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
             ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"),
         ]:
-            btn = PushButton(label)
+            btn = PushButton(f"  {label}")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(34)
-            btn.setMinimumWidth(80)
+            btn.setFixedHeight(30)
+            btn.setMinimumWidth(110)
             btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
-            repo_btn_row.addWidget(btn)
-        repo_btn_wrap = QWidget()
-        repo_btn_wrap.setLayout(repo_btn_row)
-        top_layout.addWidget(repo_btn_wrap)
+            repo_btn_col.addWidget(btn)
+        header_row.addLayout(repo_btn_col)
 
-        card1_layout.addWidget(top_row)
+        card1_layout.addLayout(header_row)
 
+        # 分隔线
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("color: #e0e0e0;")
+        separator.setStyleSheet("color: #ebebeb;")
         card1_layout.addWidget(separator)
 
+        # 项目简介
         desc_label = QLabel(
             "基于 Arduino/ESP32 的低成本理化实验数字化采集系统，"
             "为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
         )
         desc_label.setWordWrap(True)
         desc_label.setFont(QFont("Microsoft YaHei", 11))
-        desc_label.setStyleSheet("color: #444444; line-height: 1.5;")
+        desc_label.setStyleSheet("color: #444444; line-height: 1.6;")
         card1_layout.addWidget(desc_label)
 
+        # 标签
         tags_layout = QHBoxLayout()
         tags_layout.setSpacing(8)
         tags = [
@@ -379,8 +370,8 @@ class HomePageWidget(QWidget):
             tag.setStyleSheet(f"""
                 background-color: {bg};
                 color: {fg};
-                border-radius: 4px;
-                padding: 4px 10px;
+                border-radius: 10px;
+                padding: 4px 12px;
             """)
             tags_layout.addWidget(tag)
         tags_layout.addStretch()
@@ -393,19 +384,20 @@ class HomePageWidget(QWidget):
         card_repo.setObjectName("card")
         card_repo.setStyleSheet(self.CARD_STYLE)
         repo_card_layout = QVBoxLayout(card_repo)
-        repo_card_layout.setContentsMargins(20, 16, 20, 16)
-        repo_card_layout.setSpacing(10)
+        repo_card_layout.setContentsMargins(24, 18, 24, 18)
+        repo_card_layout.setSpacing(8)
 
         repo_title = QLabel("项目地址")
         repo_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
         repo_title.setStyleSheet("color: #1a1a1a;")
         repo_card_layout.addWidget(repo_title)
 
-        repo_hint = QLabel("点击 URL 文本可全选复制，点「访问」用浏览器打开，点「复制」拷到剪贴板。")
+        repo_hint = QLabel("点击 URL 可全选复制  ·  「访问」用浏览器打开  ·  「复制」拷到剪贴板")
         repo_hint.setFont(QFont("Microsoft YaHei", 9))
-        repo_hint.setStyleSheet("color: #888888;")
-        repo_hint.setWordWrap(True)
+        repo_hint.setStyleSheet("color: #999999;")
         repo_card_layout.addWidget(repo_hint)
+
+        repo_card_layout.addSpacing(4)
 
         # 3 个平台 URL 行
         repo_urls = [
@@ -413,14 +405,14 @@ class HomePageWidget(QWidget):
             ("Gitee",   "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
             ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"),
         ]
-        for name, url in repo_urls:
+        for i, (name, url) in enumerate(repo_urls):
             row = QHBoxLayout()
             row.setSpacing(10)
 
             name_lbl = QLabel(name)
             name_lbl.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
             name_lbl.setStyleSheet("color: #0078d4;")
-            name_lbl.setFixedWidth(60)
+            name_lbl.setFixedWidth(64)
             row.addWidget(name_lbl)
 
             url_edit = QLineEdit(url)
@@ -428,13 +420,15 @@ class HomePageWidget(QWidget):
             url_edit.setFont(QFont("Consolas", 10))
             url_edit.setStyleSheet("""
                 QLineEdit {
-                    background-color: #f7f7f7;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    padding: 4px 8px;
+                    background-color: #fafafa;
+                    border: 1px solid #ececec;
+                    border-radius: 5px;
+                    padding: 5px 10px;
                     color: #333333;
+                    selection-background-color: #0078d4;
+                    selection-color: #ffffff;
                 }
-                QLineEdit:focus { border: 1px solid #0078d4; }
+                QLineEdit:focus { border: 1px solid #0078d4; background-color: #ffffff; }
             """)
             url_edit.setCursor(Qt.CursorShape.IBeam)
             url_edit.setToolTip("点击全选，Ctrl+C 复制")
@@ -442,17 +436,26 @@ class HomePageWidget(QWidget):
 
             copy_btn = PushButton("复制")
             copy_btn.setFixedHeight(30)
+            copy_btn.setFixedWidth(64)
             copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             copy_btn.clicked.connect(lambda _=False, u=url: self._copy_to_clipboard(u))
             row.addWidget(copy_btn)
 
             open_btn = PushButton("访问")
             open_btn.setFixedHeight(30)
+            open_btn.setFixedWidth(64)
             open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             open_btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
             row.addWidget(open_btn)
 
             repo_card_layout.addLayout(row)
+
+            # 行间细分隔线（最后一行不画）
+            if i < len(repo_urls) - 1:
+                line = QFrame()
+                line.setFrameShape(QFrame.Shape.HLine)
+                line.setStyleSheet("color: #f0f0f0;")
+                repo_card_layout.addWidget(line)
 
         self.content_layout.addWidget(card_repo)
 
