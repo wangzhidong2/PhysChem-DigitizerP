@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 wangzhidong2
+# SPDX-License-Identifier: GPL-3.0-only
+
 # -*- coding: utf-8 -*-
 """
 PhysChem-DigitizerP 主程序

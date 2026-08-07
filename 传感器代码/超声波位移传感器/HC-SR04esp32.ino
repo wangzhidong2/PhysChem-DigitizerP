@@ -1,3 +1,6 @@
+// Copyright (c) 2026 wangzhidong2
+// SPDX-License-Identifier: GPL-3.0-only
+
 // ESP32 驱动 HC-SR04 超声波模块 
 // 高频采集版    
 // 改进点：去掉delay阻塞，提高采样率；输出时间戳+回波时间 

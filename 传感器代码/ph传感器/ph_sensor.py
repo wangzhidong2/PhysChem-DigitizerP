@@ -1,3 +1,6 @@
+# Copyright (c) 2026 wangzhidong2
+# SPDX-License-Identifier: GPL-3.0-only
+
 # === MODULE META ===
 # icon: pH
 # name: pH传感器

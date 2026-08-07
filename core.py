@@ -1,3 +1,6 @@
+# Copyright (c) 2026 wangzhidong2
+# SPDX-License-Identifier: GPL-3.0-only
+
 # -*- coding: utf-8 -*-
 """
 core.py — PhysChem-DigitizerP 公共模块
