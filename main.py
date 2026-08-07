@@ -282,13 +282,13 @@ class HomePageWidget(QWidget):
         self.content = QWidget()
         self.content.setStyleSheet("background: #f3f3f3;")
         self.content_layout = QVBoxLayout(self.content)
-        self.content_layout.setContentsMargins(24, 20, 24, 24)
-        self.content_layout.setSpacing(16)
+        self.content_layout.setContentsMargins(24, 16, 24, 18)
+        self.content_layout.setSpacing(10)
 
         # 页面标题
         title = QLabel("主页")
         title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
-        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        title.setStyleSheet("color: #1a1a1a; margin-bottom: 2px;")
         self.content_layout.addWidget(title)
 
         # ========== 卡片1：项目信息 ==========
@@ -296,17 +296,17 @@ class HomePageWidget(QWidget):
         card1.setObjectName("card")
         card1.setStyleSheet(self.CARD_STYLE)
         card1_layout = QVBoxLayout(card1)
-        card1_layout.setContentsMargins(24, 22, 24, 22)
-        card1_layout.setSpacing(14)
+        card1_layout.setContentsMargins(24, 16, 24, 16)
+        card1_layout.setSpacing(10)
 
         # 顶部：标题区（左）+ 仓库按钮（右）
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(20)
 
-        # 左：项目名 + 版本
+        # 左：项目名
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(4)
+        info_layout.setSpacing(2)
 
         app_name = QLabel("PhysChem-DigitizerP")
         app_name.setFont(QFont("Microsoft YaHei", 22, QFont.Weight.Bold))
@@ -318,7 +318,7 @@ class HomePageWidget(QWidget):
 
         # 右：3 个仓库入口按钮（垂直排列，紧凑）
         repo_btn_col = QVBoxLayout()
-        repo_btn_col.setSpacing(6)
+        repo_btn_col.setSpacing(4)
         for label, url in [
             ("GitHub",  "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
             ("Gitee",   "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
@@ -326,7 +326,7 @@ class HomePageWidget(QWidget):
         ]:
             btn = PushButton(f"  {label}")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(30)
+            btn.setFixedHeight(26)
             btn.setMinimumWidth(110)
             btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
             repo_btn_col.addWidget(btn)
@@ -378,8 +378,8 @@ class HomePageWidget(QWidget):
         card_repo.setObjectName("card")
         card_repo.setStyleSheet(self.CARD_STYLE)
         repo_card_layout = QVBoxLayout(card_repo)
-        repo_card_layout.setContentsMargins(24, 18, 24, 18)
-        repo_card_layout.setSpacing(8)
+        repo_card_layout.setContentsMargins(24, 14, 24, 14)
+        repo_card_layout.setSpacing(6)
 
         repo_title = QLabel("项目地址")
         repo_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
@@ -391,7 +391,7 @@ class HomePageWidget(QWidget):
         repo_hint.setStyleSheet("color: #999999;")
         repo_card_layout.addWidget(repo_hint)
 
-        repo_card_layout.addSpacing(4)
+        repo_card_layout.addSpacing(2)
 
         # 3 个平台 URL 行
         repo_urls = [
@@ -429,14 +429,14 @@ class HomePageWidget(QWidget):
             row.addWidget(url_edit, stretch=1)
 
             copy_btn = PushButton("复制")
-            copy_btn.setFixedHeight(30)
+            copy_btn.setFixedHeight(26)
             copy_btn.setFixedWidth(64)
             copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             copy_btn.clicked.connect(lambda _=False, u=url: self._copy_to_clipboard(u))
             row.addWidget(copy_btn)
 
             open_btn = PushButton("访问")
-            open_btn.setFixedHeight(30)
+            open_btn.setFixedHeight(26)
             open_btn.setFixedWidth(64)
             open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             open_btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
@@ -457,7 +457,7 @@ class HomePageWidget(QWidget):
         self.modules_container = QWidget()
         self.modules_container_layout = QVBoxLayout(self.modules_container)
         self.modules_container_layout.setContentsMargins(0, 0, 0, 0)
-        self.modules_container_layout.setSpacing(16)
+        self.modules_container_layout.setSpacing(10)
         self.content_layout.addWidget(self.modules_container)
 
         self.content_layout.addStretch()
@@ -487,7 +487,7 @@ class HomePageWidget(QWidget):
         # 物理和化学并排
         if 'physics' in categories or 'chemistry' in categories:
             row_layout = QHBoxLayout()
-            row_layout.setSpacing(16)
+            row_layout.setSpacing(10)
 
             for cat_key in ['physics', 'chemistry']:
                 if cat_key not in categories:
@@ -513,7 +513,7 @@ class HomePageWidget(QWidget):
         card.setObjectName("card")
         card.setStyleSheet(self.CARD_STYLE)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(20, 20, 20, 16)
+        card_layout.setContentsMargins(18, 14, 18, 12)
         card_layout.setSpacing(0)
 
         title_label = QLabel(title)
@@ -523,7 +523,7 @@ class HomePageWidget(QWidget):
 
         subtitle_label = QLabel(subtitle)
         subtitle_label.setFont(QFont("Microsoft YaHei", 10))
-        subtitle_label.setStyleSheet("color: #666666; margin-bottom: 12px;")
+        subtitle_label.setStyleSheet("color: #666666; margin-bottom: 8px;")
         card_layout.addWidget(subtitle_label)
 
         from PySide6.QtWidgets import QGridLayout
@@ -545,12 +545,12 @@ class HomePageWidget(QWidget):
         btn = QPushButton()
         btn.setObjectName("module_item")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setFixedHeight(48)
+        btn.setFixedHeight(42)
         btn.setMaximumWidth(200)
         btn.setStyleSheet(self.CARD_HOVER_STYLE)
 
         btn_layout = QHBoxLayout(btn)
-        btn_layout.setContentsMargins(12, 6, 12, 6)
+        btn_layout.setContentsMargins(12, 4, 12, 4)
         btn_layout.setSpacing(10)
 
         icon_label = QLabel(icon_text)
