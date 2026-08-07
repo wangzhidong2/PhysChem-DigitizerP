@@ -430,7 +430,7 @@ class HomePageWidget(QWidget):
                 }
                 QLineEdit:focus { border: 1px solid #0078d4; background-color: #ffffff; }
             """)
-            url_edit.setCursor(Qt.CursorShape.IBeam)
+            url_edit.setCursor(Qt.CursorShape.IBeamCursor)
             url_edit.setToolTip("点击全选，Ctrl+C 复制")
             row.addWidget(url_edit, stretch=1)
 
