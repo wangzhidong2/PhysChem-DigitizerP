@@ -32,7 +32,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    SerialThread, SampleRateDialog, CalibrationDialog,
+    SerialThread, SampleRateComboBox, CalibrationDialog,
     load_sensor_config, save_sensor_config, _get_config_file_path,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
 )
@@ -161,18 +161,12 @@ class PhSensorWidget(QWidget):
 
         control_layout.addStretch()
 
-        # 采样频率显示
+        # 采样频率
         control_layout.addWidget(QLabel("采样:"))
-        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
-        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
-        control_layout.addWidget(self.sample_rate_label)
-
-        # 采样频率设置按钮
-        sample_settings_btn = PushButton("⚙️")
-        sample_settings_btn.setFixedWidth(40)
-        sample_settings_btn.setToolTip("设置采样频率")
-        sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        control_layout.addWidget(sample_settings_btn)
+        self.sample_rate_combo = SampleRateComboBox()
+        self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
+        self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
+        control_layout.addWidget(self.sample_rate_combo)
 
         control_layout.addStretch()
 
@@ -480,27 +474,10 @@ class PhSensorWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存失败：{e}")
 
-    def edit_sample_rate(self):
-        """编辑采样频率对话框"""
-        dialog = SampleRateDialog(self.sample_interval_ms, self)
-        if dialog.exec() == 1:  # QDialog.Accepted
-            # 获取新的采样间隔
-            new_interval_ms = dialog.get_sample_interval()
-
-            # 更新采样间隔
-            self.sample_interval_ms = new_interval_ms
-
-            # 更新显示
-            freq = 1000 // new_interval_ms
-            self.sample_rate_label.setText(f"{freq}Hz")
-
-            # 保存配置到文件
-            self.save_config()
-
-            QMessageBox.information(self, "成功",
-                                   f"采样频率已更新为 {freq} Hz！\n"
-                                   f"采样间隔：{new_interval_ms} ms\n"
-                                   f"配置已自动保存，下次启动时生效。")
+    def on_sample_interval_changed(self, interval_ms):
+        """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
+        self.sample_interval_ms = interval_ms
+        self.save_config()
 
     def clear_data(self):
         """清除数据"""

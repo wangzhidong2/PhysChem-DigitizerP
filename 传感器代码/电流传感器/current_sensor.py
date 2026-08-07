@@ -34,7 +34,7 @@ import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
     SerialThread, BLESerialThread, scan_ble_devices,
-    SampleRateDialog,
+    SampleRateComboBox,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     BLE_AVAILABLE,
@@ -267,16 +267,10 @@ class CurrentSensorWidget(QWidget):
         row2 = QHBoxLayout()
         row2.setSpacing(10)
         row2.addWidget(QLabel("采样频率:"))
-        self.sample_rate_label = QLabel(f"{1000 // self.sample_interval_ms}Hz")
-        self.sample_rate_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        self.sample_rate_label.setStyleSheet("color: #0078d4;")
-        row2.addWidget(self.sample_rate_label)
-
-        sample_settings_btn = PushButton("⚙")
-        sample_settings_btn.setFixedSize(36, 36)
-        sample_settings_btn.setToolTip("设置采样频率")
-        sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        row2.addWidget(sample_settings_btn)
+        self.sample_rate_combo = SampleRateComboBox()
+        self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
+        self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
+        row2.addWidget(self.sample_rate_combo)
         row2.addStretch()
         card_layout.addLayout(row2)
 
@@ -1014,18 +1008,10 @@ class CurrentSensorWidget(QWidget):
     # ------------------------------------------------------------------
     # 采样频率 / 保存 / 清除
     # ------------------------------------------------------------------
-    def edit_sample_rate(self):
-        dialog = SampleRateDialog(self.sample_interval_ms, self)
-        if dialog.exec() == 1:
-            new_interval_ms = dialog.get_sample_interval()
-            self.sample_interval_ms = new_interval_ms
-            freq = 1000 // new_interval_ms
-            self.sample_rate_label.setText(f"{freq}Hz")
-            self.save_config()
-            QMessageBox.information(self, "成功",
-                                    f"采样频率已更新为 {freq} Hz！\n"
-                                    f"采样间隔：{new_interval_ms} ms\n"
-                                    f"配置已自动保存。")
+    def on_sample_interval_changed(self, interval_ms):
+        """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
+        self.sample_interval_ms = interval_ms
+        self.save_config()
 
     def save_data(self):
         if not self.current_data:

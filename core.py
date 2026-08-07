@@ -762,3 +762,91 @@ class SampleRateDialog(QDialog):
     def get_sample_interval(self):
         """返回当前采样间隔（ms）。"""
         return self._interval_ms if self._interval_ms is not None else self.current_interval_ms
+
+
+class SampleRateComboBox(EditableComboBox):
+    """采样频率内联可编辑下拉框（直接嵌入主界面，无需弹对话框）。
+
+    传感器模块用本组件替换原先的「频率 QLabel + ⚙设置按钮」：
+    - 下拉选预设频率（10/5/2/1/0.5/0.2 Hz）
+    - 或手动输入 Hz 值（如 3、0.5Hz），文本改变时即时生效
+    - 范围 0.1~10 Hz，对应采样间隔 100~10000 ms（下位机最大 10 Hz）
+
+    信号：
+        sampleIntervalChanged(int): 采样间隔改变时发射，参数为新间隔（ms）
+    """
+
+    # 预设频率：(interval_ms, 显示文本, 说明)
+    PRESETS = [
+        (100,  "10 Hz",   "全速接收（下位机最大频率）"),
+        (200,  "5 Hz",    "中速采样"),
+        (500,  "2 Hz",    "低速采样"),
+        (1000, "1 Hz",    "超低速采样"),
+        (2000, "0.5 Hz",  "极低速采样"),
+        (5000, "0.2 Hz",  "最低速采样"),
+    ]
+
+    FREQ_MIN = 0.1   # Hz
+    FREQ_MAX = 10.0  # Hz
+
+    sampleIntervalChanged = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._interval_ms = 100
+        self._block_signal = True  # 初始化期间抑制信号
+
+        for interval_ms, label, _ in self.PRESETS:
+            self.addItem(label, userData=interval_ms)
+
+        self.setPlaceholderText("采样频率")
+        self.setMaxVisibleItems(10)
+        self.setFixedHeight(32)
+        self.setMinimumWidth(110)
+        self.currentTextChanged.connect(self._on_text_changed)
+
+        self._block_signal = False
+
+    # ---------- 公共接口 ----------
+    def setSampleInterval(self, interval_ms):
+        """设置当前采样间隔（ms），不会重复发射信号。"""
+        prev = self._interval_ms
+        self._block_signal = True
+        self._interval_ms = interval_ms
+        self.setCurrentText(self._interval_to_text(interval_ms))
+        self._block_signal = False
+        if prev != interval_ms:
+            self.sampleIntervalChanged.emit(interval_ms)
+
+    def getSampleInterval(self):
+        """返回当前采样间隔（ms）。"""
+        return self._interval_ms
+
+    # ---------- 内部 ----------
+    def _interval_to_text(self, interval_ms):
+        for iv, label, _ in self.PRESETS:
+            if iv == interval_ms:
+                return label
+        freq = 1000.0 / interval_ms
+        return f"{freq:g} Hz"
+
+    def _parse_freq(self, text):
+        s = text.strip().lower().replace("hz", "").strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    def _on_text_changed(self, text):
+        if self._block_signal:
+            return
+        freq = self._parse_freq(text)
+        if freq is None or freq <= 0:
+            return  # 解析失败（输入中间态），保持上一次有效值
+        interval_ms = round(1000.0 / freq)
+        interval_ms = max(100, min(10000, interval_ms))
+        if interval_ms != self._interval_ms:
+            self._interval_ms = interval_ms
+            self.sampleIntervalChanged.emit(interval_ms)
