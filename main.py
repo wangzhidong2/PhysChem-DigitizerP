@@ -237,9 +237,21 @@ class HomePageWidget(QWidget):
             border: 1px solid #e5e5e5;
             border-radius: 8px;
         }
-        QWidget#card QLabel,
-        QWidget#card QFrame {
+        QWidget#card QWidget {
             background-color: transparent;
+        }
+        QWidget#card QComboBox,
+        QWidget#card QTextEdit,
+        QWidget#card QPlainTextEdit,
+        QWidget#card QSpinBox,
+        QWidget#card QDoubleSpinBox,
+        QWidget#card QLineEdit,
+        QWidget#card QListView,
+        QWidget#card QTreeView,
+        QWidget#card QTableView,
+        QWidget#card QScrollArea,
+        QWidget#card QAbstractScrollArea {
+            background-color: #ffffff;
         }
     """
 

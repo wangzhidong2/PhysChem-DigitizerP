@@ -288,16 +288,36 @@ def scan_ble_devices():
 # 共享样式 — 现代化风格
 # ============================================================
 def card_style():
-    """卡片容器样式（浅色主题）"""
+    """卡片容器样式（浅色主题）。
+
+    注意：页面容器常写 `content.setStyleSheet("background: #f3f3f3;")`，
+    该无选择器的样式表会级联到所有子 widget，导致卡片内的中间容器
+    （如 serial_panel、ble_panel 等未设 objectName 的 QWidget）继承
+    灰色背景。这里用 `QWidget#card QWidget` 把卡片内所有子 widget
+    背景置透明，使其透出卡片白色底；各控件（ComboBox/TextEdit/
+    QPushButton 等）自身的样式表优先级更高，不受影响。
+    """
     return """
         QWidget#card {
             background-color: #ffffff;
             border: 1px solid #e5e5e5;
             border-radius: 8px;
         }
-        QWidget#card QLabel,
-        QWidget#card QFrame {
+        QWidget#card QWidget {
             background-color: transparent;
+        }
+        QWidget#card QComboBox,
+        QWidget#card QTextEdit,
+        QWidget#card QPlainTextEdit,
+        QWidget#card QSpinBox,
+        QWidget#card QDoubleSpinBox,
+        QWidget#card QLineEdit,
+        QWidget#card QListView,
+        QWidget#card QTreeView,
+        QWidget#card QTableView,
+        QWidget#card QScrollArea,
+        QWidget#card QAbstractScrollArea {
+            background-color: #ffffff;
         }
     """
 
