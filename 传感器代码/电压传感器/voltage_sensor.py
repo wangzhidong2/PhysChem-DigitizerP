@@ -299,8 +299,10 @@ class VoltageSensorWidget(QWidget):
         bits_row.addStretch()
         adc_card_layout.addLayout(bits_row)
 
-        # HX711 模式行：复选框 + AVDD + 通道选择
-        hx711_row = QHBoxLayout()
+        # HX711 模式行：仅在 ADC 位数=24 时显示（用容器包裹便于整体显隐）
+        self.hx711_panel = QWidget()
+        hx711_row = QHBoxLayout(self.hx711_panel)
+        hx711_row.setContentsMargins(0, 0, 0, 0)
         hx711_row.setSpacing(10)
         self.hx711_check = QCheckBox("HX711 模式（24位有符号）")
         self.hx711_check.setChecked(self.hx711_mode)
@@ -329,7 +331,11 @@ class VoltageSensorWidget(QWidget):
         hx711_row.addWidget(self.hx711_channel_combo)
 
         hx711_row.addStretch()
-        adc_card_layout.addLayout(hx711_row)
+        adc_card_layout.addWidget(self.hx711_panel)
+        # 仅 24 位时显示 HX711 选项；非 24 位时自动取消勾选
+        self.hx711_panel.setVisible(self.adc_bits == 24)
+        if self.adc_bits != 24 and self.hx711_mode:
+            self.hx711_check.setChecked(False)
 
         params_row = QHBoxLayout()
         params_row.setSpacing(10)
@@ -537,6 +543,11 @@ class VoltageSensorWidget(QWidget):
     def on_adc_bits_changed(self, index):
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
         self.adc_bits = bits_map.get(index, 12)
+        # HX711 选项仅 24 位时显示；切到非 24 位时自动取消 HX711 模式
+        is_24bit = (self.adc_bits == 24)
+        self.hx711_panel.setVisible(is_24bit)
+        if not is_24bit and self.hx711_mode:
+            self.hx711_check.setChecked(False)
         self.save_config()
         self.update_range_display()
 
