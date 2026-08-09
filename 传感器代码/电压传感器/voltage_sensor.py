@@ -194,11 +194,10 @@ class VoltageSensorWidget(QWidget):
     def adc_to_vadc(self, adc_value):
         """计算 ADC 输入端电压（未做分压/放大还原）。
 
-        ESP32 内置 ADC：下位机输出原始无符号值 0~(2^N-1)，上位机以中点为 0V
-        换算成有符号电压，量程 -VREF~+VREF。
-        例如 12 位 ADC，原始值 0~4095，中点 2048 对应 0V，
-        0 对应 -VREF，4095 对应 +VREF。
-        公式：(adc / max_adc - 0.5) × 2 × VREF
+        统一有符号换算：下位机输出有符号 ADC 值，0 对应 0V，量程 -VREF~+VREF。
+        例如 12 位 ADC，原始值 -4095~+4095，0 对应 0V，
+        -4095 对应 -VREF，+4095 对应 +VREF。
+        公式：(adc / max_adc) × VREF
         """
         # HX711 模式：24位有符号，参考电压 = AVDD / Gain
         if self.hx711_mode:
@@ -210,7 +209,7 @@ class VoltageSensorWidget(QWidget):
             fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
             return adc_value / 32768.0 * fsr
         max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
-        return (adc_value / max_adc - 0.5) * 2.0 * self.VREF
+        return (adc_value / max_adc) * self.VREF
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -338,15 +337,15 @@ class VoltageSensorWidget(QWidget):
         bits_row.addWidget(QLabel("ADC 位数:"))
         self.adc_bits_combo = ComboBox()
         self.adc_bits_combo.addItems([
-            "8 位 (0-255)",
-            "10 位 (0-1023)",
-            "12 位 (0-4095)  ESP32内置",
-            "14 位 (0-16383)",
-            "16 位 (0-65535)  ADS1115等",
-            "18 位 (0-262143)",
-            "20 位 (0-1048575)",
-            "22 位 (0-4194303)",
-            "24 位 (0-16777215)  HX711等"
+            "8 位 (-255~+255)",
+            "10 位 (-1023~+1023)",
+            "12 位 (-4095~+4095)  ESP32内置",
+            "14 位 (-16383~+16383)",
+            "16 位 (-65535~+65535)  ADS1115等",
+            "18 位 (-262143~+262143)",
+            "20 位 (-1048575~+1048575)",
+            "22 位 (-4194303~+4194303)",
+            "24 位 (-16777215~+16777215)  HX711等"
         ])
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
         self.adc_bits_combo.setCurrentIndex(bits_map.get(self.adc_bits, 2))
@@ -793,7 +792,7 @@ class VoltageSensorWidget(QWidget):
         else:
             max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
             full = self.VREF
-            self.range_label.setText(f"量程: -{full:.2f}V~+{full:.2f}V (ADC 0-{max_adc})")
+            self.range_label.setText(f"量程: -{full:.2f}V~+{full:.2f}V (ADC -{max_adc}~+{max_adc})")
             actual_full = full * self.divider_ratio / self.amp_ratio
             self.actual_range_label.setText(f"实际量程: -{actual_full:.2f}V~+{actual_full:.2f}V")
 
