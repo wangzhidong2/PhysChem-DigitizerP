@@ -15,7 +15,7 @@
 
 | 模式 | ADC 位数 | 数据范围 | 适用固件 |
 |------|---------|---------|---------|
-| **ESP32 内置 ADC** | 8~24 位可选（默认 12 位） | 有符号（中点为 0V） | [ESP32_Voltage_Sensor.ino](ESP32_Voltage_Sensor.ino) |
+| **ESP32 内置 ADC** | 8~24 位可选（默认 12 位） | 有符号 ±(2^N-1)，如 12 位 ±4095 | [ESP32_Voltage_Sensor.ino](ESP32_Voltage_Sensor.ino) |
 | **HX711 24 位** | 24 位有符号补码 | -8388608 ~ +8388607 | [HX711_Voltage.ino](HX711_Voltage.ino) |
 | **ADS1115 16 位** | 16 位有符号补码 | -32768 ~ +32767 | [ADS1115_Voltage.ino](ADS1115_Voltage.ino) |
 
@@ -50,9 +50,13 @@ ESP32-S3 开发板       外部电压源/传感器
 ```cpp
 #define ADC_PIN 1              // GPIO1 (ADC1_CH0)
 #define SAMPLE_INTERVAL 100    // 100ms (10Hz)
+// 固件将 ADC 原始值(0~4095)转为有符号(-4095~+4095)输出
+// voltage = (adc / 4095) × (VREF / 2)
 ```
 
 > ⚠️ 被测电压必须在 **0-3.3V** 范围内，超过可能损坏 ADC。高压测量请加分压电阻。
+>
+> 💡 测量负电压或交流电时，需在信号输入端加 **VCC/2 偏置电路**（两个等值电阻分压），使 0V 输入对应 ADC 中点 2048，固件自动转为有符号值。
 
 ### 方式二：HX711 24 位 ADC
 
@@ -118,6 +122,76 @@ ESP32-S3              ADS1115 模块        被测信号
 
 > 💡 单端测量时，AINN 内部接 GND，量程为 0 ~ +FSR（负值读不到）。差分测量才能读到负值。
 
+#### ADS1115 通道切换步骤
+
+ADS1115 的通道（MUX）通过固件宏定义配置，切换通道需修改固件并重新烧录：
+
+**第 1 步：打开固件文件**
+
+用 Arduino IDE 打开 [ADS1115_Voltage.ino](ADS1115_Voltage.ino)。
+
+**第 2 步：定位通道配置区**
+
+在文件中找到 `用户配置区` 的 `MUX_CHANNEL` 宏定义（约第 53~61 行）：
+
+```cpp
+// 输入通道选择（MUX）
+// 单端：读取 AIN0/AIN1/AIN2/AIN3 相对 GND 的电压
+// 差分：读取两通道电压差（AINP - AINN）
+#define MUX_CHANNEL ADS_PIN_AIN0    // 单端 AIN0
+// #define MUX_CHANNEL ADS_PIN_AIN1  // 单端 AIN1
+// #define MUX_CHANNEL ADS_PIN_AIN2  // 单端 AIN2
+// #define MUX_CHANNEL ADS_PIN_AIN3  // 单端 AIN3
+// #define MUX_CHANNEL ADS_PIN_DIFF_01  // 差分 AIN0-AIN1
+// #define MUX_CHANNEL ADS_PIN_DIFF_23  // 差分 AIN2-AIN3
+```
+
+**第 3 步：修改通道**
+
+注释掉当前启用的行，取消注释目标通道。例如切换到 **AIN1 单端**：
+
+```cpp
+// #define MUX_CHANNEL ADS_PIN_AIN0    // 单端 AIN0  ← 注释掉
+#define MUX_CHANNEL ADS_PIN_AIN1  // 单端 AIN1  ← 取消注释
+// #define MUX_CHANNEL ADS_PIN_AIN2  // 单端 AIN2
+// #define MUX_CHANNEL ADS_PIN_AIN3  // 单端 AIN3
+// #define MUX_CHANNEL ADS_PIN_DIFF_01  // 差分 AIN0-AIN1
+// #define MUX_CHANNEL ADS_PIN_DIFF_23  // 差分 AIN2-AIN3
+```
+
+又如切换到 **AIN0-AIN1 差分**（可测负值）：
+
+```cpp
+// #define MUX_CHANNEL ADS_PIN_AIN0    // 单端 AIN0
+// #define MUX_CHANNEL ADS_PIN_AIN1  // 单端 AIN1
+// #define MUX_CHANNEL ADS_PIN_AIN2  // 单端 AIN2
+// #define MUX_CHANNEL ADS_PIN_AIN3  // 单端 AIN3
+#define MUX_CHANNEL ADS_PIN_DIFF_01  // 差分 AIN0-AIN1  ← 取消注释
+// #define MUX_CHANNEL ADS_PIN_DIFF_23  // 差分 AIN2-AIN3
+```
+
+**第 4 步：保存并烧录**
+
+1. `Ctrl+S` 保存修改
+2. 选择开发板：**Tools → Board → ESP32S3 Dev Module**
+3. 选择端口：**Tools → Port → 对应 COM 口**
+4. 点击上传按钮 `→` 烧录到 ESP32-S3
+
+**第 5 步：上位机同步设置**
+
+烧录完成后，在电压传感器模块界面同步通道配置：
+
+1. ADC 位数下拉框选 **16 位**
+2. 勾选 **ADS1115 模式**
+3. 在 **通道** 下拉框选择与固件一致的通道（如 `AIN1` 或 `AIN0-AIN1`）
+4. PGA 量程也需与固件 `PGA_RANGE` 宏一致
+
+> ⚠️ 注意事项：
+> - 同一时间只能启用一个通道（只有一个 `#define MUX_CHANNEL` 不带 `//`）
+> - 单端模式（AIN0~AIN3）只能测 0 ~ +FSR，测负值必须用差分模式
+> - 切换通道后需重新烧录固件，不支持运行时切换
+> - 上位机通道设置仅用于显示标识，不影响实际测量通道（由固件决定）
+
 ---
 
 ## 💻 固件说明
@@ -126,11 +200,11 @@ ESP32-S3              ADS1115 模块        被测信号
 
 三种固件统一输出：**`时间戳(ms),ADC原始值`**
 
-**ESP32 内置 ADC 示例**（12 位，0~4095）：
+**ESP32 内置 ADC 示例**（12 位有符号，-4095~+4095）：
 ```
-0,2048
-100,2051
-200,2046
+0,-12
+100,35
+200,-8
 ```
 
 **HX711 示例**（24 位有符号）：
@@ -149,21 +223,23 @@ ESP32-S3              ADS1115 模块        被测信号
 
 ### 电压换算公式
 
-#### ESP32 内置 ADC（默认有符号）
+#### ESP32 内置 ADC（有符号）
 
-ADC 原始值以中点为 0V，量程 ±VREF/2：
+ADC 原始值为有符号整数，0 对应 0V，量程 ±VREF/2：
 
 ```
-voltage = (adc / max_adc - 0.5) × VREF
+voltage = (adc / max_adc) × (VREF / 2)
 ```
+
+其中 `max_adc = 2^N - 1`（N 为 ADC 位数），例如 12 位 → max_adc = 4095。
 
 | ADC 值 | 12 位对应电压 |
 |--------|--------------|
-| 0 | -1.65V |
-| 2047 | 0V |
-| 4095 | +1.65V |
+| -4095 | -1.65V |
+| 0 | 0V |
+| +4095 | +1.65V |
 
-> 配合外部分压电路（VCC/2 中点偏置）可测交流电。
+> 固件已将 ADC 原始值（0~4095）转为有符号（-4095~+4095），配合 VCC/2 偏置电路可测交流电。
 
 #### HX711
 
@@ -309,6 +385,7 @@ voltage = adc / 32768 × FSR
 |------|------|
 | 测量范围 | ±1.65V（默认，可分压扩展） |
 | 分辨率 | 12 位（默认，可选 8~24 位） |
+| ADC 数据范围 | 有符号 ±(2^N-1)，如 12 位 ±4095 |
 | 理论精度 | ≈0.8mV（12 位） |
 | 采样率 | 10Hz（可配置） |
 | 波特率 | 115200 |

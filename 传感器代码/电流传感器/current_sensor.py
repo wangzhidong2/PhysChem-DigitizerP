@@ -351,7 +351,7 @@ class CurrentSensorWidget(QWidget):
         # 量程显示
         self.range_label = QLabel()
         self.range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self.range_label.setStyleSheet("color: #0078d4;")
+        self.range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.range_label)
 
         # 供电电压 + 零点电压 + 分压比
@@ -398,7 +398,7 @@ class CurrentSensorWidget(QWidget):
         # 可测范围显示
         self.actual_range_label = QLabel()
         self.actual_range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self.actual_range_label.setStyleSheet("color: #28a745;")
+        self.actual_range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.actual_range_label)
 
         hint_label = QLabel(
