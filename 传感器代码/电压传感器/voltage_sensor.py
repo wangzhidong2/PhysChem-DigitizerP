@@ -86,9 +86,6 @@ class VoltageSensorWidget(QWidget):
         self.adc_bits = 12
         self.divider_ratio = 1.0
         self.amp_ratio = 1.0
-        # 双极性模式：启用后 ADC 中点对应 0V，量程 ±VREF/2
-        # 适用：交流电采样、中点偏置电路（VCC/2 偏置）、双极性差分 ADC
-        self.bipolar = False
         # HX711 专用参数：有符号 24 位 + AVDD/Gain 参考电压
         self.hx711_mode = False
         self.hx711_avdd = 5.0       # HX711 模块 AVDD 电压（V），常见为 5.0
@@ -103,7 +100,6 @@ class VoltageSensorWidget(QWidget):
         self.adc_bits = self.config.get('adc_bits', 12)
         self.divider_ratio = self.config.get('divider_ratio', 1.0)
         self.amp_ratio = self.config.get('amp_ratio', 1.0)
-        self.bipolar = self.config.get('bipolar', False)
         self.hx711_mode = self.config.get('hx711_mode', False)
         self.hx711_avdd = self.config.get('hx711_avdd', 5.0)
         self.hx711_channel = self.config.get('hx711_channel', 'B')
@@ -120,7 +116,6 @@ class VoltageSensorWidget(QWidget):
             self.divider_ratio = config.get('divider_ratio', 1.0)
             self.amp_ratio = config.get('amp_ratio', 1.0)
             self.sample_interval_ms = config.get('sample_interval_ms', 100)
-            self.bipolar = config.get('bipolar', False)
             self.hx711_mode = config.get('hx711_mode', False)
             self.hx711_avdd = config.get('hx711_avdd', 5.0)
             self.hx711_channel = config.get('hx711_channel', 'B')
@@ -135,7 +130,6 @@ class VoltageSensorWidget(QWidget):
             'divider_ratio': self.divider_ratio,
             'amp_ratio': self.amp_ratio,
             'sample_interval_ms': self.sample_interval_ms,
-            'bipolar': self.bipolar,
             'hx711_mode': self.hx711_mode,
             'hx711_avdd': self.hx711_avdd,
             'hx711_channel': self.hx711_channel,
@@ -171,18 +165,19 @@ class VoltageSensorWidget(QWidget):
         return actual_voltage
 
     def adc_to_vadc(self, adc_value):
-        """计算 ADC 输入端电压（未做分压/放大还原）"""
+        """计算 ADC 输入端电压（未做分压/放大还原）。
+
+        默认按有符号处理：ADC 原始值以中点为 0V，量程 ±VREF/2。
+        例如 12 位 ADC，原始值范围 0~4095，中点 2047 对应 0V，
+        0 对应 -VREF/2，4095 对应 +VREF/2。
+        公式：(adc/max - 0.5) × VREF
+        """
         # HX711 模式：24位有符号，参考电压 = AVDD / Gain
-        # 通道A 增益128，通道B 增益32（固定）
         if self.hx711_mode:
             gain = 128 if self.hx711_channel == 'A' else 32
             return adc_value / 8388608.0 * (self.hx711_avdd / gain)
         max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
-        if self.bipolar:
-            # 双极性：ADC 中点（max_adc/2）对应 0V，量程 ±VREF/2
-            # 适用：中点偏置电路（VCC/2 偏置测交流）、双极性差分 ADC
-            return (adc_value / max_adc - 0.5) * self.VREF
-        return (adc_value / max_adc) * self.VREF
+        return (adc_value / max_adc - 0.5) * self.VREF
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -326,20 +321,7 @@ class VoltageSensorWidget(QWidget):
         bits_row.addWidget(self.adc_bits_combo)
 
         bits_row.addWidget(QLabel("参考电压: 3.3V"))
-        # 双极性模式：启用后 ADC 中点对应 0V，量程 ±VREF/2
-        # 适用：交流电采样（VCC/2 中点偏置）、双极性差分 ADC
-        self.bipolar_check = QCheckBox("双极性（支持负值）")
-        self.bipolar_check.setChecked(self.bipolar)
-        self.bipolar_check.setToolTip(
-            "启用后 ADC 中点对应 0V，量程变为 ±VREF/2\n"
-            "适用：交流电采样（VCC/2 中点偏置电路）、双极性差分 ADC\n"
-            "公式：(adc/max - 0.5) × VREF"
-        )
-        self.bipolar_check.toggled.connect(self.on_bipolar_changed)
-        # HX711 启用时禁用双极性（HX711 本身即有符号）
-        self.bipolar_check.setEnabled(not self.hx711_mode)
-        bits_row.addWidget(self.bipolar_check)
-        self.range_label = QLabel(f"量程: 0 ~ {self.VREF:.1f}V")
+        self.range_label = QLabel(f"量程: ±{self.VREF/2:.2f}V")
         self.range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
         self.range_label.setStyleSheet("color: #0078d4;")
         bits_row.addWidget(self.range_label)
@@ -408,7 +390,7 @@ class VoltageSensorWidget(QWidget):
         self.amp_spin.valueChanged.connect(self.on_amp_changed)
         params_row.addWidget(self.amp_spin)
 
-        self.actual_range_label = QLabel(f"实际量程: 0 ~ {self.VREF * self.divider_ratio / self.amp_ratio:.2f}V")
+        self.actual_range_label = QLabel(f"实际量程: ±{self.VREF/2 * self.divider_ratio / self.amp_ratio:.2f}V")
         self.actual_range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
         self.actual_range_label.setStyleSheet("color: #28a745;")
         params_row.addWidget(self.actual_range_label)
@@ -613,21 +595,10 @@ class VoltageSensorWidget(QWidget):
         self.hx711_mode = checked
         self.hx711_avdd_spin.setEnabled(checked)
         self.hx711_channel_combo.setEnabled(checked)
-        # HX711 本身就是有符号 24 位，启用时禁用双极性选项（避免逻辑冲突）
-        self.bipolar_check.setEnabled(not checked)
-        if checked and self.bipolar:
-            self.bipolar = False
-            self.bipolar_check.setChecked(False)
         if checked:
             # 强制切到 24 位选项
             self.adc_bits_combo.setCurrentIndex(8)
             self.adc_bits = 24
-        self.save_config()
-        self.update_range_display()
-
-    def on_bipolar_changed(self, checked):
-        """双极性模式开关：启用后 ADC 中点对应 0V，量程 ±VREF/2"""
-        self.bipolar = checked
         self.save_config()
         self.update_range_display()
 
@@ -713,17 +684,12 @@ class VoltageSensorWidget(QWidget):
             self.range_label.setText(f"量程: ±{fs*1000:.1f}mV (HX711 通道{self.hx711_channel}, Gain{gain})")
             actual_max = fs * self.divider_ratio / self.amp_ratio
             self.actual_range_label.setText(f"实际量程: ±{actual_max*1000:.2f}mV")
-        elif self.bipolar:
-            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
-            half = self.VREF / 2.0
-            self.range_label.setText(f"量程: ±{half:.2f}V (双极性, ADC {max_adc})")
-            actual_max = half * self.divider_ratio / self.amp_ratio
-            self.actual_range_label.setText(f"实际量程: ±{actual_max:.2f}V")
         else:
             max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
-            self.range_label.setText(f"量程: 0 ~ {self.VREF:.1f}V (ADC {max_adc})")
-            actual_max = self.VREF * self.divider_ratio / self.amp_ratio
-            self.actual_range_label.setText(f"实际量程: 0 ~ {actual_max:.2f}V")
+            half = self.VREF / 2.0
+            self.range_label.setText(f"量程: ±{half:.2f}V (ADC {max_adc})")
+            actual_max = half * self.divider_ratio / self.amp_ratio
+            self.actual_range_label.setText(f"实际量程: ±{actual_max:.2f}V")
 
     def refresh_ports(self):
         self.port_combo.clear()
