@@ -194,10 +194,11 @@ class VoltageSensorWidget(QWidget):
     def adc_to_vadc(self, adc_value):
         """计算 ADC 输入端电压（未做分压/放大还原）。
 
-        有符号 ADC：原始值以 0 为中点，量程 ±VREF/2。
-        例如 12 位 ADC，原始值范围 -4095~+4095，0 对应 0V，
-        -4095 对应 -VREF/2，+4095 对应 +VREF/2。
-        公式：(adc / max_adc) × (VREF / 2)
+        ESP32 内置 ADC：下位机输出原始无符号值 0~(2^N-1)，上位机以中点为 0V
+        换算成有符号电压，量程 -VREF~+VREF。
+        例如 12 位 ADC，原始值 0~4095，中点 2048 对应 0V，
+        0 对应 -VREF，4095 对应 +VREF。
+        公式：(adc / max_adc - 0.5) × 2 × VREF
         """
         # HX711 模式：24位有符号，参考电压 = AVDD / Gain
         if self.hx711_mode:
@@ -209,7 +210,7 @@ class VoltageSensorWidget(QWidget):
             fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
             return adc_value / 32768.0 * fsr
         max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
-        return (adc_value / max_adc) * (self.VREF / 2.0)
+        return (adc_value / max_adc - 0.5) * 2.0 * self.VREF
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -322,14 +323,14 @@ class VoltageSensorWidget(QWidget):
         # ========== 卡片2：ADC 与电路参数 ==========
         card_adc = QWidget()
         card_adc.setObjectName("card")
-        card_adc.setStyleSheet(card_style())
+        # 卡片内所有 QLabel 默认黑色（后续特殊状态标签可单独覆盖）
+        card_adc.setStyleSheet(card_style() + " QWidget#card QLabel { color: #1a1a1a; }")
         adc_card_layout = QVBoxLayout(card_adc)
         adc_card_layout.setContentsMargins(20, 16, 20, 16)
         adc_card_layout.setSpacing(12)
 
         adc_card_title = QLabel("ADC 与电路参数")
         adc_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        adc_card_title.setStyleSheet("color: #1a1a1a;")
         adc_card_layout.addWidget(adc_card_title)
 
         bits_row = QHBoxLayout()
@@ -337,15 +338,15 @@ class VoltageSensorWidget(QWidget):
         bits_row.addWidget(QLabel("ADC 位数:"))
         self.adc_bits_combo = ComboBox()
         self.adc_bits_combo.addItems([
-            "8 位 (±255)",
-            "10 位 (±1023)",
-            "12 位 (±4095)  ESP32内置",
-            "14 位 (±16383)",
-            "16 位 (±65535)  ADS1115等",
-            "18 位 (±262143)",
-            "20 位 (±1048575)",
-            "22 位 (±4194303)",
-            "24 位 (±16777215)  HX711等"
+            "8 位 (0-255)",
+            "10 位 (0-1023)",
+            "12 位 (0-4095)  ESP32内置",
+            "14 位 (0-16383)",
+            "16 位 (0-65535)  ADS1115等",
+            "18 位 (0-262143)",
+            "20 位 (0-1048575)",
+            "22 位 (0-4194303)",
+            "24 位 (0-16777215)  HX711等"
         ])
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
         self.adc_bits_combo.setCurrentIndex(bits_map.get(self.adc_bits, 2))
@@ -353,9 +354,8 @@ class VoltageSensorWidget(QWidget):
         bits_row.addWidget(self.adc_bits_combo)
 
         bits_row.addWidget(QLabel("参考电压: 3.3V"))
-        self.range_label = QLabel(f"量程: ±{self.VREF/2:.2f}V")
+        self.range_label = QLabel(f"量程: -{self.VREF:.2f}V~+{self.VREF:.2f}V")
         self.range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self.range_label.setStyleSheet("color: #1a1a1a;")
         bits_row.addWidget(self.range_label)
         bits_row.addStretch()
         adc_card_layout.addLayout(bits_row)
@@ -464,15 +464,14 @@ class VoltageSensorWidget(QWidget):
         self.amp_spin.valueChanged.connect(self.on_amp_changed)
         params_row.addWidget(self.amp_spin)
 
-        self.actual_range_label = QLabel(f"实际量程: ±{self.VREF/2 * self.divider_ratio / self.amp_ratio:.2f}V")
+        self.actual_range_label = QLabel(f"实际量程: -{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V~+{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V")
         self.actual_range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self.actual_range_label.setStyleSheet("color: #1a1a1a;")
         params_row.addWidget(self.actual_range_label)
         params_row.addStretch()
         adc_card_layout.addLayout(params_row)
 
         hint_label = QLabel("分压比 = (R1+R2)/R2，用于还原分压前的原始电压；放大倍数 = 运放增益，用于还原放大前的信号电压")
-        hint_label.setStyleSheet("color: #888888; font-size: 11px;")
+        hint_label.setStyleSheet("color: #1a1a1a; font-size: 11px;")
         hint_label.setWordWrap(True)
         adc_card_layout.addWidget(hint_label)
 
@@ -793,10 +792,10 @@ class VoltageSensorWidget(QWidget):
             self.actual_range_label.setText(f"实际量程: ±{actual_max:.3f}V")
         else:
             max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
-            half = self.VREF / 2.0
-            self.range_label.setText(f"量程: ±{half:.2f}V (ADC ±{max_adc})")
-            actual_max = half * self.divider_ratio / self.amp_ratio
-            self.actual_range_label.setText(f"实际量程: ±{actual_max:.2f}V")
+            full = self.VREF
+            self.range_label.setText(f"量程: -{full:.2f}V~+{full:.2f}V (ADC 0-{max_adc})")
+            actual_full = full * self.divider_ratio / self.amp_ratio
+            self.actual_range_label.setText(f"实际量程: -{actual_full:.2f}V~+{actual_full:.2f}V")
 
     def refresh_ports(self):
         self.port_combo.clear()
