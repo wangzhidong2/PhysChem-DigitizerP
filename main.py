@@ -328,22 +328,6 @@ class HomePageWidget(QWidget):
         header_row.addLayout(info_layout)
         header_row.addStretch()
 
-        # 右：3 个仓库入口按钮（垂直排列，紧凑）
-        repo_btn_col = QVBoxLayout()
-        repo_btn_col.setSpacing(4)
-        for label, url in [
-            ("GitHub",  "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
-            ("Gitee",   "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
-            ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"),
-        ]:
-            btn = PushButton(f"  {label}")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(26)
-            btn.setMinimumWidth(110)
-            btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
-            repo_btn_col.addWidget(btn)
-        header_row.addLayout(repo_btn_col)
-
         card1_layout.addLayout(header_row)
 
         # 分隔线
@@ -588,9 +572,6 @@ class HomePageWidget(QWidget):
 
         btn.clicked.connect(lambda: self.on_module_clicked(name))
         return btn
-
-    def open_github(self):
-        webbrowser.open("https://github.com/wangzhidong2/PhysChem-DigitizerP")
 
     def _copy_to_clipboard(self, text: str):
         """把文本拷到系统剪贴板，并在状态栏给一个轻提示。"""
