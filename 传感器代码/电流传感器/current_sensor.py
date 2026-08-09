@@ -58,6 +58,29 @@ class CurrentSensorWidget(QWidget):
     ADC_BITS_OPTIONS = {8: 256, 10: 1024, 12: 4096, 14: 16384, 16: 65536}
     VREF = 3.3  # ESP32 ADC 参考电压
 
+    # 连接控制卡片内按钮统一样式：白底黑字
+    CARD_BTN_STYLE = """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            color: #1a1a1a;
+            border-radius: 6px;
+            padding: 0 16px;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background-color: #f5f5f5;
+            border: 1px solid #0078d4;
+            color: #0078d4;
+        }
+        QPushButton:pressed { background-color: #e5e5e5; }
+        QPushButton:disabled {
+            background-color: #f5f5f5;
+            color: #aaaaaa;
+            border: 1px solid #e5e5e5;
+        }
+    """
+
     # ACS712 量程参数：灵敏度（V/A）、标称量程（A）、说明
     ACS712_RANGES = {
         '5A':  {'sensitivity': 0.185, 'range_a': 5,  'desc': 'ACS712ELC-05B  ±5A  185mV/A'},
@@ -227,6 +250,7 @@ class CurrentSensorWidget(QWidget):
         serial_layout.addWidget(self.port_combo)
         self.refresh_btn = PushButton("刷新")
         self.refresh_btn.setFixedHeight(36)
+        self.refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.refresh_btn.clicked.connect(self.refresh_ports)
         serial_layout.addWidget(self.refresh_btn)
 
@@ -239,6 +263,7 @@ class CurrentSensorWidget(QWidget):
         ble_layout.addWidget(self.ble_device_combo)
         self.ble_scan_btn = PushButton("扫描BLE")
         self.ble_scan_btn.setFixedHeight(36)
+        self.ble_scan_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.ble_scan_btn.clicked.connect(self.scan_ble)
         if not BLE_AVAILABLE:
             self.ble_scan_btn.setEnabled(False)
@@ -249,30 +274,29 @@ class CurrentSensorWidget(QWidget):
         self.ble_panel.hide()
 
         row1.addSpacing(16)
-        self.connect_btn = PrimaryPushButton("连接")
+        self.connect_btn = PushButton("连接")
         self.connect_btn.setFixedHeight(36)
+        self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.connect_btn.clicked.connect(self.connect_device)
         row1.addWidget(self.connect_btn)
 
         self.disconnect_btn = PushButton("断开")
         self.disconnect_btn.setFixedHeight(36)
+        self.disconnect_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
         row1.addWidget(self.disconnect_btn)
 
-        row1.addStretch()
-        card_layout.addLayout(row1)
-
-        # 第二行：采样频率
-        row2 = QHBoxLayout()
-        row2.setSpacing(10)
-        row2.addWidget(QLabel("采样频率:"))
+        row1.addSpacing(16)
+        row1.addWidget(QLabel("采样频率:"))
         self.sample_rate_combo = SampleRateComboBox()
         self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
+        self.sample_rate_combo.setMaximumWidth(120)
         self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
-        row2.addWidget(self.sample_rate_combo)
-        row2.addStretch()
-        card_layout.addLayout(row2)
+        row1.addWidget(self.sample_rate_combo)
+
+        row1.addStretch()
+        card_layout.addLayout(row1)
 
         layout.addWidget(card_conn)
 
