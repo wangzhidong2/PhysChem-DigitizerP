@@ -47,6 +47,19 @@ class VoltageSensorWidget(QWidget):
     ADC_BITS_OPTIONS = {8: 256, 10: 1024, 12: 4095, 14: 16383, 16: 65535, 18: 262143, 20: 1048575, 22: 4194303, 24: 16777215}
     VREF = 3.3
 
+    # ADS1115 PGA 量程（TI ADS1115 数据手册 SBAS444E，9.3.3 节）
+    # 16 位有符号二进制补码（-32768~+32767），电压 = raw / 32768 × FSR
+    ADS1115_PGA_RANGES = {
+        '±6.144V': 6.144,
+        '±4.096V': 4.096,
+        '±2.048V': 2.048,  # 默认（PGA=010）
+        '±1.024V': 1.024,
+        '±0.512V': 0.512,
+        '±0.256V': 0.256,
+    }
+    # ADS1115 输入通道（MUX）：4 单端 + 2 差分
+    ADS1115_CHANNELS = ['AIN0', 'AIN1', 'AIN2', 'AIN3', 'AIN0-AIN1', 'AIN2-AIN3']
+
     # 连接控制卡片内按钮统一样式：白底黑字
     CARD_BTN_STYLE = """
         QPushButton {
@@ -90,6 +103,10 @@ class VoltageSensorWidget(QWidget):
         self.hx711_mode = False
         self.hx711_avdd = 5.0       # HX711 模块 AVDD 电压（V），常见为 5.0
         self.hx711_channel = 'B'    # 通道：A=增益128，B=增益32
+        # ADS1115 专用参数：16 位有符号补码 + 6 档 PGA + 4 单端/2 差分 MUX
+        self.ads1115_mode = False
+        self.ads1115_pga = '±2.048V'   # 默认 PGA=010（数据手册默认值）
+        self.ads1115_channel = 'AIN0'  # 默认单端 AIN0
         # 显示单位：内部 voltage_data 始终存伏特，仅在显示/保存时按当前单位换算
         self.current_unit = 'V'     # 可选：kV / V / mV
         # 去皮偏移：空载时传感器输出的非零电压，从测量值中扣除
@@ -103,6 +120,9 @@ class VoltageSensorWidget(QWidget):
         self.hx711_mode = self.config.get('hx711_mode', False)
         self.hx711_avdd = self.config.get('hx711_avdd', 5.0)
         self.hx711_channel = self.config.get('hx711_channel', 'B')
+        self.ads1115_mode = self.config.get('ads1115_mode', False)
+        self.ads1115_pga = self.config.get('ads1115_pga', '±2.048V')
+        self.ads1115_channel = self.config.get('ads1115_channel', 'AIN0')
         self.current_unit = self.config.get('current_unit', 'V')
         self.tare_offset_v = self.config.get('tare_offset_v', 0.0)
         self.tare_active = self.config.get('tare_active', False)
@@ -119,6 +139,9 @@ class VoltageSensorWidget(QWidget):
             self.hx711_mode = config.get('hx711_mode', False)
             self.hx711_avdd = config.get('hx711_avdd', 5.0)
             self.hx711_channel = config.get('hx711_channel', 'B')
+            self.ads1115_mode = config.get('ads1115_mode', False)
+            self.ads1115_pga = config.get('ads1115_pga', '±2.048V')
+            self.ads1115_channel = config.get('ads1115_channel', 'AIN0')
             self.current_unit = config.get('current_unit', 'V')
             self.tare_offset_v = config.get('tare_offset_v', 0.0)
             self.tare_active = config.get('tare_active', False)
@@ -133,6 +156,9 @@ class VoltageSensorWidget(QWidget):
             'hx711_mode': self.hx711_mode,
             'hx711_avdd': self.hx711_avdd,
             'hx711_channel': self.hx711_channel,
+            'ads1115_mode': self.ads1115_mode,
+            'ads1115_pga': self.ads1115_pga,
+            'ads1115_channel': self.ads1115_channel,
             'current_unit': self.current_unit,
             'tare_offset_v': self.tare_offset_v,
             'tare_active': self.tare_active
@@ -176,6 +202,11 @@ class VoltageSensorWidget(QWidget):
         if self.hx711_mode:
             gain = 128 if self.hx711_channel == 'A' else 32
             return adc_value / 8388608.0 * (self.hx711_avdd / gain)
+        # ADS1115 模式：16位有符号补码，电压 = raw / 32768 × FSR
+        # 数据手册 SBAS444E 9.3.3 节：FSR 由 PGA 设置（±6.144V ~ ±0.256V）
+        if self.ads1115_mode:
+            fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
+            return adc_value / 32768.0 * fsr
         max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
         return (adc_value / max_adc - 0.5) * self.VREF
 
@@ -365,6 +396,48 @@ class VoltageSensorWidget(QWidget):
         self.hx711_panel.setVisible(self.adc_bits == 24)
         if self.adc_bits != 24 and self.hx711_mode:
             self.hx711_check.setChecked(False)
+
+        # ADS1115 模式行：仅在 ADC 位数=16 时显示
+        # TI ADS1115：16位有符号补码 + 6档PGA + 4单端/2差分 MUX，I2C 接口
+        # 数据手册 SBAS444E
+        self.ads1115_panel = QWidget()
+        ads1115_row = QHBoxLayout(self.ads1115_panel)
+        ads1115_row.setContentsMargins(0, 0, 0, 0)
+        ads1115_row.setSpacing(10)
+        self.ads1115_check = QCheckBox("ADS1115 模式（16位有符号补码）")
+        self.ads1115_check.setChecked(self.ads1115_mode)
+        self.ads1115_check.setToolTip(
+            "TI ADS1115 16位 I2C ADC\n"
+            "有符号二进制补码（-32768~+32767）\n"
+            "电压 = raw / 32768 × FSR\n"
+            "6档PGA量程：±6.144V ~ ±0.256V\n"
+            "4路单端或2路差分输入（MUX）"
+        )
+        self.ads1115_check.toggled.connect(self.on_ads1115_mode_changed)
+        ads1115_row.addWidget(self.ads1115_check)
+
+        ads1115_row.addWidget(QLabel("PGA:"))
+        self.ads1115_pga_combo = ComboBox()
+        self.ads1115_pga_combo.addItems(list(self.ADS1115_PGA_RANGES.keys()))
+        self.ads1115_pga_combo.setCurrentText(self.ads1115_pga)
+        self.ads1115_pga_combo.currentIndexChanged.connect(self.on_ads1115_pga_changed)
+        self.ads1115_pga_combo.setEnabled(self.ads1115_mode)
+        ads1115_row.addWidget(self.ads1115_pga_combo)
+
+        ads1115_row.addWidget(QLabel("通道:"))
+        self.ads1115_channel_combo = ComboBox()
+        self.ads1115_channel_combo.addItems(self.ADS1115_CHANNELS)
+        self.ads1115_channel_combo.setCurrentText(self.ads1115_channel)
+        self.ads1115_channel_combo.currentIndexChanged.connect(self.on_ads1115_channel_changed)
+        self.ads1115_channel_combo.setEnabled(self.ads1115_mode)
+        ads1115_row.addWidget(self.ads1115_channel_combo)
+
+        ads1115_row.addStretch()
+        adc_card_layout.addWidget(self.ads1115_panel)
+        # 仅 16 位时显示 ADS1115 选项；非 16 位时自动取消勾选
+        self.ads1115_panel.setVisible(self.adc_bits == 16)
+        if self.adc_bits != 16 and self.ads1115_mode:
+            self.ads1115_check.setChecked(False)
 
         params_row = QHBoxLayout()
         params_row.setSpacing(10)
@@ -577,6 +650,11 @@ class VoltageSensorWidget(QWidget):
         self.hx711_panel.setVisible(is_24bit)
         if not is_24bit and self.hx711_mode:
             self.hx711_check.setChecked(False)
+        # ADS1115 选项仅 16 位时显示；切到非 16 位时自动取消 ADS1115 模式
+        is_16bit = (self.adc_bits == 16)
+        self.ads1115_panel.setVisible(is_16bit)
+        if not is_16bit and self.ads1115_mode:
+            self.ads1115_check.setChecked(False)
         self.save_config()
         self.update_range_display()
 
@@ -609,6 +687,29 @@ class VoltageSensorWidget(QWidget):
 
     def on_hx711_channel_changed(self, index):
         self.hx711_channel = 'B' if index == 0 else 'A'
+        self.save_config()
+        self.update_range_display()
+
+    def on_ads1115_mode_changed(self, checked):
+        """ADS1115 模式开关：启用后强制 ADC 位数=16"""
+        self.ads1115_mode = checked
+        self.ads1115_pga_combo.setEnabled(checked)
+        self.ads1115_channel_combo.setEnabled(checked)
+        if checked:
+            self.adc_bits_combo.setCurrentIndex(4)  # 16 位
+            self.adc_bits = 16
+        self.save_config()
+        self.update_range_display()
+
+    def on_ads1115_pga_changed(self, index):
+        """切换 ADS1115 PGA 量程"""
+        self.ads1115_pga = self.ads1115_pga_combo.itemText(index)
+        self.save_config()
+        self.update_range_display()
+
+    def on_ads1115_channel_changed(self, index):
+        """切换 ADS1115 输入通道（MUX）"""
+        self.ads1115_channel = self.ads1115_channel_combo.itemText(index)
         self.save_config()
         self.update_range_display()
 
@@ -684,6 +785,11 @@ class VoltageSensorWidget(QWidget):
             self.range_label.setText(f"量程: ±{fs*1000:.1f}mV (HX711 通道{self.hx711_channel}, Gain{gain})")
             actual_max = fs * self.divider_ratio / self.amp_ratio
             self.actual_range_label.setText(f"实际量程: ±{actual_max*1000:.2f}mV")
+        elif self.ads1115_mode:
+            fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
+            self.range_label.setText(f"量程: ±{fsr:.3f}V (ADS1115 PGA={self.ads1115_pga}, 通道{self.ads1115_channel})")
+            actual_max = fsr * self.divider_ratio / self.amp_ratio
+            self.actual_range_label.setText(f"实际量程: ±{actual_max:.3f}V")
         else:
             max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
             half = self.VREF / 2.0
