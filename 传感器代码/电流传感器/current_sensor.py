@@ -37,7 +37,7 @@ from core import (
     SampleRateComboBox,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    BLE_AVAILABLE, CollapsibleCard,
+    BLE_AVAILABLE, CollapsibleCard, ExpandableTextEdit,
 )
 
 
@@ -492,20 +492,9 @@ class CurrentSensorWidget(QWidget):
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
 
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
-
-        record_label = QLabel("数据记录")
-        record_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        record_label.setStyleSheet("color: #1a1a1a;")
-        left_layout.addWidget(record_label)
-
-        self.data_text = TextEdit()
-        self.data_text.setReadOnly(True)
-        left_layout.addWidget(self.data_text)
-        content_row.addWidget(left_panel, stretch=1)
+        # 左侧：数据记录（可展开/收起，默认3行高度）
+        self.data_text = ExpandableTextEdit()
+        content_row.addWidget(self.data_text, stretch=1)
 
         self.figure = Figure(figsize=(8, 5), dpi=100)
         self.figure.set_facecolor('#fafafa')

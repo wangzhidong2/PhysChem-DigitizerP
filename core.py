@@ -24,7 +24,7 @@ import threading
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
-    QRadioButton, QWidget, QPushButton, QFrame,
+    QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QPainterPath
@@ -282,6 +282,95 @@ def scan_ble_devices():
     except Exception as e:
         print(f"BLE 扫描错误: {e}")
         return []
+
+
+# ============================================================
+# 可展开/收起的文本记录区
+# ============================================================
+class ExpandableTextEdit(QWidget):
+    """可展开/收起的文本记录区。
+
+    - 默认收起：只显示约 3 行高度（紧凑视图）
+    - 点击"展开 ▼"按钮：向上扩展高度，显示更多内容
+    - 点击"收起 ▲"按钮：恢复 3 行高度
+
+    内部使用 qfluentwidgets.TextEdit 显示只读文本。
+    用 setMaximumHeight 限制高度，避免抢占图表空间。
+    """
+
+    # 收起时高度（约 3 行 + 边距）
+    COLLAPSED_HEIGHT = 64
+    # 展开时高度（约 12 行）
+    EXPANDED_HEIGHT = 280
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._expanded = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # 顶部行：标题 + 展开/收起按钮
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(8)
+        self.title_label = QLabel("数据记录")
+        self.title_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.title_label.setStyleSheet("color: #1a1a1a;")
+        top_row.addWidget(self.title_label)
+        top_row.addStretch()
+
+        self.toggle_btn = QPushButton("展开 ▼")
+        self.toggle_btn.setFixedHeight(24)
+        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggle_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #0078d4;
+                font-size: 12px;
+                padding: 0 4px;
+            }
+            QPushButton:hover { color: #005a9e; text-decoration: underline; }
+        """)
+        self.toggle_btn.clicked.connect(self._toggle)
+        top_row.addWidget(self.toggle_btn)
+        layout.addLayout(top_row)
+
+        # 文本区
+        from qfluentwidgets import TextEdit
+        self.text_edit = TextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setMaximumHeight(self.COLLAPSED_HEIGHT)
+        self.text_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout.addWidget(self.text_edit)
+
+    def _toggle(self):
+        """切换展开/收起状态"""
+        self._expanded = not self._expanded
+        if self._expanded:
+            self.text_edit.setMaximumHeight(self.EXPANDED_HEIGHT)
+            self.toggle_btn.setText("收起 ▲")
+        else:
+            self.text_edit.setMaximumHeight(self.COLLAPSED_HEIGHT)
+            self.toggle_btn.setText("展开 ▼")
+
+    # 代理 TextEdit 的常用方法，保持与原 data_text 调用兼容
+    def append(self, text):
+        self.text_edit.append(text)
+
+    def clear(self):
+        self.text_edit.clear()
+
+    def toPlainText(self):
+        return self.text_edit.toPlainText()
+
+    def setPlainText(self, text):
+        self.text_edit.setPlainText(text)
+
+    def verticalScrollBar(self):
+        return self.text_edit.verticalScrollBar()
 
 
 # ============================================================
