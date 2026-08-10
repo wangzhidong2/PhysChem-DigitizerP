@@ -37,7 +37,7 @@ from core import (
     SampleRateComboBox,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    BLE_AVAILABLE,
+    BLE_AVAILABLE, CollapsibleCard,
 )
 
 
@@ -214,18 +214,13 @@ class CurrentSensorWidget(QWidget):
         title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
         layout.addWidget(title)
 
-        # ========== 卡片1：连接控制 ==========
-        card_conn = QWidget()
-        card_conn.setObjectName("card")
-        card_conn.setStyleSheet(card_style())
-        card_layout = QVBoxLayout(card_conn)
-        card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片1：连接控制（可折叠） ==========
+        card_conn_content = QWidget()
+        card_conn_content.setObjectName("card")
+        card_conn_content.setStyleSheet(card_style())
+        card_layout = QVBoxLayout(card_conn_content)
+        card_layout.setContentsMargins(20, 4, 20, 16)
         card_layout.setSpacing(12)
-
-        card_title = QLabel("连接控制")
-        card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        card_title.setStyleSheet("color: #1a1a1a;")
-        card_layout.addWidget(card_title)
 
         row1 = QHBoxLayout()
         row1.setSpacing(10)
@@ -298,22 +293,18 @@ class CurrentSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
+        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
         layout.addWidget(card_conn)
 
-        # ========== 卡片2：ACS712 参数 ==========
-        card_acs = QWidget()
-        card_acs.setObjectName("card")
-        card_acs.setStyleSheet(card_style())
-        acs_card_layout = QVBoxLayout(card_acs)
-        acs_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片2：ACS712 参数（可折叠） ==========
+        card_acs_content = QWidget()
+        card_acs_content.setObjectName("card")
+        card_acs_content.setStyleSheet(card_style())
+        acs_card_layout = QVBoxLayout(card_acs_content)
+        acs_card_layout.setContentsMargins(20, 4, 20, 16)
         acs_card_layout.setSpacing(12)
 
-        acs_card_title = QLabel("ACS712 参数")
-        acs_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        acs_card_title.setStyleSheet("color: #1a1a1a;")
-        acs_card_layout.addWidget(acs_card_title)
-
-        # 量程选择 + 测量类型 + ADC 位数
+        # 量程选择
         range_row = QHBoxLayout()
         range_row.setSpacing(10)
         range_row.addWidget(QLabel("量程:"))
@@ -447,23 +438,19 @@ class CurrentSensorWidget(QWidget):
         ac_row.addStretch()
         acs_card_layout.addLayout(ac_row)
 
+        card_acs = CollapsibleCard("ACS712 参数", card_acs_content, expanded=True)
         layout.addWidget(card_acs)
 
-        # ========== 卡片3：实时数据 ==========
-        card_data = QWidget()
-        card_data.setObjectName("card")
-        card_data.setStyleSheet(card_style())
-        data_card_layout = QVBoxLayout(card_data)
-        data_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片3：实时数据（可折叠） ==========
+        card_data_content = QWidget()
+        card_data_content.setObjectName("card")
+        card_data_content.setStyleSheet(card_style())
+        data_card_layout = QVBoxLayout(card_data_content)
+        data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        data_card_title = QLabel("实时数据")
-        data_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        data_card_title.setStyleSheet("color: #1a1a1a;")
-        data_card_layout.addWidget(data_card_title)
-
         self.current_value_label = QLabel("--.- A")
-        self.current_value_label.setFont(QFont("Microsoft YaHei", 32, QFont.Weight.Bold))
+        self.current_value_label.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
         self.current_value_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_value_label)
 
@@ -491,20 +478,16 @@ class CurrentSensorWidget(QWidget):
         self.stats_label.setStyleSheet("color: #888888;")
         data_card_layout.addWidget(self.stats_label)
 
+        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
         layout.addWidget(card_data)
 
-        # ========== 卡片4：图表 + 数据记录 ==========
-        card_chart = QWidget()
-        card_chart.setObjectName("card")
-        card_chart.setStyleSheet(card_style())
-        chart_card_layout = QVBoxLayout(card_chart)
-        chart_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片4：图表 + 数据记录（可折叠） ==========
+        card_chart_content = QWidget()
+        card_chart_content.setObjectName("card")
+        card_chart_content.setStyleSheet(card_style())
+        chart_card_layout = QVBoxLayout(card_chart_content)
+        chart_card_layout.setContentsMargins(20, 4, 20, 16)
         chart_card_layout.setSpacing(12)
-
-        chart_title = QLabel("电流-时间曲线")
-        chart_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        chart_title.setStyleSheet("color: #1a1a1a;")
-        chart_card_layout.addWidget(chart_title)
 
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
@@ -531,14 +514,15 @@ class CurrentSensorWidget(QWidget):
         content_row.addWidget(self.canvas, stretch=2)
 
         chart_card_layout.addLayout(content_row)
+        card_chart = CollapsibleCard("电流-时间曲线", card_chart_content, expanded=True)
         layout.addWidget(card_chart)
 
-        # ========== 卡片5：操作按钮 ==========
-        card_actions = QWidget()
-        card_actions.setObjectName("card")
-        card_actions.setStyleSheet(card_style())
-        actions_layout = QHBoxLayout(card_actions)
-        actions_layout.setContentsMargins(20, 12, 20, 12)
+        # ========== 卡片5：操作按钮（可折叠） ==========
+        card_actions_content = QWidget()
+        card_actions_content.setObjectName("card")
+        card_actions_content.setStyleSheet(card_style())
+        actions_layout = QHBoxLayout(card_actions_content)
+        actions_layout.setContentsMargins(20, 4, 20, 12)
         actions_layout.setSpacing(10)
 
         self.start_btn = PrimaryPushButton("开始采集")
@@ -575,6 +559,7 @@ class CurrentSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
+        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
         layout.addWidget(card_actions)
 
         layout.addStretch()

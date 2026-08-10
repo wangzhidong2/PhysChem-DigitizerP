@@ -37,7 +37,7 @@ from core import (
     SampleRateComboBox,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    BLE_AVAILABLE,
+    BLE_AVAILABLE, CollapsibleCard,
 )
 
 
@@ -232,18 +232,13 @@ class VoltageSensorWidget(QWidget):
         title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
         layout.addWidget(title)
 
-        # ========== 卡片1：连接控制 ==========
-        card_conn = QWidget()
-        card_conn.setObjectName("card")
-        card_conn.setStyleSheet(card_style())
-        card_layout = QVBoxLayout(card_conn)
-        card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片1：连接控制（可折叠） ==========
+        card_conn_content = QWidget()
+        card_conn_content.setObjectName("card")
+        card_conn_content.setStyleSheet(card_style())
+        card_layout = QVBoxLayout(card_conn_content)
+        card_layout.setContentsMargins(20, 4, 20, 16)
         card_layout.setSpacing(12)
-
-        card_title = QLabel("连接控制")
-        card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        card_title.setStyleSheet("color: #1a1a1a;")
-        card_layout.addWidget(card_title)
 
         # 第一行：连接方式 + 设备选择 + 按钮
         row1 = QHBoxLayout()
@@ -317,20 +312,17 @@ class VoltageSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
+        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
         layout.addWidget(card_conn)
 
-        # ========== 卡片2：ADC 与电路参数 ==========
-        card_adc = QWidget()
-        card_adc.setObjectName("card")
+        # ========== 卡片2：ADC 与电路参数（可折叠） ==========
+        card_adc_content = QWidget()
+        card_adc_content.setObjectName("card")
         # 卡片内所有 QLabel 默认黑色（后续特殊状态标签可单独覆盖）
-        card_adc.setStyleSheet(card_style() + " QWidget#card QLabel { color: #1a1a1a; }")
-        adc_card_layout = QVBoxLayout(card_adc)
-        adc_card_layout.setContentsMargins(20, 16, 20, 16)
+        card_adc_content.setStyleSheet(card_style() + " QWidget#card QLabel { color: #1a1a1a; }")
+        adc_card_layout = QVBoxLayout(card_adc_content)
+        adc_card_layout.setContentsMargins(20, 4, 20, 16)
         adc_card_layout.setSpacing(12)
-
-        adc_card_title = QLabel("ADC 与电路参数")
-        adc_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        adc_card_layout.addWidget(adc_card_title)
 
         bits_row = QHBoxLayout()
         bits_row.setSpacing(10)
@@ -507,23 +499,19 @@ class VoltageSensorWidget(QWidget):
         tare_row.addStretch()
         adc_card_layout.addLayout(tare_row)
 
+        card_adc = CollapsibleCard("ADC 与电路参数", card_adc_content, expanded=True)
         layout.addWidget(card_adc)
 
-        # ========== 卡片3：实时数据 ==========
-        card_data = QWidget()
-        card_data.setObjectName("card")
-        card_data.setStyleSheet(card_style())
-        data_card_layout = QVBoxLayout(card_data)
-        data_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片3：实时数据（可折叠） ==========
+        card_data_content = QWidget()
+        card_data_content.setObjectName("card")
+        card_data_content.setStyleSheet(card_style())
+        data_card_layout = QVBoxLayout(card_data_content)
+        data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        data_card_title = QLabel("实时数据")
-        data_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        data_card_title.setStyleSheet("color: #1a1a1a;")
-        data_card_layout.addWidget(data_card_title)
-
         self.current_voltage_label = QLabel("--.- V")
-        self.current_voltage_label.setFont(QFont("Microsoft YaHei", 32, QFont.Weight.Bold))
+        self.current_voltage_label.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
         self.current_voltage_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_voltage_label)
 
@@ -546,20 +534,16 @@ class VoltageSensorWidget(QWidget):
         self.stats_label.setStyleSheet("color: #888888;")
         data_card_layout.addWidget(self.stats_label)
 
+        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
         layout.addWidget(card_data)
 
-        # ========== 卡片4：图表 + 数据记录 ==========
-        card_chart = QWidget()
-        card_chart.setObjectName("card")
-        card_chart.setStyleSheet(card_style())
-        chart_card_layout = QVBoxLayout(card_chart)
-        chart_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片4：图表 + 数据记录（可折叠） ==========
+        card_chart_content = QWidget()
+        card_chart_content.setObjectName("card")
+        card_chart_content.setStyleSheet(card_style())
+        chart_card_layout = QVBoxLayout(card_chart_content)
+        chart_card_layout.setContentsMargins(20, 4, 20, 16)
         chart_card_layout.setSpacing(12)
-
-        chart_title = QLabel("电压-时间曲线")
-        chart_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        chart_title.setStyleSheet("color: #1a1a1a;")
-        chart_card_layout.addWidget(chart_title)
 
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
@@ -586,14 +570,15 @@ class VoltageSensorWidget(QWidget):
         content_row.addWidget(self.canvas, stretch=2)
 
         chart_card_layout.addLayout(content_row)
+        card_chart = CollapsibleCard("电压-时间曲线", card_chart_content, expanded=True)
         layout.addWidget(card_chart)
 
-        # ========== 卡片5：操作按钮 ==========
-        card_actions = QWidget()
-        card_actions.setObjectName("card")
-        card_actions.setStyleSheet(card_style())
-        actions_layout = QHBoxLayout(card_actions)
-        actions_layout.setContentsMargins(20, 12, 20, 12)
+        # ========== 卡片5：操作按钮（可折叠） ==========
+        card_actions_content = QWidget()
+        card_actions_content.setObjectName("card")
+        card_actions_content.setStyleSheet(card_style())
+        actions_layout = QHBoxLayout(card_actions_content)
+        actions_layout.setContentsMargins(20, 4, 20, 12)
         actions_layout.setSpacing(10)
 
         self.start_btn = PrimaryPushButton("开始采集")
@@ -630,6 +615,7 @@ class VoltageSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
+        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
         layout.addWidget(card_actions)
 
         layout.addStretch()

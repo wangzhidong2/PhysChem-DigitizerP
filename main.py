@@ -40,7 +40,10 @@ from qfluentwidgets import (
 )
 
 # 公共模块（与各传感器模块共享）
-from core import card_style, primary_btn_style, accent_btn_style, patch_combobox_arrow_flip
+from core import (
+    card_style, primary_btn_style, accent_btn_style,
+    patch_combobox_arrow_flip, CollapsibleCard,
+)
 
 
 # ============================================================
@@ -221,118 +224,6 @@ def scan_modules(modules_dir):
 
     discovered.sort(key=lambda x: (x['category'], x['name']))
     return discovered
-
-
-# ============================================================
-# 可折叠卡片
-# ============================================================
-class CollapsibleCard(QWidget):
-    """可折叠卡片：点击标题区切换内容显示/隐藏。
-
-    - 折叠时：只显示标题 + 向下箭头 ▼
-    - 展开时：显示标题 + 全部内容 + 向上箭头 ▲
-
-    外观与项目地址/模块卡片一致（白底 + 圆角 + 浅灰边框）。
-    标题栏用 QFrame 而非 QPushButton，避免 QPushButton 内嵌布局时
-    子控件被按钮自身的渲染覆盖（曾导致"白卡片无内容"的显示问题）。
-    """
-
-    CARD_STYLE = """
-        QWidget#collapsible_card QWidget {
-            background: transparent;
-        }
-        QWidget#collapsible_card QComboBox,
-        QWidget#collapsible_card QTextEdit,
-        QWidget#collapsible_card QPlainTextEdit,
-        QWidget#collapsible_card QSpinBox,
-        QWidget#collapsible_card QDoubleSpinBox,
-        QWidget#collapsible_card QLineEdit,
-        QWidget#collapsible_card QListView,
-        QWidget#collapsible_card QTreeView,
-        QWidget#collapsible_card QTableView,
-        QWidget#collapsible_card QScrollArea,
-        QWidget#collapsible_card QAbstractScrollArea {
-            background: #ffffff;
-        }
-        QFrame#collapsible_header {
-            background: transparent;
-            border: none;
-            border-radius: 8px;
-        }
-        QFrame#collapsible_header:hover {
-            background: #fafafa;
-        }
-    """
-
-    class _Header(QFrame):
-        """可点击的标题栏（QFrame + mouseReleaseEvent）。"""
-
-        clicked = Signal()
-
-        def mouseReleaseEvent(self, e):
-            if e.button() == Qt.MouseButton.LeftButton:
-                self.clicked.emit()
-            super().mouseReleaseEvent(e)
-
-    def __init__(self, title, content_widget, parent=None, expanded=True):
-        super().__init__(parent)
-        self._expanded = expanded
-        self._content_widget = content_widget
-
-        self.setObjectName("collapsible_card")
-        self.setStyleSheet(self.CARD_STYLE)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # 标题栏（可点击 QFrame）
-        self.header = self._Header()
-        self.header.setObjectName("collapsible_header")
-        self.header.setCursor(Qt.CursorShape.PointingHandCursor)
-        header_layout = QHBoxLayout(self.header)
-        header_layout.setContentsMargins(24, 14, 24, 14)
-        header_layout.setSpacing(8)
-
-        self.title_label = QLabel(title)
-        self.title_label.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        self.title_label.setStyleSheet("color: #1a1a1a;")
-        header_layout.addWidget(self.title_label)
-        header_layout.addStretch()
-
-        self.arrow_label = QLabel("▲" if expanded else "▼")
-        self.arrow_label.setFont(QFont("Microsoft YaHei", 12))
-        self.arrow_label.setStyleSheet("color: #666666;")
-        header_layout.addWidget(self.arrow_label)
-
-        self.header.clicked.connect(self._toggle)
-        layout.addWidget(self.header)
-
-        # 内容区
-        self._content_widget.setVisible(expanded)
-        layout.addWidget(self._content_widget)
-
-    def paintEvent(self, e):
-        """直接用 QPainter 绘制白色圆角背景。
-
-        样式表中的 background 会被父级（FluentWindow 全局样式 / content 的
-        无选择器样式）级联覆盖，导致卡片背景变成灰色而非白色。用 paintEvent
-        直接绘制可绕过样式表级联，确保卡片始终是白色背景 + 圆角 + 浅灰边框。
-        """
-        from PySide6.QtGui import QPainter, QPen, QBrush, QPainterPath
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(QBrush(QColor("#ffffff")))
-        painter.setPen(QPen(QColor("#e5e5e5"), 1))
-        path = QPainterPath()
-        path.addRoundedRect(0.5, 0.5, self.width() - 1, self.height() - 1, 8, 8)
-        painter.drawPath(path)
-
-    def _toggle(self):
-        """切换展开/折叠状态，并同步箭头方向"""
-        self._expanded = not self._expanded
-        self._content_widget.setVisible(self._expanded)
-        self.arrow_label.setText("▲" if self._expanded else "▼")
 
 
 # ============================================================
