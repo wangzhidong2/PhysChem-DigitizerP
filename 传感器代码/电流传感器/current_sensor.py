@@ -358,7 +358,13 @@ class CurrentSensorWidget(QWidget):
         params_row = QHBoxLayout()
         params_row.setSpacing(10)
 
-        params_row.addWidget(QLabel("供电 VCC:"))
+        # 供电/分压解释文字（原为常显灰色小字，现改为悬停 tooltip 显示）
+        params_hint_text = ("ACS712 输出最高约 4.5V，超出 ESP32 ADC 的 3.3V 量程，需在输出与 ADC 之间加分压电路\n"
+                            "分压比 ≈ 5/3.3 ≈ 1.515（将 5V 映射到 3.3V）；电流 = (Vout − 零点电压) / 灵敏度")
+
+        vcc_label = QLabel("供电 VCC:")
+        vcc_label.setToolTip(params_hint_text)
+        params_row.addWidget(vcc_label)
         self.vcc_spin = QDoubleSpinBox()
         self.vcc_spin.setRange(4.5, 5.5)
         self.vcc_spin.setDecimals(2)
@@ -366,10 +372,14 @@ class CurrentSensorWidget(QWidget):
         self.vcc_spin.setValue(self.vcc)
         self.vcc_spin.setSuffix(" V")
         self.vcc_spin.setMinimumWidth(90)
+        self.vcc_spin.setFixedHeight(32)
+        self.vcc_spin.setToolTip(params_hint_text)
         self.vcc_spin.valueChanged.connect(self.on_vcc_changed)
         params_row.addWidget(self.vcc_spin)
 
-        params_row.addWidget(QLabel("零点电压:"))
+        vquies_label = QLabel("零点电压:")
+        vquies_label.setToolTip(params_hint_text)
+        params_row.addWidget(vquies_label)
         self.vquies_spin = QDoubleSpinBox()
         self.vquies_spin.setRange(0.0, 5.5)
         self.vquies_spin.setDecimals(3)
@@ -377,8 +387,10 @@ class CurrentSensorWidget(QWidget):
         self.vquies_spin.setValue(self.v_quiescent)
         self.vquies_spin.setSuffix(" V")
         self.vquies_spin.setToolTip("零电流时 ACS712 输出电压，理论值 = VCC/2\n"
-                                    "实际传感器有偏差，建议用“零点校准”按钮自动获取")
+                                    "实际传感器有偏差，建议用“零点校准”按钮自动获取\n\n"
+                                    + params_hint_text)
         self.vquies_spin.setMinimumWidth(100)
+        self.vquies_spin.setFixedHeight(32)
         self.vquies_spin.valueChanged.connect(self.on_vquiescent_changed)
         params_row.addWidget(self.vquies_spin)
 
@@ -400,14 +412,6 @@ class CurrentSensorWidget(QWidget):
         self.actual_range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
         self.actual_range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.actual_range_label)
-
-        hint_label = QLabel(
-            "ACS712 输出最高约 4.5V，超出 ESP32 ADC 的 3.3V 量程，需在输出与 ADC 之间加分压电路\n"
-            "分压比 ≈ 5/3.3 ≈ 1.515（将 5V 映射到 3.3V）；电流 = (Vout − 零点电压) / 灵敏度"
-        )
-        hint_label.setStyleSheet("color: #888888; font-size: 11px;")
-        hint_label.setWordWrap(True)
-        acs_card_layout.addWidget(hint_label)
 
         # 显示单位 + 零点校准状态
         unit_row = QHBoxLayout()

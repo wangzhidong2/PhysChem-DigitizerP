@@ -489,11 +489,6 @@ class HomePageWidget(QWidget):
         repo_card_layout.setContentsMargins(24, 4, 24, 14)
         repo_card_layout.setSpacing(6)
 
-        repo_hint = QLabel("点击 URL 可全选复制  ·  「访问」用浏览器打开  ·  「复制」拷到剪贴板")
-        repo_hint.setFont(QFont("Microsoft YaHei", 9))
-        repo_hint.setStyleSheet("color: #999999;")
-        repo_card_layout.addWidget(repo_hint)
-
         repo_card_layout.addSpacing(2)
 
         # 3 个平台 URL 行

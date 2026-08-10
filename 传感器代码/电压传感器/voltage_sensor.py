@@ -441,7 +441,14 @@ class VoltageSensorWidget(QWidget):
 
         params_row = QHBoxLayout()
         params_row.setSpacing(10)
-        params_row.addWidget(QLabel("分压比 (R1+R2)/R2:"))
+
+        # 分压比/放大倍数解释文字（原为常显灰色小字，现改为悬停 tooltip 显示）
+        params_hint_text = ("分压比 = (R1+R2)/R2，用于还原分压前的原始电压；\n"
+                            "放大倍数 = 运放增益，用于还原放大前的信号电压")
+
+        divider_label = QLabel("分压比 (R1+R2)/R2:")
+        divider_label.setToolTip(params_hint_text)
+        params_row.addWidget(divider_label)
         self.divider_spin = QDoubleSpinBox()
         self.divider_spin.setRange(1.0, 1000.0)
         self.divider_spin.setDecimals(2)
@@ -449,10 +456,14 @@ class VoltageSensorWidget(QWidget):
         self.divider_spin.setValue(self.divider_ratio)
         self.divider_spin.setSuffix(" x")
         self.divider_spin.setMinimumWidth(120)
+        self.divider_spin.setFixedHeight(32)
+        self.divider_spin.setToolTip(params_hint_text)
         self.divider_spin.valueChanged.connect(self.on_divider_changed)
         params_row.addWidget(self.divider_spin)
 
-        params_row.addWidget(QLabel("放大倍数:"))
+        amp_label = QLabel("放大倍数:")
+        amp_label.setToolTip(params_hint_text)
+        params_row.addWidget(amp_label)
         self.amp_spin = QDoubleSpinBox()
         self.amp_spin.setRange(0.01, 1000.0)
         self.amp_spin.setDecimals(2)
@@ -460,6 +471,8 @@ class VoltageSensorWidget(QWidget):
         self.amp_spin.setValue(self.amp_ratio)
         self.amp_spin.setSuffix(" x")
         self.amp_spin.setMinimumWidth(120)
+        self.amp_spin.setFixedHeight(32)
+        self.amp_spin.setToolTip(params_hint_text)
         self.amp_spin.valueChanged.connect(self.on_amp_changed)
         params_row.addWidget(self.amp_spin)
 
@@ -468,11 +481,6 @@ class VoltageSensorWidget(QWidget):
         params_row.addWidget(self.actual_range_label)
         params_row.addStretch()
         adc_card_layout.addLayout(params_row)
-
-        hint_label = QLabel("分压比 = (R1+R2)/R2，用于还原分压前的原始电压；放大倍数 = 运放增益，用于还原放大前的信号电压")
-        hint_label.setStyleSheet("color: #1a1a1a; font-size: 11px;")
-        hint_label.setWordWrap(True)
-        adc_card_layout.addWidget(hint_label)
 
         # 显示单位选择
         unit_row = QHBoxLayout()
