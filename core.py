@@ -341,10 +341,15 @@ class CollapsibleCard(QWidget):
                 self.clicked.emit()
             super().mouseReleaseEvent(e)
 
-    def __init__(self, title, content_widget, parent=None, expanded=True):
+    def __init__(self, title, content_widget, parent=None, expanded=True, fullscreen=False):
         super().__init__(parent)
         self._expanded = expanded
         self._content_widget = content_widget
+        self._fullscreen = False  # 当前是否处于全屏状态
+        self._fullscreen_enabled = fullscreen  # 是否启用全屏按钮
+        self._orig_parent = None  # 全屏前的父控件
+        self._orig_layout = None  # 全屏前所在的布局
+        self._orig_index = -1     # 全屏前在布局中的索引
 
         self.setObjectName("collapsible_card")
         self.setStyleSheet(self.CARD_STYLE)
@@ -366,6 +371,25 @@ class CollapsibleCard(QWidget):
         self.title_label.setStyleSheet("color: #1a1a1a;")
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
+
+        # 全屏按钮（可选）
+        if self._fullscreen_enabled:
+            self.fullscreen_btn = QPushButton("⛶")
+            self.fullscreen_btn.setFixedSize(28, 28)
+            self.fullscreen_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.fullscreen_btn.setToolTip("全屏显示 / 退出全屏")
+            self.fullscreen_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 16px;
+                    color: #666666;
+                }
+                QPushButton:hover { background: #f0f0f0; color: #0078d4; }
+            """)
+            self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
+            header_layout.addWidget(self.fullscreen_btn)
 
         self.arrow_label = QLabel("▲" if expanded else "▼")
         self.arrow_label.setFont(QFont("Microsoft YaHei", 12))
@@ -394,6 +418,113 @@ class CollapsibleCard(QWidget):
         self._expanded = not self._expanded
         self._content_widget.setVisible(self._expanded)
         self.arrow_label.setText("▲" if self._expanded else "▼")
+
+    def toggle_fullscreen(self):
+        """切换全屏/还原。
+
+        全屏时：把卡片 reparent 到模块的滚动区 viewport 上，作为覆盖层填满整个内容区，
+        不覆盖侧边栏和标题栏（因为 viewport 本身就在内容区内）。
+        还原时：把卡片 reparent 回原父控件，插回原布局原位置。
+        """
+        if not self._fullscreen:
+            self._enter_fullscreen()
+        else:
+            self._exit_fullscreen()
+
+    def _find_content_host(self):
+        """向上查找适合作为全屏宿主的滚动区 viewport。
+
+        传感器模块结构：模块widget -> main_layout -> scroll(QScrollArea) -> content。
+        全屏时覆盖到 scroll 的 viewport 上，这样能利用整个内容区，且不覆盖侧边栏/标题栏。
+        """
+        from PySide6.QtWidgets import QScrollArea
+        p = self.parent()
+        while p is not None:
+            if isinstance(p, QScrollArea):
+                return p.viewport()  # scroll 的 viewport
+            p = p.parent()
+        return None
+
+    def _find_scroll_area(self):
+        """向上查找 QScrollArea，用于监听尺寸变化"""
+        from PySide6.QtWidgets import QScrollArea
+        p = self.parent()
+        while p is not None:
+            if isinstance(p, QScrollArea):
+                return p
+            p = p.parent()
+        return None
+
+    def _enter_fullscreen(self):
+        """进入全屏：reparent 到 viewport，绝对定位填满"""
+        from PySide6.QtWidgets import QScrollArea
+        host = self._find_content_host()
+        if host is None:
+            return
+        scroll = self._find_scroll_area()
+        if scroll is None:
+            return
+
+        # 记录原位置
+        self._orig_parent = self.parent()
+        pl = self._orig_parent.layout()
+        self._orig_layout = None
+        self._orig_index = -1
+        if pl is not None:
+            for i in range(pl.count()):
+                it = pl.itemAt(i)
+                if it and it.widget() is self:
+                    self._orig_index = i
+                    self._orig_layout = pl
+                    break
+
+        # 从原布局移除（不删除 widget）
+        if self._orig_layout is not None:
+            self._orig_layout.removeWidget(self)
+
+        # reparent 到 viewport，绝对定位填满
+        self.setParent(host)
+        self._host = host
+        self._scroll = scroll
+        self._fullscreen = True
+
+        # 隐藏滚动条（全屏时不滚动）
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        # 安装事件过滤器监听 viewport 尺寸变化
+        host.installEventFilter(self)
+        self.setGeometry(0, 0, host.width(), host.height())
+        self.raise_()
+
+    def _exit_fullscreen(self):
+        """退出全屏：reparent 回原父控件，插回原位置"""
+        if self._host is None:
+            return
+        # 移除事件过滤器
+        self._host.removeEventFilter(self)
+
+        # 恢复滚动条
+        if self._scroll is not None:
+            self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # reparent 回原父控件
+        self.setParent(self._orig_parent)
+        if self._orig_layout is not None and self._orig_index >= 0:
+            self._orig_layout.insertWidget(self._orig_index, self)
+
+        self._fullscreen = False
+        self._host = None
+        self._scroll = None
+
+    def eventFilter(self, obj, e):
+        """监听 viewport 尺寸变化，全屏时跟随"""
+        from PySide6.QtCore import QEvent
+        if obj is self._host and e.type() == QEvent.Type.Resize:
+            if self._fullscreen and self._host is not None:
+                self.setGeometry(0, 0, self._host.width(), self._host.height())
+        return super().eventFilter(obj, e)
 
 
 # ============================================================

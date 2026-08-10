@@ -514,7 +514,7 @@ class CurrentSensorWidget(QWidget):
         content_row.addWidget(self.canvas, stretch=2)
 
         chart_card_layout.addLayout(content_row)
-        card_chart = CollapsibleCard("电流-时间曲线", card_chart_content, expanded=True)
+        card_chart = CollapsibleCard("电流-时间曲线", card_chart_content, expanded=True, fullscreen=True)
         layout.addWidget(card_chart)
 
         # ========== 卡片5：操作按钮（可折叠） ==========
