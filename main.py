@@ -40,7 +40,7 @@ from qfluentwidgets import (
 )
 
 # 公共模块（与各传感器模块共享）
-from core import card_style, primary_btn_style, accent_btn_style
+from core import card_style, primary_btn_style, accent_btn_style, patch_combobox_arrow_flip
 
 
 # ============================================================
@@ -224,6 +224,118 @@ def scan_modules(modules_dir):
 
 
 # ============================================================
+# 可折叠卡片
+# ============================================================
+class CollapsibleCard(QWidget):
+    """可折叠卡片：点击标题区切换内容显示/隐藏。
+
+    - 折叠时：只显示标题 + 向下箭头 ▼
+    - 展开时：显示标题 + 全部内容 + 向上箭头 ▲
+
+    外观与项目地址/模块卡片一致（白底 + 圆角 + 浅灰边框）。
+    标题栏用 QFrame 而非 QPushButton，避免 QPushButton 内嵌布局时
+    子控件被按钮自身的渲染覆盖（曾导致"白卡片无内容"的显示问题）。
+    """
+
+    CARD_STYLE = """
+        QWidget#collapsible_card QWidget {
+            background: transparent;
+        }
+        QWidget#collapsible_card QComboBox,
+        QWidget#collapsible_card QTextEdit,
+        QWidget#collapsible_card QPlainTextEdit,
+        QWidget#collapsible_card QSpinBox,
+        QWidget#collapsible_card QDoubleSpinBox,
+        QWidget#collapsible_card QLineEdit,
+        QWidget#collapsible_card QListView,
+        QWidget#collapsible_card QTreeView,
+        QWidget#collapsible_card QTableView,
+        QWidget#collapsible_card QScrollArea,
+        QWidget#collapsible_card QAbstractScrollArea {
+            background: #ffffff;
+        }
+        QFrame#collapsible_header {
+            background: transparent;
+            border: none;
+            border-radius: 8px;
+        }
+        QFrame#collapsible_header:hover {
+            background: #fafafa;
+        }
+    """
+
+    class _Header(QFrame):
+        """可点击的标题栏（QFrame + mouseReleaseEvent）。"""
+
+        clicked = Signal()
+
+        def mouseReleaseEvent(self, e):
+            if e.button() == Qt.MouseButton.LeftButton:
+                self.clicked.emit()
+            super().mouseReleaseEvent(e)
+
+    def __init__(self, title, content_widget, parent=None, expanded=True):
+        super().__init__(parent)
+        self._expanded = expanded
+        self._content_widget = content_widget
+
+        self.setObjectName("collapsible_card")
+        self.setStyleSheet(self.CARD_STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 标题栏（可点击 QFrame）
+        self.header = self._Header()
+        self.header.setObjectName("collapsible_header")
+        self.header.setCursor(Qt.CursorShape.PointingHandCursor)
+        header_layout = QHBoxLayout(self.header)
+        header_layout.setContentsMargins(24, 14, 24, 14)
+        header_layout.setSpacing(8)
+
+        self.title_label = QLabel(title)
+        self.title_label.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        self.title_label.setStyleSheet("color: #1a1a1a;")
+        header_layout.addWidget(self.title_label)
+        header_layout.addStretch()
+
+        self.arrow_label = QLabel("▲" if expanded else "▼")
+        self.arrow_label.setFont(QFont("Microsoft YaHei", 12))
+        self.arrow_label.setStyleSheet("color: #666666;")
+        header_layout.addWidget(self.arrow_label)
+
+        self.header.clicked.connect(self._toggle)
+        layout.addWidget(self.header)
+
+        # 内容区
+        self._content_widget.setVisible(expanded)
+        layout.addWidget(self._content_widget)
+
+    def paintEvent(self, e):
+        """直接用 QPainter 绘制白色圆角背景。
+
+        样式表中的 background 会被父级（FluentWindow 全局样式 / content 的
+        无选择器样式）级联覆盖，导致卡片背景变成灰色而非白色。用 paintEvent
+        直接绘制可绕过样式表级联，确保卡片始终是白色背景 + 圆角 + 浅灰边框。
+        """
+        from PySide6.QtGui import QPainter, QPen, QBrush, QPainterPath
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QBrush(QColor("#ffffff")))
+        painter.setPen(QPen(QColor("#e5e5e5"), 1))
+        path = QPainterPath()
+        path.addRoundedRect(0.5, 0.5, self.width() - 1, self.height() - 1, 8, 8)
+        painter.drawPath(path)
+
+    def _toggle(self):
+        """切换展开/折叠状态，并同步箭头方向"""
+        self._expanded = not self._expanded
+        self._content_widget.setVisible(self._expanded)
+        self.arrow_label.setText("▲" if self._expanded else "▼")
+
+
+# ============================================================
 # 主页
 # ============================================================
 class HomePageWidget(QWidget):
@@ -292,7 +404,8 @@ class HomePageWidget(QWidget):
         self.scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
 
         self.content = QWidget()
-        self.content.setStyleSheet("background: #f3f3f3;")
+        self.content.setObjectName("home_content")
+        self.content.setStyleSheet("QWidget#home_content { background: #f3f3f3; }")
         self.content_layout = QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(24, 16, 24, 18)
         self.content_layout.setSpacing(10)
@@ -369,18 +482,12 @@ class HomePageWidget(QWidget):
 
         self.content_layout.addWidget(card1)
 
-        # ========== 卡片2：项目地址（3 平台，可复制可访问） ==========
-        card_repo = QWidget()
-        card_repo.setObjectName("card")
-        card_repo.setStyleSheet(self.CARD_STYLE)
-        repo_card_layout = QVBoxLayout(card_repo)
-        repo_card_layout.setContentsMargins(24, 14, 24, 14)
+        # ========== 卡片2：项目地址（可折叠，3 平台，可复制可访问） ==========
+        # 内容区（不含标题，标题由 CollapsibleCard 的 header 提供）
+        repo_content = QWidget()
+        repo_card_layout = QVBoxLayout(repo_content)
+        repo_card_layout.setContentsMargins(24, 4, 24, 14)
         repo_card_layout.setSpacing(6)
-
-        repo_title = QLabel("项目地址")
-        repo_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        repo_title.setStyleSheet("color: #1a1a1a;")
-        repo_card_layout.addWidget(repo_title)
 
         repo_hint = QLabel("点击 URL 可全选复制  ·  「访问」用浏览器打开  ·  「复制」拷到剪贴板")
         repo_hint.setFont(QFont("Microsoft YaHei", 9))
@@ -447,7 +554,9 @@ class HomePageWidget(QWidget):
                 line.setStyleSheet("color: #f0f0f0;")
                 repo_card_layout.addWidget(line)
 
-        self.content_layout.addWidget(card_repo)
+        # 用 CollapsibleCard 包裹，标题"项目地址"显示在 header，可点击折叠
+        repo_collapsible = CollapsibleCard("项目地址", repo_content, expanded=True)
+        self.content_layout.addWidget(repo_collapsible)
 
         # 模块卡片容器（动态填充）
         self.modules_container = QWidget()
@@ -474,67 +583,71 @@ class HomePageWidget(QWidget):
         for icon, name, cat in self._modules:
             categories.setdefault(cat, []).append((icon, name))
 
+        # 物理和化学合并到一个可折叠卡片，用分割线隔开
+        if categories:
+            card = self._create_combined_module_card(categories)
+            self.modules_container_layout.addWidget(card)
+
+    def _create_combined_module_card(self, categories):
+        """创建合并了物理/化学模块的可折叠卡片。
+
+        各类别之间用水平分割线隔开，每个类别带小标题 + 模块网格。
+        """
         # 类别显示名映射
         cat_names = {
-            'physics': ('物理实验模块', '⚛️', '#0067c0'),
-            'chemistry': ('化学实验模块', '🧪', '#7b1fa2'),
+            'physics': '物理实验模块',
+            'chemistry': '化学实验模块',
         }
 
-        # 物理和化学并排
-        if 'physics' in categories or 'chemistry' in categories:
-            row_layout = QHBoxLayout()
-            row_layout.setSpacing(10)
-
-            for cat_key in ['physics', 'chemistry']:
-                if cat_key not in categories:
-                    continue
-                display_name, icon_char, color = cat_names.get(
-                    cat_key, (cat_key, '📦', '#666666')
-                )
-                mods = categories[cat_key]
-                card = self._create_grid_module_card(
-                    display_name,
-                    f"{len(mods)} 个模块",
-                    mods,
-                    icon_char,
-                    color,
-                )
-                row_layout.addWidget(card, stretch=2)
-
-            self.modules_container_layout.addLayout(row_layout)
-
-    def _create_grid_module_card(self, title, subtitle, modules, title_icon, title_color):
-        """创建现代化设置风格的网格卡片"""
-        card = QWidget()
-        card.setObjectName("card")
-        card.setStyleSheet(self.CARD_STYLE)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(18, 14, 18, 12)
-        card_layout.setSpacing(0)
-
-        title_label = QLabel(title)
-        title_label.setFont(QFont("Microsoft YaHei", 16, QFont.Weight.Bold))
-        title_label.setStyleSheet("color: #1a1a1a;")
-        card_layout.addWidget(title_label)
-
-        subtitle_label = QLabel(subtitle)
-        subtitle_label.setFont(QFont("Microsoft YaHei", 10))
-        subtitle_label.setStyleSheet("color: #666666; margin-bottom: 8px;")
-        card_layout.addWidget(subtitle_label)
+        # 内容区
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(18, 4, 18, 12)
+        content_layout.setSpacing(0)
 
         from PySide6.QtWidgets import QGridLayout
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(8)
 
-        for i, (icon_text, name) in enumerate(modules):
-            row, col = divmod(i, 2)
-            item = self._create_grid_module_item(icon_text, name)
-            grid.addWidget(item, row, col)
+        first = True
+        for cat_key in ['physics', 'chemistry']:
+            if cat_key not in categories or not categories[cat_key]:
+                continue
 
-        card_layout.addLayout(grid)
-        card_layout.addSpacing(4)
-        return card
+            # 类别之间用分割线隔开（第一个类别前不画）
+            if not first:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.HLine)
+                sep.setStyleSheet("color: #e5e5e5; background: transparent;")
+                content_layout.addWidget(sep)
+                content_layout.addSpacing(8)
+            first = False
+
+            display_name = cat_names.get(cat_key, cat_key)
+            mods = categories[cat_key]
+
+            # 类别小标题
+            cat_label = QLabel(display_name)
+            cat_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+            cat_label.setStyleSheet("color: #444444; background: transparent; margin-top: 4px;")
+            content_layout.addWidget(cat_label)
+
+            count_label = QLabel(f"{len(mods)} 个模块")
+            count_label.setFont(QFont("Microsoft YaHei", 9))
+            count_label.setStyleSheet("color: #999999; background: transparent; margin-bottom: 6px;")
+            content_layout.addWidget(count_label)
+
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setSpacing(8)
+
+            for i, (icon_text, name) in enumerate(mods):
+                row, col = divmod(i, 2)
+                item = self._create_grid_module_item(icon_text, name)
+                grid.addWidget(item, row, col)
+
+            content_layout.addLayout(grid)
+            content_layout.addSpacing(4)
+
+        return CollapsibleCard("传感器模块", content, expanded=True)
 
     def _create_grid_module_item(self, icon_text, name):
         """创建网格内的单个模块项"""
@@ -554,9 +667,8 @@ class HomePageWidget(QWidget):
         icon_label.setFixedSize(32, 32)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setStyleSheet("""
-            background-color: #e8f0fe;
-            border-radius: 6px;
-            color: #0067c0;
+            background-color: #ffffff;
+            color: #000000;
         """)
         btn_layout.addWidget(icon_label)
 
@@ -619,7 +731,7 @@ class HomePageWidget(QWidget):
                 QPushButton#module_item:pressed { background-color: #505050; }
             """
             self.scroll.setStyleSheet("QScrollArea { border: none; background: #202020; }")
-            self.content.setStyleSheet("background: #202020;")
+            self.content.setStyleSheet("QWidget#home_content { background: #202020; }")
         else:
             self.CARD_STYLE = """
                 QWidget#card {
@@ -644,7 +756,7 @@ class HomePageWidget(QWidget):
                 QPushButton#module_item:pressed { background-color: #e5e5e5; }
             """
             self.scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
-            self.content.setStyleSheet("background: #f3f3f3;")
+            self.content.setStyleSheet("QWidget#home_content { background: #f3f3f3; }")
 
         # 刷新已显示的卡片样式
         self._rebuild_module_cards()
@@ -1119,6 +1231,8 @@ class MainWindow(FluentWindow):
 
 def main():
     app = QApplication(sys.argv)
+    # 让 ComboBox 展开时箭头朝上（FluentWidgets 默认始终朝下）
+    patch_combobox_arrow_flip()
     # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
     window.show()

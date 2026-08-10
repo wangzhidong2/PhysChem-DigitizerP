@@ -496,6 +496,135 @@ def modern_combo_style_dark():
 
 
 # ============================================================
+# ComboBox 箭头翻转补丁
+# ============================================================
+def patch_combobox_arrow_flip():
+    """让 FluentWidgets 的 ComboBox / EditableComboBox 展开下拉时箭头朝上。
+
+    FluentWidgets 的 ComboBox 继承自 QPushButton（非 QComboBox），
+    paintEvent 中硬编码绘制 FIF.ARROW_DOWN，无论是否展开都朝下。
+    本函数 monkey-patch 其 paintEvent，当下拉菜单（dropMenu）存在时
+    将箭头绕中心旋转 180°，实现「展开朝上 / 收起朝下」的交互。
+    同时处理 EditableComboBox 的 LineEditButton 箭头按钮。
+    """
+    from qfluentwidgets.components.widgets.combo_box import (
+        ComboBox as _CBox, EditableComboBox as _EBox, ComboBoxBase as _CBase,
+    )
+    from qfluentwidgets.components.widgets.line_edit import LineEditButton as _LEBtn
+    from qfluentwidgets.common.icon import (
+        FluentIcon as _FIF, isDarkTheme, drawIcon as _drawIcon,
+    )
+    from PySide6.QtWidgets import QPushButton as _QPB, QToolButton as _QTB
+    from PySide6.QtGui import QPainter as _QPainter
+    from PySide6.QtCore import QRectF as _QRectF
+
+    if getattr(_CBox, '_arrow_flip_patched', False):
+        return
+
+    # --- ComboBox.paintEvent：展开时箭头旋转 180° ---
+    def _combo_paint(self, e):
+        _QPB.paintEvent(self, e)
+        painter = _QPainter(self)
+        painter.setRenderHints(_QPainter.Antialiasing)
+        if self.isHover:
+            painter.setOpacity(0.8)
+        elif self.isPressed:
+            painter.setOpacity(0.7)
+        rect = _QRectF(self.width()-22, self.height()/2-5+self.arrowAni.y, 10, 10)
+        flipped = self.dropMenu is not None
+        if flipped:
+            painter.save()
+            c = rect.center()
+            painter.translate(c.x(), c.y())
+            painter.rotate(180)
+            painter.translate(-c.x(), -c.y())
+        if isDarkTheme():
+            _FIF.ARROW_DOWN.render(painter, rect)
+        else:
+            _FIF.ARROW_DOWN.render(painter, rect, fill="#646464")
+        if flipped:
+            painter.restore()
+    _CBox.paintEvent = _combo_paint
+
+    # --- LineEditButton.paintEvent：EditableComboBox 的箭头按钮，展开时翻转 ---
+    _orig_leb_paint = _LEBtn.paintEvent
+
+    def _leb_paint(self, e):
+        parent = self.parent()
+        flip = (parent is not None
+                and getattr(parent, 'dropMenu', None) is not None
+                and getattr(self, '_icon', None) is _FIF.ARROW_DOWN)
+        if not flip:
+            _orig_leb_paint(self, e)
+            return
+        _QTB.paintEvent(self, e)
+        painter = _QPainter(self)
+        painter.setRenderHints(_QPainter.Antialiasing | _QPainter.SmoothPixmapTransform)
+        iw, ih = self.iconSize().width(), self.iconSize().height()
+        w, h = self.width(), self.height()
+        rect = _QRectF((w - iw)/2, (h - ih)/2, iw, ih)
+        if self.isPressed:
+            painter.setOpacity(0.7)
+        painter.save()
+        c = rect.center()
+        painter.translate(c.x(), c.y())
+        painter.rotate(180)
+        painter.translate(-c.x(), -c.y())
+        if isDarkTheme():
+            _drawIcon(self._icon, painter, rect)
+        else:
+            _drawIcon(self._icon, painter, rect, fill='#656565')
+        painter.restore()
+    _LEBtn.paintEvent = _leb_paint
+
+    # --- 菜单打开/关闭后触发重绘，确保箭头方向同步 ---
+    from PySide6.QtCore import QTimer as _QTimer
+
+    def _refresh(self):
+        self.update()
+        db = getattr(self, 'dropButton', None)
+        if db is not None:
+            db.update()
+
+    _orig_show = _CBase._showComboMenu
+
+    def _show(self):
+        # _orig_show 内部会同步执行 menu.exec()（进入新的事件循环阻塞），
+        # 若直接在 _orig_show 返回后调用 _refresh，那时菜单已关闭、
+        # dropMenu 已被置 None，箭头翻转永远无法触发。
+        # 用 QTimer.singleShot(0) 把 _refresh 投递到下一个事件循环迭代：
+        # 当 _orig_show 内部 dropMenu 设置完毕并调用 menu.exec() 进入
+        # 嵌套事件循环时，QTimer 回调会被处理，此时 dropMenu 已存在，
+        # 箭头会被正确翻转重绘。
+        _QTimer.singleShot(0, lambda: _refresh(self))
+        _orig_show(self)
+    _CBase._showComboMenu = _show
+
+    _orig_close = _CBase._closeComboMenu
+
+    def _close(self):
+        _orig_close(self)
+        _refresh(self)
+    _CBase._closeComboMenu = _close
+
+    _orig_onclose = _CBase._onDropMenuClosed
+
+    def _onclose(self):
+        _orig_onclose(self)
+        _refresh(self)
+    _CBase._onDropMenuClosed = _onclose
+
+    _orig_onclose_e = _EBox._onDropMenuClosed
+
+    def _onclose_e(self):
+        _orig_onclose_e(self)
+        _refresh(self)
+    _EBox._onDropMenuClosed = _onclose_e
+
+    _CBox._arrow_flip_patched = True
+
+
+# ============================================================
 # 通用对话框
 # ============================================================
 class CalibrationDialog(QDialog):
