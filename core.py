@@ -439,6 +439,8 @@ class CollapsibleCard(QWidget):
         self._orig_parent = None  # 全屏前的父控件
         self._orig_layout = None  # 全屏前所在的布局
         self._orig_index = -1     # 全屏前在布局中的索引
+        self._host = None         # 全屏时的宿主 viewport
+        self._scroll = None       # 全屏时的 QScrollArea
 
         self.setObjectName("collapsible_card")
         self.setStyleSheet(self.CARD_STYLE)
@@ -547,6 +549,7 @@ class CollapsibleCard(QWidget):
     def _enter_fullscreen(self):
         """进入全屏：reparent 到 viewport，绝对定位填满"""
         from PySide6.QtWidgets import QScrollArea
+        from PySide6.QtCore import QTimer
         host = self._find_content_host()
         if host is None:
             return
@@ -583,8 +586,55 @@ class CollapsibleCard(QWidget):
 
         # 安装事件过滤器监听 viewport 尺寸变化
         host.installEventFilter(self)
+
+        # reparent 后必须显式 show()，否则 Qt 可能将卡片及其内容（含图表）标记为不可见
+        self.show()
+        self.header.setVisible(True)
+        self.title_label.setVisible(True)
+        self.arrow_label.setVisible(True)
+        if hasattr(self, 'fullscreen_btn'):
+            self.fullscreen_btn.setVisible(True)
+        # 内容区（含 FigureCanvas）必须可见
+        self._content_widget.setVisible(True)
+
+        # 立即设置一次几何，再用延迟回调修正（隐藏滚动条后 viewport 尺寸会变化）
         self.setGeometry(0, 0, host.width(), host.height())
         self.raise_()
+        # 强制布局重算，确保图表 canvas 拿到正确尺寸
+        if self.layout() is not None:
+            self.layout().activate()
+
+        # 延迟修正几何：等滚动条隐藏、viewport 尺寸更新后再最终定位
+        def _fix_geom():
+            if self._fullscreen and self._host is not None:
+                self.setGeometry(0, 0, self._host.width(), self._host.height())
+                if self.layout() is not None:
+                    self.layout().activate()
+                # 触发内部 matplotlib canvas 重绘
+                self._redraw_canvas()
+        QTimer.singleShot(0, _fix_geom)
+
+    def _redraw_canvas(self):
+        """查找卡片内的 FigureCanvas 并触发重绘，避免全屏后图表空白"""
+        try:
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        except Exception:
+            return
+        # 在内容区递归查找 FigureCanvas
+        def _find(w):
+            if isinstance(w, FigureCanvasQTAgg):
+                return w
+            for child in w.children():
+                r = _find(child)
+                if r is not None:
+                    return r
+            return None
+        canvas = _find(self._content_widget)
+        if canvas is not None:
+            try:
+                canvas.draw()
+            except Exception:
+                pass
 
     def _exit_fullscreen(self):
         """退出全屏：reparent 回原父控件，插回原位置"""
@@ -606,6 +656,15 @@ class CollapsibleCard(QWidget):
         self._fullscreen = False
         self._host = None
         self._scroll = None
+
+        # reparent 后显式 show，确保卡片及其内容可见
+        self.show()
+        self._content_widget.setVisible(self._expanded)
+        if self.layout() is not None:
+            self.layout().activate()
+        # 延迟重绘 canvas，等布局稳定
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._redraw_canvas)
 
     def eventFilter(self, obj, e):
         """监听 viewport 尺寸变化，全屏时跟随"""
