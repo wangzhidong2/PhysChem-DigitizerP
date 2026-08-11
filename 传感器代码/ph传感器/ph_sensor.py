@@ -137,7 +137,7 @@ class PhSensorWidget(QWidget):
         return max(0.0, min(14.0, ph_value))
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
 
         # 控制面板
         control_group = QGroupBox("控制面板")
@@ -265,8 +265,6 @@ class PhSensorWidget(QWidget):
 
         button_layout.addStretch()
         layout.addLayout(button_layout)
-
-        self.setLayout(layout)
 
         # 定时器用于更新图表
         self.timer = QTimer()

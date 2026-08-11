@@ -213,11 +213,11 @@ class VoltageSensorWidget(QWidget):
         return (adc_value / max_adc) * self.VREF
 
     def init_ui(self):
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
@@ -614,7 +614,6 @@ class VoltageSensorWidget(QWidget):
         layout.addStretch()
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
-        self.setLayout(main_layout)
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_chart)

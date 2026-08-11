@@ -285,11 +285,11 @@ class HomePageWidget(QWidget):
         self._rebuild_module_cards()
 
     def init_ui(self):
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        self.scroll = QScrollArea()
+        self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
@@ -454,7 +454,6 @@ class HomePageWidget(QWidget):
         self.content_layout.addStretch()
         self.scroll.setWidget(self.content)
         main_layout.addWidget(self.scroll)
-        self.setLayout(main_layout)
 
     def _rebuild_module_cards(self):
         """根据 self._modules 重建模块卡片"""
@@ -948,7 +947,7 @@ class SettingsPlaceholderWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 32, 40, 32)
         layout.setSpacing(16)
 
@@ -963,7 +962,6 @@ class SettingsPlaceholderWidget(QWidget):
         layout.addWidget(placeholder)
 
         layout.addStretch()
-        self.setLayout(layout)
 
     def apply_theme(self, theme):
         # 占位页面，暂无主题相关样式需要刷新

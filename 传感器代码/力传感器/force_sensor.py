@@ -136,7 +136,7 @@ class ForceSensorWidget(QWidget):
         return save_sensor_config('force_sensor', config)
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
 
         # 连接方式选择
         conn_group = QGroupBox("连接方式")
@@ -310,8 +310,6 @@ class ForceSensorWidget(QWidget):
 
         button_layout.addStretch()
         layout.addLayout(button_layout)
-
-        self.setLayout(layout)
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_chart)

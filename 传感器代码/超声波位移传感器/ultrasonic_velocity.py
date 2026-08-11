@@ -56,7 +56,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
 
         # 控制面板
         control_group = QGroupBox("控制面板")
@@ -158,8 +158,6 @@ class UltrasonicVelocityWidget(QWidget):
 
         button_layout.addStretch()
         layout.addLayout(button_layout)
-
-        self.setLayout(layout)
 
         # 定时器用于更新图表
         self.timer = QTimer()

@@ -195,11 +195,11 @@ class CurrentSensorWidget(QWidget):
     # UI 构建
     # ------------------------------------------------------------------
     def init_ui(self):
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
@@ -558,7 +558,6 @@ class CurrentSensorWidget(QWidget):
         layout.addStretch()
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
-        self.setLayout(main_layout)
 
         self.update_range_display()
 
