@@ -595,10 +595,13 @@ class CollapsibleCard(QWidget):
         self._host = None         # 全屏时的宿主 viewport
         self._scroll = None       # 全屏时的 QScrollArea
         # 全屏浮动面板相关
-        self._overlay_source_card = None      # 实时数据卡片（全屏时其内容浮于图表上方）
-        self._overlay_summary_widget = None   # 折叠态显示的主实时值标签
+        self._overlay_content_widget = None   # 全屏时浮于图表上方的控件（如数据记录区）
+        self._overlay_summary_widget = None   # 折叠态显示的摘要标签（如实时值）
+        self._overlay_orig_parent = None      # 浮动控件的原父控件
+        self._overlay_orig_layout = None      # 浮动控件的原布局
+        self._overlay_orig_index = -1         # 浮动控件在原布局中的索引
         self._floating_panel = None           # 全屏时的 FloatingDataPanel 实例
-        self._fullscreen_hidden_widgets = []  # 全屏时需隐藏的控件（如数据记录区）
+        self._fullscreen_hidden_widgets = []  # 全屏时需隐藏的控件
 
         self.setObjectName("collapsible_card")
         self.setStyleSheet(self.CARD_STYLE)
@@ -681,34 +684,73 @@ class CollapsibleCard(QWidget):
             self._exit_fullscreen()
 
     # ---------- 全屏浮动面板接口 ----------
-    def set_fullscreen_overlay(self, source_card, summary_widget=None):
-        """设置全屏时浮动数据面板的数据源。
+    def set_fullscreen_overlay(self, content_widget, summary_widget=None):
+        """设置全屏时浮动面板的内容控件。
 
         Args:
-            source_card: 实时数据卡片（CollapsibleCard），全屏时其内容控件
-                         会被移到浮动面板中显示在图表上方。
-            summary_widget: 折叠态显示的主实时值标签（可选）
+            content_widget: 全屏时浮于图表上方的控件（如数据记录区文本框）。
+                            全屏时该控件会被移入可拖动、可折叠的浮动面板；
+                            退出全屏时自动恢复到原布局原位置。
+            summary_widget: 折叠态显示的摘要标签（如实时值标签，可选）
         """
-        self._overlay_source_card = source_card
+        self._overlay_content_widget = content_widget
         self._overlay_summary_widget = summary_widget
 
     def add_fullscreen_hidden_widget(self, widget):
-        """注册全屏时需隐藏的控件（如数据记录区，让图表填满整个区域）"""
+        """注册全屏时需隐藏的控件"""
         self._fullscreen_hidden_widgets.append(widget)
 
-    def take_content_for_overlay(self):
-        """从布局中移除内容控件（供浮动面板使用），返回内容控件。"""
-        if self._content_widget is not None:
-            self.layout().removeWidget(self._content_widget)
-            return self._content_widget
+    def _detach_overlay_widget(self):
+        """从原布局中移除浮动内容控件，并记录原位置以便恢复。
+
+        Returns: 被移除的控件（成功时）或 None
+        """
+        widget = self._overlay_content_widget
+        if widget is None:
+            return None
+        self._overlay_orig_parent = widget.parentWidget()
+        # 在父控件的布局树中递归查找包含该 widget 的布局及索引
+        self._overlay_orig_layout = None
+        self._overlay_orig_index = -1
+        if self._overlay_orig_parent is not None:
+            result = self._find_widget_in_layout_tree(
+                self._overlay_orig_parent.layout(), widget)
+            if result is not None:
+                self._overlay_orig_layout, self._overlay_orig_index = result
+        if self._overlay_orig_layout is not None:
+            self._overlay_orig_layout.removeWidget(widget)
+        widget.setParent(None)
+        return widget
+
+    @staticmethod
+    def _find_widget_in_layout_tree(layout, target):
+        """在布局树中递归查找 target widget，返回 (layout, index) 或 None"""
+        if layout is None:
+            return None
+        for i in range(layout.count()):
+            it = layout.itemAt(i)
+            if it is None:
+                continue
+            if it.widget() is target:
+                return (layout, i)
+            sub = it.layout()
+            if sub is not None:
+                r = CollapsibleCard._find_widget_in_layout_tree(sub, target)
+                if r is not None:
+                    return r
         return None
 
-    def restore_content_from_overlay(self):
-        """将内容控件重新添加回布局。"""
-        if self._content_widget is not None:
-            self._content_widget.setParent(self)
-            self.layout().addWidget(self._content_widget)
-            self._content_widget.setVisible(self._expanded)
+    def _restore_overlay_widget(self):
+        """将浮动内容控件恢复到原布局原位置"""
+        widget = self._overlay_content_widget
+        if widget is None or self._overlay_orig_layout is None:
+            return
+        widget.setParent(self._overlay_orig_parent)
+        if self._overlay_orig_index >= 0:
+            self._overlay_orig_layout.insertWidget(self._overlay_orig_index, widget)
+        else:
+            self._overlay_orig_layout.addWidget(widget)
+        widget.show()
 
     def _find_content_host(self):
         """向上查找适合作为全屏宿主的滚动区 viewport。
@@ -795,9 +837,9 @@ class CollapsibleCard(QWidget):
         if self.layout() is not None:
             self.layout().activate()
 
-        # 创建浮动数据面板：将实时数据卡片内容浮于图表上方
-        if self._overlay_source_card is not None:
-            overlay_content = self._overlay_source_card.take_content_for_overlay()
+        # 创建浮动数据面板：将数据记录区控件浮于图表上方
+        if self._overlay_content_widget is not None:
+            overlay_content = self._detach_overlay_widget()
             if overlay_content is not None:
                 self._floating_panel = FloatingDataPanel(
                     overlay_content,
@@ -855,13 +897,12 @@ class CollapsibleCard(QWidget):
             self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-        # 销毁浮动数据面板，恢复内容控件到源卡片
+        # 销毁浮动数据面板，恢复内容控件到原布局
         if self._floating_panel is not None:
             self._floating_panel.release_content()
             self._floating_panel.deleteLater()
             self._floating_panel = None
-            if self._overlay_source_card is not None:
-                self._overlay_source_card.restore_content_from_overlay()
+            self._restore_overlay_widget()
 
         # 恢复全屏时隐藏的控件
         for w in self._fullscreen_hidden_widgets:
