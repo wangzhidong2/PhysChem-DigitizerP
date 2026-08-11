@@ -560,6 +560,9 @@ class VoltageSensorWidget(QWidget):
 
         chart_card_layout.addLayout(content_row)
         card_chart = CollapsibleCard("电压-时间曲线", card_chart_content, expanded=True, fullscreen=True)
+        # 全屏时：实时数据浮于图表上方，数据记录区隐藏让图表填满
+        card_chart.set_fullscreen_overlay(card_data, self.current_voltage_label)
+        card_chart.add_fullscreen_hidden_widget(self.data_text)
         layout.addWidget(card_chart)
 
         # ========== 卡片5：操作按钮（可折叠） ==========

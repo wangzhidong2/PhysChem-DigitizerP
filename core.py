@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
     QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread, QPoint, QTimer
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QPainterPath
 
 from qfluentwidgets import (
@@ -374,6 +374,159 @@ class ExpandableTextEdit(QWidget):
 
 
 # ============================================================
+# 浮动数据面板（全屏图表模式）
+# ============================================================
+class FloatingDataPanel(QWidget):
+    """可拖动、可折叠的浮动数据面板。
+
+    全屏图表模式下，实时数据以浮动小窗形式显示在图表上方。
+    - 展开态：标题 + 完整实时数据内容 + 折叠按钮
+    - 折叠态：标题 + 主实时值摘要 + 展开按钮
+    - 鼠标按住面板空白区域可拖动，自动限制在父控件范围内
+    """
+
+    MAX_SUMMARY_LEN = 50
+
+    def __init__(self, content_widget, summary_widget=None, title="实时数据", parent=None):
+        super().__init__(parent)
+        self._content_widget = content_widget
+        self._summary_widget = summary_widget
+        self._collapsed = False
+        self._dragging = False
+        self._drag_offset = QPoint()
+
+        self.setObjectName("floating_panel")
+        self.setMaximumWidth(420)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 8, 12, 10)
+        main_layout.setSpacing(6)
+
+        # 标题行
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+
+        self.title_label = QLabel(title)
+        self.title_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.title_label.setStyleSheet("color: #1a1a1a; background: transparent; border: none;")
+        header_layout.addWidget(self.title_label)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        self.summary_label.setStyleSheet("color: #0078d4; background: transparent; border: none;")
+        self.summary_label.hide()
+        header_layout.addWidget(self.summary_label)
+        header_layout.addStretch()
+
+        self.toggle_btn = QPushButton("折叠")
+        self.toggle_btn.setFixedHeight(26)
+        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                border: none;
+                border-radius: 4px;
+                color: white;
+                font-size: 12px;
+                padding: 2px 10px;
+            }
+            QPushButton:hover { background-color: #106ebe; }
+        """)
+        self.toggle_btn.clicked.connect(self._toggle)
+        header_layout.addWidget(self.toggle_btn)
+
+        main_layout.addLayout(header_layout)
+
+        # 完整内容
+        main_layout.addWidget(self._content_widget)
+
+        # 定时刷新折叠态摘要文本（实时值在持续更新）
+        self._summary_timer = QTimer(self)
+        self._summary_timer.timeout.connect(self._update_summary)
+        self._summary_timer.start(100)
+
+        self._update_summary()
+
+    def _toggle(self):
+        """切换折叠/展开状态"""
+        self._collapsed = not self._collapsed
+        self._content_widget.setVisible(not self._collapsed)
+        self.summary_label.setVisible(self._collapsed)
+        self.toggle_btn.setText("展开" if self._collapsed else "折叠")
+        self._update_summary()
+        self.adjustSize()
+
+    def _update_summary(self):
+        """从 summary_widget 读取当前实时值，更新折叠态摘要显示"""
+        if self._summary_widget is not None:
+            text = self._summary_widget.text()
+            # 去掉常见前缀，保持摘要简洁
+            for prefix in ("当前数据: ", "电压: ", "电流: "):
+                if text.startswith(prefix):
+                    text = text[len(prefix):]
+                    break
+            if len(text) > self.MAX_SUMMARY_LEN:
+                text = text[:self.MAX_SUMMARY_LEN - 3] + "..."
+            self.summary_label.setText(text)
+
+    def release_content(self):
+        """将内容控件从面板中移出（reparent 到 None），返回内容控件。
+
+        在销毁浮动面板前调用，避免内容控件随面板一起被删除。
+        """
+        if self._content_widget is not None:
+            self.layout().removeWidget(self._content_widget)
+            self._content_widget.setParent(None)
+            widget = self._content_widget
+            self._content_widget = None
+            return widget
+        return None
+
+    def paintEvent(self, e):
+        """绘制半透明白色圆角背景"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QBrush(QColor(255, 255, 255, 245)))
+        painter.setPen(QPen(QColor("#b0b0b0"), 1))
+        path = QPainterPath()
+        path.addRoundedRect(0.5, 0.5, self.width() - 1, self.height() - 1, 8, 8)
+        painter.drawPath(path)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            # 点击按钮时不启动拖动
+            child = self.childAt(e.position().toPoint())
+            if child is not self.toggle_btn:
+                self._dragging = True
+                self._drag_offset = e.position().toPoint()
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._dragging:
+            new_pos = self.pos() + e.position().toPoint() - self._drag_offset
+            parent = self.parent()
+            if parent is not None:
+                new_pos.setX(max(0, min(new_pos.x(), parent.width() - self.width())))
+                new_pos.setY(max(0, min(new_pos.y(), parent.height() - self.height())))
+            self.move(new_pos)
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._dragging = False
+        super().mouseReleaseEvent(e)
+
+    def clamp_position(self):
+        """限制面板位置在父控件范围内（父控件 resize 时调用）"""
+        parent = self.parent()
+        if parent is None:
+            return
+        x = max(0, min(self.x(), parent.width() - self.width()))
+        y = max(0, min(self.y(), parent.height() - self.height()))
+        self.move(x, y)
+
+
+# ============================================================
 # 可折叠卡片
 # ============================================================
 class CollapsibleCard(QWidget):
@@ -441,6 +594,11 @@ class CollapsibleCard(QWidget):
         self._orig_index = -1     # 全屏前在布局中的索引
         self._host = None         # 全屏时的宿主 viewport
         self._scroll = None       # 全屏时的 QScrollArea
+        # 全屏浮动面板相关
+        self._overlay_source_card = None      # 实时数据卡片（全屏时其内容浮于图表上方）
+        self._overlay_summary_widget = None   # 折叠态显示的主实时值标签
+        self._floating_panel = None           # 全屏时的 FloatingDataPanel 实例
+        self._fullscreen_hidden_widgets = []  # 全屏时需隐藏的控件（如数据记录区）
 
         self.setObjectName("collapsible_card")
         self.setStyleSheet(self.CARD_STYLE)
@@ -522,6 +680,36 @@ class CollapsibleCard(QWidget):
         else:
             self._exit_fullscreen()
 
+    # ---------- 全屏浮动面板接口 ----------
+    def set_fullscreen_overlay(self, source_card, summary_widget=None):
+        """设置全屏时浮动数据面板的数据源。
+
+        Args:
+            source_card: 实时数据卡片（CollapsibleCard），全屏时其内容控件
+                         会被移到浮动面板中显示在图表上方。
+            summary_widget: 折叠态显示的主实时值标签（可选）
+        """
+        self._overlay_source_card = source_card
+        self._overlay_summary_widget = summary_widget
+
+    def add_fullscreen_hidden_widget(self, widget):
+        """注册全屏时需隐藏的控件（如数据记录区，让图表填满整个区域）"""
+        self._fullscreen_hidden_widgets.append(widget)
+
+    def take_content_for_overlay(self):
+        """从布局中移除内容控件（供浮动面板使用），返回内容控件。"""
+        if self._content_widget is not None:
+            self.layout().removeWidget(self._content_widget)
+            return self._content_widget
+        return None
+
+    def restore_content_from_overlay(self):
+        """将内容控件重新添加回布局。"""
+        if self._content_widget is not None:
+            self._content_widget.setParent(self)
+            self.layout().addWidget(self._content_widget)
+            self._content_widget.setVisible(self._expanded)
+
     def _find_content_host(self):
         """向上查找适合作为全屏宿主的滚动区 viewport。
 
@@ -549,7 +737,6 @@ class CollapsibleCard(QWidget):
     def _enter_fullscreen(self):
         """进入全屏：reparent 到 viewport，绝对定位填满"""
         from PySide6.QtWidgets import QScrollArea
-        from PySide6.QtCore import QTimer
         host = self._find_content_host()
         if host is None:
             return
@@ -587,6 +774,10 @@ class CollapsibleCard(QWidget):
         # 安装事件过滤器监听 viewport 尺寸变化
         host.installEventFilter(self)
 
+        # 隐藏注册的控件（如数据记录区），让图表 canvas 填满整个区域
+        for w in self._fullscreen_hidden_widgets:
+            w.setVisible(False)
+
         # reparent 后必须显式 show()，否则 Qt 可能将卡片及其内容（含图表）标记为不可见
         self.show()
         self.header.setVisible(True)
@@ -604,6 +795,19 @@ class CollapsibleCard(QWidget):
         if self.layout() is not None:
             self.layout().activate()
 
+        # 创建浮动数据面板：将实时数据卡片内容浮于图表上方
+        if self._overlay_source_card is not None:
+            overlay_content = self._overlay_source_card.take_content_for_overlay()
+            if overlay_content is not None:
+                self._floating_panel = FloatingDataPanel(
+                    overlay_content,
+                    summary_widget=self._overlay_summary_widget,
+                    parent=self,
+                )
+                self._floating_panel.move(16, 16)
+                self._floating_panel.show()
+                self._floating_panel.raise_()
+
         # 延迟修正几何：等滚动条隐藏、viewport 尺寸更新后再最终定位
         def _fix_geom():
             if self._fullscreen and self._host is not None:
@@ -612,6 +816,9 @@ class CollapsibleCard(QWidget):
                     self.layout().activate()
                 # 触发内部 matplotlib canvas 重绘
                 self._redraw_canvas()
+                # 浮动面板可能需要调整位置
+                if self._floating_panel is not None:
+                    self._floating_panel.clamp_position()
         QTimer.singleShot(0, _fix_geom)
 
     def _redraw_canvas(self):
@@ -648,6 +855,18 @@ class CollapsibleCard(QWidget):
             self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
+        # 销毁浮动数据面板，恢复内容控件到源卡片
+        if self._floating_panel is not None:
+            self._floating_panel.release_content()
+            self._floating_panel.deleteLater()
+            self._floating_panel = None
+            if self._overlay_source_card is not None:
+                self._overlay_source_card.restore_content_from_overlay()
+
+        # 恢复全屏时隐藏的控件
+        for w in self._fullscreen_hidden_widgets:
+            w.setVisible(True)
+
         # reparent 回原父控件
         self.setParent(self._orig_parent)
         if self._orig_layout is not None and self._orig_index >= 0:
@@ -663,7 +882,6 @@ class CollapsibleCard(QWidget):
         if self.layout() is not None:
             self.layout().activate()
         # 延迟重绘 canvas，等布局稳定
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(0, self._redraw_canvas)
 
     def eventFilter(self, obj, e):
@@ -672,6 +890,8 @@ class CollapsibleCard(QWidget):
         if obj is self._host and e.type() == QEvent.Type.Resize:
             if self._fullscreen and self._host is not None:
                 self.setGeometry(0, 0, self._host.width(), self._host.height())
+                if self._floating_panel is not None:
+                    self._floating_panel.clamp_position()
         return super().eventFilter(obj, e)
 
 
