@@ -34,7 +34,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    SerialThread, BLESerialThread, scan_ble_devices,
+    SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
     SampleRateComboBox,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
@@ -247,7 +247,7 @@ class VoltageSensorWidget(QWidget):
 
         row1.addWidget(QLabel("连接方式:"))
         self.mode_combo = ComboBox()
-        self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
+        self.mode_combo.addItems(["有线串口", "BLE蓝牙", "模拟器"])
         if not BLE_AVAILABLE:
             self.mode_combo.setItemEnabled(1, False)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
@@ -284,9 +284,21 @@ class VoltageSensorWidget(QWidget):
             self.ble_scan_btn.setEnabled(False)
         ble_layout.addWidget(self.ble_scan_btn)
 
+        # 模拟器面板：无需选择端口
+        self.sim_panel = QWidget()
+        sim_layout = QHBoxLayout(self.sim_panel)
+        sim_layout.setContentsMargins(0, 0, 0, 0)
+        sim_layout.setSpacing(8)
+        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
+        sim_hint.setStyleSheet("color: #888;")
+        sim_layout.addWidget(sim_hint)
+        sim_layout.addStretch()
+
         row1.addWidget(self.serial_panel)
         row1.addWidget(self.ble_panel)
+        row1.addWidget(self.sim_panel)
         self.ble_panel.hide()
+        self.sim_panel.hide()
 
         row1.addSpacing(16)
         self.connect_btn = PushButton("连接")
@@ -623,9 +635,15 @@ class VoltageSensorWidget(QWidget):
         if index == 0:
             self.serial_panel.show()
             self.ble_panel.hide()
-        else:
+            self.sim_panel.hide()
+        elif index == 1:
             self.serial_panel.hide()
             self.ble_panel.show()
+            self.sim_panel.hide()
+        else:
+            self.serial_panel.hide()
+            self.ble_panel.hide()
+            self.sim_panel.show()
 
     def on_adc_bits_changed(self, index):
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
@@ -815,8 +833,29 @@ class VoltageSensorWidget(QWidget):
         mode = self.mode_combo.currentText()
         if "BLE" in mode:
             self.connect_ble()
+        elif "模拟器" in mode:
+            self.connect_simulator()
         else:
             self.connect_serial()
+
+    def connect_simulator(self):
+        """连接模拟器：随机生成 ADC 原始值，无需硬件"""
+        try:
+            # 模拟器产生有符号 ADC 范围的原始值，中点为 0V
+            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+            self.serial_thread = SimulatorThread(
+                value_min=-max_adc, value_max=max_adc,
+                interval_ms=self.sample_interval_ms)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.current_voltage_label.setText("--.- V")
+            self.current_raw_label.setText("原始ADC: 模拟器连接中...")
+            self.current_vadc_label.setText("ADC端电压: --.- V")
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         port = self.port_combo.currentText()

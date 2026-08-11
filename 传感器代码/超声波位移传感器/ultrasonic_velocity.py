@@ -32,7 +32,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    SerialThread, SampleRateComboBox,
+    SerialThread, SampleRateComboBox, SimulatorThread,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
 )
 
@@ -62,16 +62,38 @@ class UltrasonicVelocityWidget(QWidget):
         control_group = QGroupBox("控制面板")
         control_layout = QHBoxLayout()
 
+        # 连接方式选择
+        control_layout.addWidget(QLabel("连接方式:"))
+        self.mode_combo = ComboBox()
+        self.mode_combo.addItems(["有线串口", "模拟器"])
+        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
+        control_layout.addWidget(self.mode_combo)
+
         # 串口选择
-        control_layout.addWidget(QLabel("串口:"))
+        self.serial_panel = QWidget()
+        serial_row = QHBoxLayout(self.serial_panel)
+        serial_row.setContentsMargins(0, 0, 0, 0)
+        serial_row.setSpacing(8)
+        serial_row.addWidget(QLabel("串口:"))
         self.port_combo = ComboBox()
         self.refresh_ports()
-        control_layout.addWidget(self.port_combo)
+        serial_row.addWidget(self.port_combo)
 
         # 刷新按钮
         self.refresh_btn = PushButton("刷新")
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        control_layout.addWidget(self.refresh_btn)
+        serial_row.addWidget(self.refresh_btn)
+        control_layout.addWidget(self.serial_panel)
+
+        # 模拟器面板：无需选择端口
+        self.sim_panel = QWidget()
+        sim_row = QHBoxLayout(self.sim_panel)
+        sim_row.setContentsMargins(0, 0, 0, 0)
+        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
+        sim_hint.setStyleSheet("color: #888;")
+        sim_row.addWidget(sim_hint)
+        control_layout.addWidget(self.sim_panel)
+        self.sim_panel.hide()
 
         # 连接按钮
         self.connect_btn = PrimaryPushButton("连接")
@@ -171,12 +193,39 @@ class UltrasonicVelocityWidget(QWidget):
         for port in ports:
             self.port_combo.addItem(port.device)
 
+    def on_mode_changed(self, index):
+        if index == 0:
+            self.serial_panel.show()
+            self.sim_panel.hide()
+        else:
+            self.serial_panel.hide()
+            self.sim_panel.show()
+
     def toggle_connection(self):
-        """切换串口连接状态"""
+        """切换连接状态"""
         if self.serial_thread and self.serial_thread.isRunning():
             self.disconnect_serial()
-        else:
+        elif self.mode_combo.currentIndex() == 0:
             self.connect_serial()
+        else:
+            self.connect_simulator()
+
+    def connect_simulator(self):
+        """连接模拟器：随机生成回波时间（µs），无需硬件。时间戳以微秒计。"""
+        try:
+            self.serial_thread = SimulatorThread(
+                value_min=100, value_max=60000,
+                interval_ms=self.sample_interval_ms,
+                start_value=11600, timestamp_scale=1000)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+
+            self.connect_btn.setText("断开")
+            self.start_btn.setEnabled(True)
+            self.current_data_label.setText("当前数据: 模拟器已连接，等待数据...")
+
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         """连接串口"""

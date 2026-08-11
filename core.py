@@ -19,6 +19,8 @@ core.py — PhysChem-DigitizerP 公共模块
 
 import os
 import json
+import time
+import random
 import asyncio
 import threading
 
@@ -157,6 +159,71 @@ class SerialThread(QThread):
         self.running = False
         if self.serial:
             self.serial.close()
+
+
+class SimulatorThread(QThread):
+    """模拟器通信线程 — 无需传感器硬件，随机生成数据用于界面/逻辑调试。
+
+    与 SerialThread 保持完全相同的信号接口（data_received = Signal(str)），
+    因此可直接替换 SerialThread 使用。输出数据格式与真实固件一致：
+    连接后先发送 "START"，随后按固定间隔发送 "timestamp_ms,raw_value"。
+
+    数据生成方式：围绕一个缓慢漂移的基准值叠加随机噪声，保证曲线既有波动
+    又连续自然（而非纯白噪声）。raw_value 范围由构造参数控制，以适配不同
+    传感器的 ADC/物理量量程。
+
+    Args:
+        value_min: 生成原始值的下限（含）
+        value_max: 生成原始值的上限（含）
+        interval_ms: 发送间隔（毫秒），默认 100ms
+        start_value: 初始基准值，默认取量程中点
+        timestamp_scale: 时间戳单位缩放。1=毫秒（默认，与大多数固件一致），
+                         1000=微秒（超声波固件 timestamp 以微秒计）
+    """
+
+    data_received = Signal(str)
+
+    def __init__(self, value_min=0, value_max=4095, interval_ms=100, start_value=None,
+                 timestamp_scale=1):
+        super().__init__()
+        self.value_min = int(value_min)
+        self.value_max = int(value_max)
+        self.interval_ms = max(10, int(interval_ms))
+        self.timestamp_scale = max(1, int(timestamp_scale))
+        self.running = False
+        span = self.value_max - self.value_min
+        self._value = float(start_value) if start_value is not None else self.value_min + span / 2.0
+        # 每步基准值最大漂移量（量程的 0.5%），使曲线缓慢游走
+        self._drift_step = max(1.0, span * 0.005)
+        # 叠加的随机噪声幅度（量程的 1%）
+        self._noise_amp = max(1.0, span * 0.01)
+
+    def run(self):
+        self.running = True
+        # 与真实固件一致：连接成功后先发 START
+        self.data_received.emit("START")
+        start_s = time.time()
+        while self.running:
+            # 基准值随机游走
+            self._value += random.uniform(-self._drift_step, self._drift_step)
+            # 软边界：超出量程时向中心回弹
+            if self._value < self.value_min:
+                self._value = self.value_min + abs(self._value - self.value_min) * 0.5
+            elif self._value > self.value_max:
+                self._value = self.value_max - abs(self._value - self.value_max) * 0.5
+            # 叠加噪声并取整
+            raw = self._value + random.uniform(-self._noise_amp, self._noise_amp)
+            raw = int(round(max(self.value_min, min(self.value_max, raw))))
+            elapsed = int((time.time() - start_s) * 1000 * self.timestamp_scale)
+            self.data_received.emit(f"{elapsed},{raw}")
+            # 分段 sleep 以便 stop() 能快速响应
+            slept = 0.0
+            while self.running and slept < self.interval_ms / 1000.0:
+                time.sleep(0.02)
+                slept += 0.02
+
+    def stop(self):
+        self.running = False
 
 
 # ============================================================

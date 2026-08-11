@@ -33,7 +33,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    SerialThread, BLESerialThread, scan_ble_devices,
+    SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
     SampleRateComboBox, CalibrationDialog,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
@@ -144,7 +144,7 @@ class ForceSensorWidget(QWidget):
 
         conn_layout.addWidget(QLabel("连接方式:"))
         self.mode_combo = ComboBox()
-        self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
+        self.mode_combo.addItems(["有线串口", "BLE蓝牙", "模拟器"])
         if not BLE_AVAILABLE:
             self.mode_combo.setItemEnabled(1, False)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
@@ -182,6 +182,17 @@ class ForceSensorWidget(QWidget):
         conn_layout.addWidget(self.serial_panel)
         conn_layout.addWidget(self.ble_panel)
         self.ble_panel.hide()
+
+        # 模拟器面板：无需选择端口
+        self.sim_panel = QWidget()
+        sim_layout = QHBoxLayout(self.sim_panel)
+        sim_layout.setContentsMargins(0, 0, 0, 0)
+        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
+        sim_hint.setStyleSheet("color: #888;")
+        sim_layout.addWidget(sim_hint)
+        sim_layout.addStretch()
+        conn_layout.addWidget(self.sim_panel)
+        self.sim_panel.hide()
 
         conn_layout.addStretch()
 
@@ -319,9 +330,15 @@ class ForceSensorWidget(QWidget):
         if index == 0:
             self.serial_panel.show()
             self.ble_panel.hide()
-        else:
+            self.sim_panel.hide()
+        elif index == 1:
             self.serial_panel.hide()
             self.ble_panel.show()
+            self.sim_panel.hide()
+        else:
+            self.serial_panel.hide()
+            self.ble_panel.hide()
+            self.sim_panel.show()
 
     def on_unit_changed(self, index):
         unit_list = ["g", "kg", "N"]
@@ -373,8 +390,30 @@ class ForceSensorWidget(QWidget):
         mode = self.mode_combo.currentText()
         if "BLE" in mode:
             self.connect_ble()
+        elif "模拟器" in mode:
+            self.connect_simulator()
         else:
             self.connect_serial()
+
+    def connect_simulator(self):
+        """连接模拟器：随机生成 HX711 原始值，无需硬件"""
+        try:
+            # HX711 24 位原始读数，围绕一个基准值缓慢漂移
+            self.serial_thread = SimulatorThread(
+                value_min=7500000, value_max=9000000,
+                interval_ms=self.sample_interval_ms,
+                start_value=8200000)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.tare_btn.setEnabled(True)
+            self.calibrate_btn.setEnabled(True)
+            self.current_force_label.setText("力/质量: 模拟器等待数据...")
+            self.current_raw_label.setText("原始ADC: 模拟器连接中...")
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         port = self.port_combo.currentText()
