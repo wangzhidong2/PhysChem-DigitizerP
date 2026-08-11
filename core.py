@@ -649,6 +649,12 @@ class CollapsibleCard(QWidget):
         QWidget#collapsible_card QWidget {
             background: transparent;
         }
+        /* 卡片内部内容容器（QWidget#card）不需要重复边框，
+           外层 CollapsibleCard 已通过 paintEvent 绘制圆角边框；
+           否则其顶部 border 会显示为标题与内容之间的分割线 */
+        QWidget#collapsible_card QWidget#card {
+            border: none;
+        }
         QWidget#collapsible_card QComboBox,
         QWidget#collapsible_card QTextEdit,
         QWidget#collapsible_card QPlainTextEdit,
