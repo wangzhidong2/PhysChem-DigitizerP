@@ -726,6 +726,16 @@ class CollapsibleCard(QWidget):
 
         # 全屏按钮（可选）
         if self._fullscreen_enabled:
+            # 醒目文字提示：点击与按钮一样触发全屏
+            self.fullscreen_hint = QLabel("全屏查看图表")
+            self.fullscreen_hint.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+            self.fullscreen_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.fullscreen_hint.setStyleSheet("color: #0078d4; padding: 0 2px;")
+            self.fullscreen_hint.mouseReleaseEvent = lambda e: (
+                self.toggle_fullscreen()
+                if e.button() == Qt.MouseButton.LeftButton else None)
+            header_layout.addWidget(self.fullscreen_hint)
+
             self.fullscreen_btn = QPushButton("⛶")
             self.fullscreen_btn.setFixedSize(28, 28)
             self.fullscreen_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -736,7 +746,7 @@ class CollapsibleCard(QWidget):
                     border: none;
                     border-radius: 4px;
                     font-size: 16px;
-                    color: #666666;
+                    color: #0078d4;
                 }
                 QPushButton:hover { background: #f0f0f0; color: #0078d4; }
             """)
@@ -919,6 +929,8 @@ class CollapsibleCard(QWidget):
         self._host = host
         self._scroll = scroll
         self._fullscreen = True
+        if hasattr(self, 'fullscreen_hint'):
+            self.fullscreen_hint.setText("退出全屏")
 
         # 隐藏滚动条（全屏时不滚动）
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1033,6 +1045,8 @@ class CollapsibleCard(QWidget):
         self._fullscreen = False
         self._host = None
         self._scroll = None
+        if hasattr(self, 'fullscreen_hint'):
+            self.fullscreen_hint.setText("全屏查看图表")
 
         # reparent 后显式 show，确保卡片及其内容可见
         self.show()
