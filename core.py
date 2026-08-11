@@ -685,8 +685,10 @@ class CollapsibleCard(QWidget):
         layout.addWidget(self.header)
 
         # 内容区（stretch=1 填满标题栏下方剩余空间）
-        self._content_widget.setVisible(expanded)
+        # 必须先 addWidget（设置父级）再 setVisible，
+        # 否则无父级的 content_widget 会被当作顶级窗口闪现
         layout.addWidget(self._content_widget, 1)
+        self._content_widget.setVisible(expanded)
 
     def paintEvent(self, e):
         """直接用 QPainter 绘制白色圆角背景，绕过样式表级联覆盖。"""
