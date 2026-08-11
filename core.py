@@ -306,18 +306,20 @@ class ExpandableTextEdit(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._expanded = False
+        self._embedded = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        # 顶部行：标题 + 展开/收起按钮
-        top_row = QHBoxLayout()
+        # 顶部行：标题 + 展开/收起按钮（用容器包裹，便于嵌入浮动面板时整体隐藏）
+        self._header_container = QWidget()
+        top_row = QHBoxLayout(self._header_container)
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(8)
         self.title_label = QLabel("数据记录")
         self.title_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        self.title_label.setStyleSheet("color: #1a1a1a;")
+        self.title_label.setStyleSheet("color: #1a1a1a; background: transparent;")
         top_row.addWidget(self.title_label)
         top_row.addStretch()
 
@@ -336,23 +338,41 @@ class ExpandableTextEdit(QWidget):
         """)
         self.toggle_btn.clicked.connect(self._toggle)
         top_row.addWidget(self.toggle_btn)
-        layout.addLayout(top_row)
+        layout.addWidget(self._header_container)
 
         # 文本区
         from qfluentwidgets import TextEdit
         self.text_edit = TextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setMaximumHeight(self.COLLAPSED_HEIGHT)
-        self.text_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        layout.addWidget(self.text_edit)
+        layout.addWidget(self.text_edit, 1)
+
+        # 初始应用折叠状态
+        self._apply_state()
 
     def _toggle(self):
         """切换展开/收起状态"""
         self._expanded = not self._expanded
-        if self._expanded:
+        self._apply_state()
+
+    def _apply_state(self):
+        """根据当前状态应用高度约束和文字"""
+        if self._embedded:
+            # 嵌入模式：由父容器控制大小，自身不设高度约束
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)
+            self.text_edit.setMaximumHeight(16777215)
+            self.toggle_btn.setText("收起 ▲" if self._expanded else "展开 ▼")
+        elif self._expanded:
+            # 展开状态：文本区最大 EXPANDED_HEIGHT，外部 widget 自适应
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)
             self.text_edit.setMaximumHeight(self.EXPANDED_HEIGHT)
             self.toggle_btn.setText("收起 ▲")
         else:
+            # 折叠状态：固定高度为 COLLAPSED_HEIGHT + 标题行
+            header_h = self._header_container.sizeHint().height()
+            total_h = header_h + 4 + self.COLLAPSED_HEIGHT
+            self.setFixedHeight(total_h)
             self.text_edit.setMaximumHeight(self.COLLAPSED_HEIGHT)
             self.toggle_btn.setText("展开 ▼")
 
@@ -372,6 +392,12 @@ class ExpandableTextEdit(QWidget):
     def verticalScrollBar(self):
         return self.text_edit.verticalScrollBar()
 
+    def set_embedded_mode(self, enabled=True):
+        """嵌入模式：隐藏自身标题栏（用于浮动面板内，避免与面板标题重复）"""
+        self._embedded = enabled
+        self._header_container.setVisible(not enabled)
+        self._apply_state()
+
 
 # ============================================================
 # 浮动数据面板（全屏图表模式）
@@ -387,7 +413,7 @@ class FloatingDataPanel(QWidget):
 
     MAX_SUMMARY_LEN = 50
 
-    def __init__(self, content_widget, summary_widget=None, title="实时数据", parent=None):
+    def __init__(self, content_widget, summary_widget=None, title="数据记录", parent=None):
         super().__init__(parent)
         self._content_widget = content_widget
         self._summary_widget = summary_widget
@@ -397,6 +423,7 @@ class FloatingDataPanel(QWidget):
 
         self.setObjectName("floating_panel")
         self.setMaximumWidth(420)
+        self.setMinimumWidth(280)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 8, 12, 10)
@@ -439,7 +466,9 @@ class FloatingDataPanel(QWidget):
         main_layout.addLayout(header_layout)
 
         # 完整内容
-        main_layout.addWidget(self._content_widget)
+        self._content_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        main_layout.addWidget(self._content_widget, 1)
 
         # 定时刷新折叠态摘要文本（实时值在持续更新）
         self._summary_timer = QTimer(self)
@@ -447,6 +476,9 @@ class FloatingDataPanel(QWidget):
         self._summary_timer.start(100)
 
         self._update_summary()
+
+        # 默认展开尺寸
+        self.resize(380, 360)
 
     def _toggle(self):
         """切换折叠/展开状态"""
@@ -600,6 +632,7 @@ class CollapsibleCard(QWidget):
         self._overlay_orig_parent = None      # 浮动控件的原父控件
         self._overlay_orig_layout = None      # 浮动控件的原布局
         self._overlay_orig_index = -1         # 浮动控件在原布局中的索引
+        self._overlay_orig_stretch = 0        # 浮动控件在原布局中的 stretch
         self._floating_panel = None           # 全屏时的 FloatingDataPanel 实例
         self._fullscreen_hidden_widgets = []  # 全屏时需隐藏的控件
 
@@ -651,9 +684,9 @@ class CollapsibleCard(QWidget):
         self.header.clicked.connect(self._toggle)
         layout.addWidget(self.header)
 
-        # 内容区
+        # 内容区（stretch=1 填满标题栏下方剩余空间）
         self._content_widget.setVisible(expanded)
-        layout.addWidget(self._content_widget)
+        layout.addWidget(self._content_widget, 1)
 
     def paintEvent(self, e):
         """直接用 QPainter 绘制白色圆角背景，绕过样式表级联覆盖。"""
@@ -712,12 +745,21 @@ class CollapsibleCard(QWidget):
         # 在父控件的布局树中递归查找包含该 widget 的布局及索引
         self._overlay_orig_layout = None
         self._overlay_orig_index = -1
+        self._overlay_orig_stretch = 0
         if self._overlay_orig_parent is not None:
             result = self._find_widget_in_layout_tree(
                 self._overlay_orig_parent.layout(), widget)
             if result is not None:
                 self._overlay_orig_layout, self._overlay_orig_index = result
         if self._overlay_orig_layout is not None:
+            # 记录 stretch factor
+            item = self._overlay_orig_layout.itemAt(self._overlay_orig_index)
+            if item is not None:
+                # QBoxLayout / QGridLayout 等支持 stretch
+                try:
+                    self._overlay_orig_stretch = self._overlay_orig_layout.stretch(self._overlay_orig_index)
+                except Exception:
+                    self._overlay_orig_stretch = 0
             self._overlay_orig_layout.removeWidget(widget)
         widget.setParent(None)
         return widget
@@ -747,9 +789,9 @@ class CollapsibleCard(QWidget):
             return
         widget.setParent(self._overlay_orig_parent)
         if self._overlay_orig_index >= 0:
-            self._overlay_orig_layout.insertWidget(self._overlay_orig_index, widget)
+            self._overlay_orig_layout.insertWidget(self._overlay_orig_index, widget, self._overlay_orig_stretch)
         else:
-            self._overlay_orig_layout.addWidget(widget)
+            self._overlay_orig_layout.addWidget(widget, self._overlay_orig_stretch)
         widget.show()
 
     def _find_content_host(self):
@@ -841,6 +883,9 @@ class CollapsibleCard(QWidget):
         if self._overlay_content_widget is not None:
             overlay_content = self._detach_overlay_widget()
             if overlay_content is not None:
+                # 嵌入模式：隐藏 data_text 自身标题栏，避免与浮动面板标题重复
+                if hasattr(overlay_content, 'set_embedded_mode'):
+                    overlay_content.set_embedded_mode(True)
                 self._floating_panel = FloatingDataPanel(
                     overlay_content,
                     summary_widget=self._overlay_summary_widget,
@@ -899,10 +944,13 @@ class CollapsibleCard(QWidget):
 
         # 销毁浮动数据面板，恢复内容控件到原布局
         if self._floating_panel is not None:
-            self._floating_panel.release_content()
+            released = self._floating_panel.release_content()
             self._floating_panel.deleteLater()
             self._floating_panel = None
             self._restore_overlay_widget()
+            # 关闭嵌入模式，恢复 data_text 自身标题栏
+            if released is not None and hasattr(released, 'set_embedded_mode'):
+                released.set_embedded_mode(False)
 
         # 恢复全屏时隐藏的控件
         for w in self._fullscreen_hidden_widgets:

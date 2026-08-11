@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
@@ -556,9 +557,10 @@ class VoltageSensorWidget(QWidget):
         self.figure.set_facecolor('#fafafa')
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_row.addWidget(self.canvas, stretch=2)
 
-        chart_card_layout.addLayout(content_row)
+        chart_card_layout.addLayout(content_row, 1)
         card_chart = CollapsibleCard("电压-时间曲线", card_chart_content, expanded=True, fullscreen=True)
         # 全屏时：数据记录区作为可拖动折叠浮动面板浮于图表上方，折叠时显示实时电压值
         card_chart.set_fullscreen_overlay(self.data_text, self.current_voltage_label)
