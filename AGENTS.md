@@ -100,14 +100,22 @@ PhysChem-DigitizerP/
 ### main.py 组成
 
 - **`make_text_icon(text, size=128)`**：把识别区里的文字（如 `V`/`F`/`x`/`pH`/`v`/`A`）画成方形 `QIcon`。FluentIcon 枚举没有对应"电压/电流/pH/力/超声波"的图标，所以直接用文字渲染成图标，保留模块化设计。字号用 `QFontMetrics` 自适应测量（从 `size*0.9` 起步缩到刚好填满画布，留 8% 边距），支持 Normal/Active/Selected 三种状态颜色。
-- **`HomePageWidget`**：主页，现代化风格卡片布局，按 `physics`/`chemistry` 分组展示模块卡片。
-- **`SettingsPlaceholderWidget`**：设置页**占位组件**（功能正在开发中）。侧边栏底部保留 `FIF.SETTING` 图标，内容区只显示"功能正在开发中"提示。未来接入完整设置时替换此类即可。
-- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换。
+- **`HomePageWidget`**：主页，现代化风格卡片布局，按 `physics`/`chemistry` 分组展示模块卡片。标题用 FluentWidgets `TitleLabel` / `SubtitleLabel`，自动适配亮/暗主题；`apply_theme()` 委托 `core.apply_module_theme()` 统一刷新页面背景、卡片、QLabel/QLineEdit 颜色。
+- **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含三组设置：①个性化（应用主题切换：亮色 / 暗色 / 跟随系统）②关于（应用名 / 版本 / 许可证）③源码 & 反馈（GitHub / Gitee / Issue 链接）。主题切换通过 `theme_change_requested` 信号与 `MainWindow.change_app_theme` 打通。
+- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换。`change_app_theme(theme)` 流程：先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色。
 - **遗留代码**：`NavButton` / `SidebarWidget` 是迁移到 FluentWindow 前的手写侧边栏实现，**已不再被 `MainWindow` 使用**（FluentWindow 自带导航），仍保留在 `main.py` 中供对照参考，新功能不要基于它们开发。
 
 ### core.py 组成
 
 集中存放共享代码——`SerialThread`、`BLESerialThread`、`scan_ble_devices`、`load/save_sensor_config`、`CalibrationDialog`、`SampleRateDialog`、现代化样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`）。
+
+**主题基础设施**（亮/暗主题全链路支持）：
+- `_theme_colors()`：按 `isDarkTheme()` 返回当前主题对应的语义颜色字典（`page_bg`/`card_bg`/`text_primary`/`accent` 等）。
+- `page_bg_style()` / `scroll_area_style()`：页面与滚动区背景样式，适配当前主题。
+- `card_style()` / `primary_btn_style()` / `accent_btn_style()`：卡片与按钮样式，按 `isDarkTheme()` 切换颜色。
+- `apply_module_theme(widget, theme=None)`：通用主题刷新助手，递归刷新模块 widget 内的 QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame 样式表，并通过缓存 `_orig_qss` dynamic property 实现亮↔暗双向切换（避免反复替换导致"切回亮色后仍是浅色字"）。各传感器模块的 `apply_theme()` 应委托本函数。
+- `CollapsibleCard`：标题用 `SubtitleLabel`，`paintEvent` / `_apply_theme_style` 主题感知；`apply_theme(theme)` 刷新箭头、全屏按钮颜色。
+- `FloatingDataPanel`：绘制背景主题感知。
 
 ### 模块能力要点
 
@@ -115,6 +123,7 @@ PhysChem-DigitizerP/
 - `ForceSensorWidget` 支持：去皮（Tare）、两点校准、有线串口和 BLE 两种连接方式。
 - `PhSensorWidget` 支持：单点 / 两点 / 三点校准（Nernst 斜率 / 线性拟合 / 二次多项式拟合）。
 - `CurrentSensorWidget` 支持：ACS712 5A/20A/30A 量程切换、AC/DC 测量、零点校准。
+- **主题支持**：所有传感器模块均实现 `apply_theme(theme)` 方法，委托 `core.apply_module_theme()` 刷新页面/卡片/QLabel 颜色，并切换 matplotlib figure 背景。页面标题统一使用 FluentWidgets `TitleLabel`，滚动区/页面背景使用 `scroll_area_style()` / `page_bg_style()`。
 - 配置持久化：`load_sensor_config()` / `save_sensor_config()` 读写 `sensor_config.json`。
 - 无自动化测试——`test_serial.py` 仅为手动诊断工具。
 - 无 CI/CD、代码检查或类型检查配置。
@@ -147,17 +156,34 @@ PhysChem-DigitizerP/
 # -*- coding: utf-8 -*-
 """温度传感器模块"""
 
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 from core import (
     SerialThread, load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
+    scroll_area_style, page_bg_style, apply_module_theme,
 )
 
 class TemperatureSensorWidget(QWidget):
     def __init__(self):
         ...
+
+    def apply_theme(self, theme):
+        """主题切换：委托通用刷新助手 + 切换 figure 背景"""
+        apply_module_theme(self, theme)
+        try:
+            from qfluentwidgets import isDarkTheme
+            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
+            self.canvas.draw()
+        except Exception:
+            pass
 ```
 
 重启 `main.py` 即自动出现在侧边栏（文字图标）+ 主页卡片 + 内容栈。
+
+**主题支持要点**（新模块若想适配亮/暗主题）：
+1. 页面标题用 `TitleLabel`（自动适配主题），不要用 `QLabel` + 硬编码颜色。
+2. 滚动区用 `scroll.setStyleSheet(scroll_area_style())`，页面背景用 `content.setStyleSheet(page_bg_style())`。
+3. 实现 `apply_theme(self, theme)` 方法，委托 `apply_module_theme(self, theme)` 刷新页面/卡片/QLabel 颜色，再手动切换 matplotlib figure 背景。
 
 ### 识别区字段说明
 
@@ -175,7 +201,8 @@ class TemperatureSensorWidget(QWidget):
 - Arduino 代码目录使用中文命名
 - `main_legacy.py` 是迁移前单文件存档，**不再维护**，新功能请改 `main.py` + 模块文件
 - `NavButton` / `SidebarWidget` 是遗留代码，`MainWindow` 已改用 `FluentWindow` 自带导航，不要基于它们开发新功能
-- 设置页当前为占位（`SettingsPlaceholderWidget`），完整设置功能开发中
+- 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、关于信息、仓库链接（`SettingsWidget`）
+- 新增传感器模块时建议实现 `apply_theme()` 方法以适配亮/暗主题（委托 `core.apply_module_theme()`）
 - 模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
 - BLE 功能需要 `bleak`（可选依赖），未安装时会自动降级
 - 动态加载依赖识别区格式严格，字段名/冒号/空格写错会导致模块加载失败
@@ -280,14 +307,22 @@ Flash via Arduino IDE. Board packages:
 ### main.py composition
 
 - **`make_text_icon(text, size=128)`**: renders the meta-header text (e.g. `V`/`F`/`x`/`pH`/`v`/`A`) into a square `QIcon`. FluentIcon enum has no icons for "voltage/current/pH/force/ultrasonic", so text is rendered directly into an icon to preserve the modular design. Font size is auto-measured with `QFontMetrics` (starts at `size*0.9` and shrinks to just fill the canvas, leaving 8% margin), supporting Normal/Active/Selected state colors.
-- **`HomePageWidget`**: home page, modern-style card layout, groups module cards by `physics`/`chemistry`.
-- **`SettingsPlaceholderWidget`**: settings page **placeholder** (feature under development). The sidebar keeps the `FIF.SETTING` icon at the bottom; the content area only shows a "feature under development" notice. Replace this class when the full settings are implemented.
-- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, and theme switching.
+- **`HomePageWidget`**: home page, modern-style card layout, groups module cards by `physics`/`chemistry`. Titles use FluentWidgets `TitleLabel` / `SubtitleLabel` for automatic light/dark theme adaptation; `apply_theme()` delegates to `core.apply_module_theme()` to refresh page background, cards, and QLabel/QLineEdit colors.
+- **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Three groups: ① Personalization (app theme: light / dark / follow system) ② About (app name / version / license) ③ Source & feedback (GitHub / Gitee / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via the `theme_change_requested` signal.
+- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, and theme switching. `change_app_theme(theme)` flow: first `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors.
 - **Legacy code**: `NavButton` / `SidebarWidget` are the hand-written sidebar implementation from before the FluentWindow migration, **no longer used by `MainWindow`** (FluentWindow has its own navigation). They are still kept in `main.py` for reference — do not build new features on them.
 
 ### core.py composition
 
 Centralized shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices`, `load/save_sensor_config`, `CalibrationDialog`, `SampleRateDialog`, modern style functions (`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`).
+
+**Theme infrastructure** (full light/dark theme support):
+- `_theme_colors()`: returns a dict of semantic colors for the current theme based on `isDarkTheme()` (`page_bg`/`card_bg`/`text_primary`/`accent`, etc.).
+- `page_bg_style()` / `scroll_area_style()`: page and scroll area background styles, theme-aware.
+- `card_style()` / `primary_btn_style()` / `accent_btn_style()`: card and button styles that switch colors based on `isDarkTheme()`.
+- `apply_module_theme(widget, theme=None)`: generic theme refresh helper that recursively refreshes QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame stylesheets within a module widget. Uses a cached `_orig_qss` dynamic property to enable bidirectional light↔dark switching (avoids "stuck light colors after switching back"). Sensor modules' `apply_theme()` should delegate to this.
+- `CollapsibleCard`: title uses `SubtitleLabel`; `paintEvent` / `_apply_theme_style` are theme-aware; `apply_theme(theme)` refreshes arrow and fullscreen button colors.
+- `FloatingDataPanel`: theme-aware background painting.
 
 ### Module capability notes
 
@@ -295,6 +330,7 @@ Centralized shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices
 - `ForceSensorWidget` supports: Tare, two-point calibration, wired serial and BLE connections.
 - `PhSensorWidget` supports: single-point / two-point / three-point calibration (Nernst slope / linear fit / quadratic polynomial fit).
 - `CurrentSensorWidget` supports: ACS712 5A/20A/30A range switching, AC/DC measurement, zero calibration.
+- **Theme support**: all sensor modules implement `apply_theme(theme)`, delegating to `core.apply_module_theme()` to refresh page/card/QLabel colors and switching the matplotlib figure background. Page titles uniformly use FluentWidgets `TitleLabel`; scroll area / page background use `scroll_area_style()` / `page_bg_style()`.
 - Config persistence: `load_sensor_config()` / `save_sensor_config()` write to `sensor_config.json`.
 - No automated tests — `test_serial.py` is a manual diagnostic tool.
 - No CI/CD, linting, or type-checking configured.
@@ -327,17 +363,34 @@ Create a subfolder under `传感器代码/`, drop in firmware `.ino` and host `.
 # -*- coding: utf-8 -*-
 """Temperature sensor module"""
 
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 from core import (
     SerialThread, load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
+    scroll_area_style, page_bg_style, apply_module_theme,
 )
 
 class TemperatureSensorWidget(QWidget):
     def __init__(self):
         ...
+
+    def apply_theme(self, theme):
+        """Theme switch: delegate to generic helper + switch figure background"""
+        apply_module_theme(self, theme)
+        try:
+            from qfluentwidgets import isDarkTheme
+            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
+            self.canvas.draw()
+        except Exception:
+            pass
 ```
 
 Restart `main.py` — the module auto-appears in sidebar (text icon) + home cards + content stack.
+
+**Theme support tips** (for new modules to adapt to light/dark themes):
+1. Use `TitleLabel` for the page title (auto-adapts to theme) — avoid `QLabel` with hardcoded colors.
+2. Use `scroll.setStyleSheet(scroll_area_style())` for the scroll area and `content.setStyleSheet(page_bg_style())` for the page background.
+3. Implement `apply_theme(self, theme)` that delegates to `apply_module_theme(self, theme)` to refresh page/card/QLabel colors, then manually switch the matplotlib figure background.
 
 ### Meta header fields
 
@@ -355,7 +408,8 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - Chinese directory/file names throughout the firmware folder
 - `main_legacy.py` is the pre-refactor single-file archive, **no longer maintained** — edit `main.py` + module files for new features
 - `NavButton` / `SidebarWidget` are legacy code; `MainWindow` now uses `FluentWindow`'s built-in navigation — do not build new features on them
-- The settings page is currently a placeholder (`SettingsPlaceholderWidget`); full settings are under development
+- The settings page now implements theme switching (light / dark / follow system), about info, and repo links (`SettingsWidget`)
+- When adding a new sensor module, implement `apply_theme()` to support light/dark themes (delegate to `core.apply_module_theme()`)
 - Module filenames use English snake_case (e.g. `voltage_sensor.py`), per PEP 8
 - BLE requires `bleak` (optional dependency) — graceful fallback if missing
 - Dynamic loading depends on strict meta header format — typos in field names/colons/spaces will cause load failures
