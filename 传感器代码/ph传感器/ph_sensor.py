@@ -1,3 +1,6 @@
+# Copyright (c) 2026 wangzhidong2
+# SPDX-License-Identifier: GPL-3.0-only
+
 # === MODULE META ===
 # icon: pH
 # name: pH传感器
@@ -12,12 +15,14 @@ import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QMessageBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -28,14 +33,39 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    SerialThread, SampleRateDialog, CalibrationDialog,
+    SerialThread, SampleRateComboBox, CalibrationDialog, SimulatorThread,
     load_sensor_config, save_sensor_config, _get_config_file_path,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
+    CollapsibleCard, ExpandableTextEdit,
+    scroll_area_style, page_bg_style, apply_module_theme,
 )
 
 
 class PhSensorWidget(QWidget):
     """pH传感器模块界面 - 支持单点/两点/三点校准"""
+
+    # 连接控制卡片内按钮统一样式：白底黑字
+    CARD_BTN_STYLE = """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            color: #1a1a1a;
+            border-radius: 6px;
+            padding: 0 16px;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background-color: #f5f5f5;
+            border: 1px solid #0078d4;
+            color: #0078d4;
+        }
+        QPushButton:pressed { background-color: #e5e5e5; }
+        QPushButton:disabled {
+            background-color: #f5f5f5;
+            color: #aaaaaa;
+            border: 1px solid #e5e5e5;
+        }
+    """
 
     def __init__(self):
         super().__init__()
@@ -133,175 +163,237 @@ class PhSensorWidget(QWidget):
         return max(0.0, min(14.0, ph_value))
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # 控制面板
-        control_group = QGroupBox("控制面板")
-        control_layout = QHBoxLayout()
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(scroll_area_style())
 
-        # 串口选择
-        control_layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        content = QWidget()
+        content.setStyleSheet(page_bg_style())
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(16)
+
+        # 页面标题：用 TitleLabel 自动适配主题
+        title = TitleLabel("pH")
+        layout.addWidget(title)
+
+        # ========== 卡片1：连接控制（可折叠） ==========
+        card_conn_content = QWidget()
+        card_conn_content.setObjectName("card")
+        card_conn_content.setStyleSheet(card_style())
+        card_layout = QVBoxLayout(card_conn_content)
+        card_layout.setContentsMargins(20, 4, 20, 16)
+        card_layout.setSpacing(12)
+
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
+
+        row1.addWidget(QLabel("连接方式:"))
+        self.mode_combo = ComboBox()
+        self.mode_combo.addItems(["有线串口", "模拟器"])
+        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
+        row1.addWidget(self.mode_combo)
+
+        self.serial_panel = QWidget()
+        serial_layout = QHBoxLayout(self.serial_panel)
+        serial_layout.setContentsMargins(0, 0, 0, 0)
+        serial_layout.setSpacing(8)
+        serial_layout.addWidget(QLabel("串口:"))
+        self.port_combo = ComboBox()
         self.refresh_ports()
-        control_layout.addWidget(self.port_combo)
-
-        # 刷新按钮
-        self.refresh_btn = QPushButton("刷新")
+        self.port_combo.setMinimumWidth(140)
+        serial_layout.addWidget(self.port_combo)
+        self.refresh_btn = PushButton("刷新")
+        self.refresh_btn.setFixedHeight(36)
+        self.refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        control_layout.addWidget(self.refresh_btn)
+        serial_layout.addWidget(self.refresh_btn)
+        row1.addWidget(self.serial_panel)
 
-        # 连接按钮
-        self.connect_btn = QPushButton("连接")
-        self.connect_btn.clicked.connect(self.toggle_connection)
-        control_layout.addWidget(self.connect_btn)
+        # 模拟器面板：无需选择端口
+        self.sim_panel = QWidget()
+        sim_layout = QHBoxLayout(self.sim_panel)
+        sim_layout.setContentsMargins(0, 0, 0, 0)
+        sim_layout.setSpacing(8)
+        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
+        sim_hint.setStyleSheet("color: #888;")
+        sim_layout.addWidget(sim_hint)
+        sim_layout.addStretch()
+        row1.addWidget(self.sim_panel)
+        self.sim_panel.hide()
 
-        control_layout.addStretch()
+        row1.addSpacing(16)
+        self.connect_btn = PushButton("连接")
+        self.connect_btn.setFixedHeight(36)
+        self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
+        self.connect_btn.clicked.connect(self.connect_device)
+        row1.addWidget(self.connect_btn)
 
-        # 采样频率显示
-        control_layout.addWidget(QLabel("采样:"))
-        self.sample_rate_label = QLabel(f"{1000//self.sample_interval_ms}Hz")
-        self.sample_rate_label.setStyleSheet("color: #0078d4; font-weight: bold;")
-        control_layout.addWidget(self.sample_rate_label)
+        self.disconnect_btn = PushButton("断开")
+        self.disconnect_btn.setFixedHeight(36)
+        self.disconnect_btn.setStyleSheet(self.CARD_BTN_STYLE)
+        self.disconnect_btn.clicked.connect(self.disconnect_serial)
+        self.disconnect_btn.setEnabled(False)
+        row1.addWidget(self.disconnect_btn)
 
-        # 采样频率设置按钮
-        sample_settings_btn = QPushButton("⚙️")
-        sample_settings_btn.setFixedWidth(40)
-        sample_settings_btn.setToolTip("设置采样频率")
-        sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
-        control_layout.addWidget(sample_settings_btn)
+        row1.addSpacing(16)
+        row1.addWidget(QLabel("采样频率:"))
+        self.sample_rate_combo = SampleRateComboBox()
+        self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
+        self.sample_rate_combo.setMaximumWidth(120)
+        self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
+        row1.addWidget(self.sample_rate_combo)
 
-        control_layout.addStretch()
-
-        # 校准信息显示
-        control_layout.addWidget(QLabel("校准状态:"))
+        row1.addSpacing(16)
+        row1.addWidget(QLabel("校准状态:"))
         mode_names = {1: "单点校准", 2: "两点校准", 3: "三点校准"}
         mode_name = mode_names.get(self.calibration_mode, f"{self.calibration_mode}点校准")
         self.calibration_label = QLabel(f"✓ {mode_name}")
         self.calibration_label.setStyleSheet("color: green; font-weight: bold;")
-        control_layout.addWidget(self.calibration_label)
+        row1.addWidget(self.calibration_label)
 
-        control_group.setLayout(control_layout)
-        layout.addWidget(control_group)
+        row1.addStretch()
+        card_layout.addLayout(row1)
 
-        # 校准参数显示卡片
-        cal_info_group = QGroupBox("校准参数")
-        cal_info_layout = QVBoxLayout()
+        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
+        layout.addWidget(card_conn)
 
-        # 校准参数显示
+        # ========== 卡片2：校准参数（可折叠） ==========
+        card_cal_content = QWidget()
+        card_cal_content.setObjectName("card")
+        card_cal_content.setStyleSheet(card_style() + " QWidget#card QLabel { color: #1a1a1a; }")
+        cal_card_layout = QVBoxLayout(card_cal_content)
+        cal_card_layout.setContentsMargins(20, 4, 20, 16)
+        cal_card_layout.setSpacing(12)
+
         cal_lines = []
-        for i, (ph_val, adc_val) in enumerate(self.calibration_points):
+        for ph_val, adc_val in self.calibration_points:
             cal_lines.append(f"• pH {ph_val:.2f} → ADC {adc_val}")
         self.cal_text = QLabel("\n".join(cal_lines) if cal_lines else "未设置校准参数")
         self.cal_text.setStyleSheet("font-size: 12px; color: #666;")
-        cal_info_layout.addWidget(self.cal_text)
+        cal_card_layout.addWidget(self.cal_text)
 
-        # 编辑按钮
-        edit_btn = QPushButton("✏️ 编辑校准参数")
-        edit_btn.clicked.connect(self.edit_calibration)
-        edit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:pressed {
-                background-color: #005a9e;
-            }
-        """)
-        cal_info_layout.addWidget(edit_btn)
+        self.edit_cal_btn = PushButton("✏️ 编辑校准参数")
+        self.edit_cal_btn.setFixedHeight(36)
+        self.edit_cal_btn.setStyleSheet(self.CARD_BTN_STYLE)
+        self.edit_cal_btn.clicked.connect(self.edit_calibration)
+        cal_btn_row = QHBoxLayout()
+        cal_btn_row.addWidget(self.edit_cal_btn)
+        cal_btn_row.addStretch()
+        cal_card_layout.addLayout(cal_btn_row)
 
-        cal_info_group.setLayout(cal_info_layout)
-        layout.addWidget(cal_info_group)
+        card_cal = CollapsibleCard("校准参数", card_cal_content, expanded=True)
 
-        # 数据显示区域
-        data_group = QGroupBox("实时数据")
-        data_layout = QHBoxLayout()
+        # ========== 卡片3：实时数据（可折叠） ==========
+        card_data_content = QWidget()
+        card_data_content.setObjectName("card")
+        card_data_content.setStyleSheet(card_style())
+        data_card_layout = QVBoxLayout(card_data_content)
+        data_card_layout.setContentsMargins(20, 4, 20, 16)
+        data_card_layout.setSpacing(12)
 
-        # 左侧：文本数据显示
-        text_widget = QWidget()
-        text_layout = QVBoxLayout()
-
-        # 当前pH值（大字显示）
         self.current_ph_label = QLabel("pH: --.-")
-        self.current_ph_label.setFont(QFont("Arial", 28, QFont.Weight.Bold))
-        self.current_ph_label.setStyleSheet("color: #0078d4; padding: 10px;")
-        text_layout.addWidget(self.current_ph_label)
+        self.current_ph_label.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
+        self.current_ph_label.setStyleSheet("color: #0078d4;")
+        data_card_layout.addWidget(self.current_ph_label)
 
-        # 当前ADC值
+        raw_row = QHBoxLayout()
+        raw_row.setSpacing(20)
         self.current_adc_label = QLabel("ADC: ----")
-        self.current_adc_label.setFont(QFont("Arial", 14))
-        text_layout.addWidget(self.current_adc_label)
+        self.current_adc_label.setFont(QFont("Microsoft YaHei", 11))
+        self.current_adc_label.setStyleSheet("color: #444444;")
+        raw_row.addWidget(self.current_adc_label)
+        raw_row.addStretch()
+        data_card_layout.addLayout(raw_row)
 
-        # 统计信息
-        self.stats_label = QLabel("统计信息: 暂无数据")
-        text_layout.addWidget(self.stats_label)
+        self.stats_label = QLabel("统计信息：暂无数据")
+        self.stats_label.setFont(QFont("Microsoft YaHei", 10))
+        self.stats_label.setStyleSheet("color: #888888;")
+        data_card_layout.addWidget(self.stats_label)
 
-        # 数据记录
-        self.data_text = QTextEdit()
-        self.data_text.setMaximumHeight(120)
-        text_layout.addWidget(QLabel("数据记录:"))
-        text_layout.addWidget(self.data_text)
+        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
 
-        text_widget.setLayout(text_layout)
-        data_layout.addWidget(text_widget)
+        # 校准参数 + 实时数据 并排同一行（顶部对齐，各自按内容高度，不强制等高）
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(16)
+        cards_row.addWidget(card_cal, stretch=1, alignment=Qt.AlignmentFlag.AlignTop)
+        cards_row.addWidget(card_data, stretch=1, alignment=Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(cards_row)
 
-        # 右侧：图表显示
-        self.figure = Figure(figsize=(8, 5))
+        # ========== 卡片4：pH-时间曲线（可全屏） ==========
+        card_chart_content = QWidget()
+        card_chart_content.setObjectName("card")
+        card_chart_content.setStyleSheet(card_style())
+        chart_card_layout = QVBoxLayout(card_chart_content)
+        chart_card_layout.setContentsMargins(20, 4, 20, 16)
+        chart_card_layout.setSpacing(12)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+
+        # 左侧：数据记录（可展开/收起）
+        self.data_text = ExpandableTextEdit()
+        content_row.addWidget(self.data_text, stretch=0)
+
+        self.figure = Figure(figsize=(8, 5), dpi=100)
+        self.figure.set_facecolor('#fafafa')
         self.canvas = FigureCanvas(self.figure)
-        data_layout.addWidget(self.canvas)
+        self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        content_row.addWidget(self.canvas, stretch=2)
 
-        data_group.setLayout(data_layout)
-        layout.addWidget(data_group)
+        chart_card_layout.addLayout(content_row, 1)
+        card_chart = CollapsibleCard("pH-时间曲线", card_chart_content, expanded=True, fullscreen=True)
+        # 图表卡片加高为原来的 2 倍（内容区最小 400px），页面滚动查看
+        card_chart.set_chart_min_height(400)
+        # 全屏时：数据记录区作为可拖动折叠浮动面板浮于图表上方，折叠时显示实时 pH 值
+        card_chart.set_fullscreen_overlay(self.data_text, self.current_ph_label)
+        layout.addWidget(card_chart)
 
-        # 控制按钮
-        button_layout = QHBoxLayout()
+        # ========== 卡片5：操作按钮（可折叠） ==========
+        card_actions_content = QWidget()
+        card_actions_content.setObjectName("card")
+        card_actions_content.setStyleSheet(card_style())
+        actions_layout = QHBoxLayout(card_actions_content)
+        actions_layout.setContentsMargins(20, 4, 20, 12)
+        actions_layout.setSpacing(10)
 
-        self.start_btn = QPushButton("开始采集")
+        self.start_btn = PrimaryPushButton("开始采集")
+        self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
-        button_layout.addWidget(self.start_btn)
+        actions_layout.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn = PushButton("停止采集")
+        self.stop_btn.setFixedHeight(38)
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
-        button_layout.addWidget(self.stop_btn)
+        actions_layout.addWidget(self.stop_btn)
 
-        self.save_btn = QPushButton("保存数据")
+        self.save_btn = PushButton("保存数据")
+        self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
-        button_layout.addWidget(self.save_btn)
+        actions_layout.addWidget(self.save_btn)
 
-        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn = PushButton("清除数据")
+        self.clear_btn.setFixedHeight(38)
         self.clear_btn.clicked.connect(self.clear_data)
-        button_layout.addWidget(self.clear_btn)
+        actions_layout.addWidget(self.clear_btn)
 
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
+        actions_layout.addStretch()
+        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
+        layout.addWidget(card_actions)
 
-        self.setLayout(layout)
+        layout.addStretch()
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
 
-        # 定时器用于更新图表
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)
@@ -313,12 +405,36 @@ class PhSensorWidget(QWidget):
         for port in ports:
             self.port_combo.addItem(port.device)
 
-    def toggle_connection(self):
-        """切换串口连接状态"""
-        if self.serial_thread and self.serial_thread.isRunning():
-            self.disconnect_serial()
+    def on_mode_changed(self, index):
+        if index == 0:
+            self.serial_panel.show()
+            self.sim_panel.hide()
         else:
+            self.serial_panel.hide()
+            self.sim_panel.show()
+
+    def connect_device(self):
+        if self.mode_combo.currentIndex() == 0:
             self.connect_serial()
+        else:
+            self.connect_simulator()
+
+    def connect_simulator(self):
+        """连接模拟器：随机生成 pH ADC 值（0-4095，中性附近），无需硬件"""
+        try:
+            self.serial_thread = SimulatorThread(
+                value_min=2000, value_max=2600,
+                interval_ms=self.sample_interval_ms,
+                start_value=2281)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.current_ph_label.setText("pH: --.-")
+            self.current_adc_label.setText("ADC: 模拟器连接中...")
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         """连接串口"""
@@ -332,10 +448,11 @@ class PhSensorWidget(QWidget):
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
 
-            self.connect_btn.setText("断开")
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
             self.start_btn.setEnabled(True)
             self.current_ph_label.setText("pH: --.-")
-            self.current_adc_label.setText("ADC: ----")
+            self.current_adc_label.setText("ADC: 连接中...")
 
         except Exception as e:
             QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
@@ -347,7 +464,8 @@ class PhSensorWidget(QWidget):
             self.serial_thread.wait()
             self.serial_thread = None
 
-        self.connect_btn.setText("连接")
+        self.connect_btn.setEnabled(True)
+        self.disconnect_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         self.current_ph_label.setText("pH: --.-")
@@ -390,7 +508,19 @@ class PhSensorWidget(QWidget):
             self.current_adc_label.setText("ADC: 设备就绪")
             return
 
+        # 未开始采集时：实时预览当前 pH/ADC，但不存储数据
         if not self.stop_btn.isEnabled():
+            try:
+                if "," in data:
+                    parts = data.split(",")
+                    if len(parts) == 2:
+                        adc_value = int(parts[1])
+                        if 0 <= adc_value <= 4095:
+                            ph_value = self.adc_to_ph(adc_value)
+                            self.current_ph_label.setText(f"pH: {ph_value:.2f}")
+                            self.current_adc_label.setText(f"ADC: {adc_value}")
+            except ValueError:
+                pass
             return
 
         try:
@@ -468,7 +598,7 @@ class PhSensorWidget(QWidget):
             ax = self.figure.add_subplot(111)
 
             # 绘制pH值曲线
-            ax.plot(self.time_data, self.ph_data, 'b-', linewidth=2, label='pH值')
+            ax.plot(self.time_data, self.ph_data, '#0078d4', linewidth=2, label='pH值')
 
             # 添加参考线（中性pH=7）
             ax.axhline(y=7.0, color='r', linestyle='--', alpha=0.5, label='中性(pH=7)')
@@ -507,27 +637,10 @@ class PhSensorWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存失败：{e}")
 
-    def edit_sample_rate(self):
-        """编辑采样频率对话框"""
-        dialog = SampleRateDialog(self.sample_interval_ms, self)
-        if dialog.exec() == 1:  # QDialog.Accepted
-            # 获取新的采样间隔
-            new_interval_ms = dialog.get_sample_interval()
-
-            # 更新采样间隔
-            self.sample_interval_ms = new_interval_ms
-
-            # 更新显示
-            freq = 1000 // new_interval_ms
-            self.sample_rate_label.setText(f"{freq}Hz")
-
-            # 保存配置到文件
-            self.save_config()
-
-            QMessageBox.information(self, "成功",
-                                   f"采样频率已更新为 {freq} Hz！\n"
-                                   f"采样间隔：{new_interval_ms} ms\n"
-                                   f"配置已自动保存，下次启动时生效。")
+    def on_sample_interval_changed(self, interval_ms):
+        """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
+        self.sample_interval_ms = interval_ms
+        self.save_config()
 
     def clear_data(self):
         """清除数据"""
@@ -566,3 +679,13 @@ class PhSensorWidget(QWidget):
 
             QMessageBox.information(self, "成功",
                                    "校准参数已更新并保存！\n新的校准曲线将立即生效。\n下次启动程序时会自动加载此配置。")
+
+    def apply_theme(self, theme):
+        """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
+        apply_module_theme(self, theme)
+        try:
+            from qfluentwidgets import isDarkTheme
+            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
+            self.canvas.draw()
+        except Exception:
+            pass

@@ -26,12 +26,15 @@
 | 库 | 版本 | 用途 |
 |----|------|------|
 | **PySide6** | ≥6.4.0 | 图形界面框架 |
+| **PySide6-Fluent-Widgets** | — | WinUI3 风格组件库（主窗口基于 `FluentWindow`） |
 | **pyserial** | ≥3.5 | 串口通信 |
 | **matplotlib** | ≥3.5.0 | 数据可视化 |
 | **numpy** | ≥1.21.0 | 数值计算 |
 
 ```bash
 pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+# WinUI3 风格组件库（必需）
+pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
 pip install bleak
 ```
@@ -47,13 +50,13 @@ pip install bleak
 | pH 传感器 | SEN0161 | ESP32-S3 | 化学 | GPL-3.0 | [使用说明](传感器代码/ph传感器/README.md) |
 | 力/质量传感器 | HX711 | ESP32-S3 | 物理 | GPL-3.0 | [使用说明](传感器代码/力传感器/README.md) |
 | 电压传感器 | ESP32 ADC / HX711 | ESP32-S3 | 物理 | GPL-3.0 | [使用说明](传感器代码/电压传感器/README.md) |
-| 电流传感器 | ACS712 | ESP32-S3 | 物理 | GPL-3.0 | 📝 开发中（[上位机模块](传感器代码/电流传感器/current_sensor.py)） |
+| 电流传感器 | ACS712 | ESP32-S3 | 物理 | GPL-3.0 | [使用说明](传感器代码/电流传感器/)（ACS712 5A/20A/30A 量程，AC/DC，零点校准） |
 
 ## 📂 项目结构
 
 ```
 PhysChem-DigitizerP/
-├── main.py                     # 主程序：主页 + 侧边栏 + 动态加载器
+├── main.py                     # 主程序：FluentWindow + 主页 + 动态加载器
 ├── core.py                     # 公共模块：SerialThread / BLESerialThread / 配置 / 对话框 / 现代化样式
 ├── main_legacy.py              # 历史存档（迁移前单文件版本，不再维护）
 ├── test_serial.py              # 串口连接测试工具
@@ -89,7 +92,7 @@ PhysChem-DigitizerP/
     │   └── voltage_sensor.py         # 电压上位机模块（支持 HX711 模式）
     └── 电流传感器/              # ACS712 电流（5A/20A/30A，AC/DC，零点校准）
         ├── ESP32_ADC_Raw_Data.ino   # ESP32-S3 固件
-        └── current_sensor.py        # 电流上位机模块
+        └── current_sensor.py        # 电流上位机模块（5A/20A/30A 量程，AC/DC）
 ```
 
 > 📖 模块加载机制、识别区格式与添加新模块的完整教程请参考 [AGENTS.md](AGENTS.md)。
@@ -122,6 +125,8 @@ PhysChem-DigitizerP/
 
 ```bash
 pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+# WinUI3 风格组件库（必需）
+pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
 pip install bleak
 ```
@@ -196,13 +201,14 @@ python test_serial.py
 <p align="center">
   <img src="docs/images/settings.png" alt="设置界面" width="800"/>
 </p>
-<p align="center">设置界面 — 外观主题切换</p>
+<p align="center">设置界面 — 功能正在开发中（占位页）</p>
 
-- **左侧侧边栏**：模块选择导航
+- **左侧侧边栏**：WinUI3 风格导航（FluentWindow），模块图标由识别区文字渲染
 - **串口控制**：选择端口、刷新、连接/断开
 - **实时数据**：当前值、统计信息、数据记录
 - **图表区域**：实时数据曲线
 - **操作按钮**：开始/停止采集、保存数据、清除数据
+- **设置页**：当前为占位页（功能正在开发中），侧边栏图标保留以便未来接入
 
 ## 🤝 贡献指南
 
@@ -215,7 +221,7 @@ git clone https://gitee.com/wangzhidong2/PhysChem-DigitizerP.git
 git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
 
 cd PhysChem-DigitizerP
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 PySide6-Fluent-Widgets
 ```
 
 ## 📄 许可证

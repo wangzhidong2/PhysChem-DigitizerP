@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 wangzhidong2
+# SPDX-License-Identifier: GPL-3.0-only
+
 # -*- coding: utf-8 -*-
 """
 PhysChem-DigitizerP 主程序
@@ -17,17 +20,90 @@ import sys
 import os
 import re
 import glob
+import webbrowser
 import importlib.util
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QStackedWidget, QScrollArea, QGroupBox,
+    QPushButton, QFrame, QStackedWidget, QScrollArea, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics, QGuiApplication
+
+# FluentWidgets — WinUI3 风格组件库（社区版，GPLv3 + 商业双协议）
+# 文档：https://qfluentwidgets.com/
+from qfluentwidgets import (
+    FluentWindow, FluentIcon as FIF, NavigationItemPosition,
+    Theme, setTheme, PushButton, PrimaryPushButton,
+    ComboBox, InfoBar, InfoBarPosition, BodyLabel,
+    TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
+    SettingCard, SettingCardGroup, isDarkTheme,
+)
 
 # 公共模块（与各传感器模块共享）
-from core import card_style, primary_btn_style, accent_btn_style
+from core import (
+    card_style, primary_btn_style, accent_btn_style,
+    patch_combobox_arrow_flip, CollapsibleCard,
+    page_bg_style, scroll_area_style, _theme_colors,
+)
+
+
+# ============================================================
+# 模块图标工具
+# ============================================================
+def make_text_icon(text: str, size: int = 128) -> QIcon:
+    """把识别区里的文字（如 V/F/x/pH/v/A）画成方形 QIcon。
+
+    传感器模块识别区写的是文字图标（# icon: V），
+    FluentIcon 枚举里没有对应"电压/电流/pH/力/超声波"的图标，
+    所以直接用文字渲染成图标，保留模块化设计。
+
+    Args:
+        text: 图标文字（1-3 个字符，如 "V"、"pH"）
+        size: 画布像素尺寸（实际显示时按比例缩放）
+
+    Returns:
+        QIcon: 带 theme（Normal/Active/Selected）的文字图标
+    """
+    icon = QIcon()
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.TextAntialiasing)
+
+    # 字号自适应：从大字号起用 QFontMetrics 测量，缩到刚好填满画布（留 8% 边距）。
+    # 这样 "V"、"pH"、"x" 都能最大化显示，不会因固定比例而偏小。
+    # 之前用 0.55/0.40 固定比例，单字符偏小、多字符更小，实测不够大。
+    font = QFont("Microsoft YaHei", int(size * 0.9))
+    font.setBold(True)
+    margin = int(size * 0.08)  # 上下左右各留 8% 边距
+    target = QSize(size - margin * 2, size - margin * 2)
+    fm = QFontMetrics(font)
+    while font.pointSize() > 4:
+        br = fm.boundingRect(text)
+        if br.width() <= target.width() and br.height() <= target.height():
+            break
+        font.setPointSize(font.pointSize() - 2)
+        fm = QFontMetrics(font)
+    p.setFont(font)
+
+    # 三种状态：Normal(深色文字)/Active(强调色)/Selected(白色，选中时背景已是 accent)
+    for mode, color in (
+        (QIcon.Normal, QColor("#1a1a1a")),
+        (QIcon.Active, QColor("#005fb8")),
+        (QIcon.Selected, QColor("#ffffff")),
+    ):
+        p.setCompositionMode(QPainter.CompositionMode_Clear)
+        p.eraseRect(0, 0, size, size)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        p.setPen(color)
+        p.drawText(QRect(0, 0, size, size), Qt.AlignCenter, text)
+        icon.addPixmap(pix, mode, QIcon.Off)
+        icon.addPixmap(pix, mode, QIcon.On)
+
+    p.end()
+    return icon
 
 
 # ============================================================
@@ -166,9 +242,21 @@ class HomePageWidget(QWidget):
             border: 1px solid #e5e5e5;
             border-radius: 8px;
         }
-        QWidget#card QLabel,
-        QWidget#card QFrame {
+        QWidget#card QWidget {
             background-color: transparent;
+        }
+        QWidget#card QComboBox,
+        QWidget#card QTextEdit,
+        QWidget#card QPlainTextEdit,
+        QWidget#card QSpinBox,
+        QWidget#card QDoubleSpinBox,
+        QWidget#card QLineEdit,
+        QWidget#card QListView,
+        QWidget#card QTreeView,
+        QWidget#card QTableView,
+        QWidget#card QScrollArea,
+        QWidget#card QAbstractScrollArea {
+            background-color: #ffffff;
         }
     """
 
@@ -199,105 +287,73 @@ class HomePageWidget(QWidget):
         self._rebuild_module_cards()
 
     def init_ui(self):
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        self.scroll = QScrollArea()
+        self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
+        self.scroll.setStyleSheet(scroll_area_style())
 
         self.content = QWidget()
-        self.content.setStyleSheet("background: #f3f3f3;")
+        self.content.setObjectName("home_content")
+        self.content.setStyleSheet(
+            f"QWidget#home_content {{ background: {_theme_colors()['page_bg']}; }}")
         self.content_layout = QVBoxLayout(self.content)
-        self.content_layout.setContentsMargins(24, 20, 24, 24)
-        self.content_layout.setSpacing(16)
+        self.content_layout.setContentsMargins(24, 16, 24, 18)
+        self.content_layout.setSpacing(10)
 
-        # 页面标题
-        title = QLabel("主页")
-        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
-        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        # 页面标题：用 FluentWidgets TitleLabel 自动适配主题
+        title = TitleLabel("主页")
         self.content_layout.addWidget(title)
 
-        # ========== 卡片1：版本信息 + 项目简介 ==========
+        # ========== 卡片1：项目信息 ==========
         card1 = QWidget()
         card1.setObjectName("card")
         card1.setStyleSheet(self.CARD_STYLE)
         card1_layout = QVBoxLayout(card1)
-        card1_layout.setContentsMargins(20, 20, 20, 20)
-        card1_layout.setSpacing(12)
+        card1_layout.setContentsMargins(24, 16, 24, 16)
+        card1_layout.setSpacing(10)
 
-        top_row = QWidget()
-        top_layout = QHBoxLayout(top_row)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(16)
+        # 顶部：标题区（左）+ 仓库按钮（右）
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(20)
 
-        icon_label = QLabel("🔬")
-        icon_label.setFont(QFont("Segoe MDL2 Assets", 36))
-        icon_label.setFixedSize(64, 64)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet("""
-            background-color: #e8f0fe;
-            border-radius: 12px;
-            color: #0067c0;
-        """)
-        top_layout.addWidget(icon_label)
-
+        # 左：项目名（用 SubtitleLabel 自动适配主题）
         info_layout = QVBoxLayout()
         info_layout.setSpacing(2)
 
-        app_name = QLabel("PhysChem-DigitizerP")
-        app_name.setFont(QFont("Microsoft YaHei", 18, QFont.Weight.Bold))
-        app_name.setStyleSheet("color: #1a1a1a;")
+        app_name = SubtitleLabel("PhysChem-DigitizerP")
         info_layout.addWidget(app_name)
 
-        version_label = QLabel("版本 1.3.0 | MIT 开源协议 | 模块化架构")
-        version_label.setFont(QFont("Microsoft YaHei", 10))
-        version_label.setStyleSheet("color: #666666;")
-        info_layout.addWidget(version_label)
+        header_row.addLayout(info_layout)
+        header_row.addStretch()
 
-        top_layout.addLayout(info_layout)
-        top_layout.addStretch()
+        card1_layout.addLayout(header_row)
 
-        github_btn = QPushButton("  GitHub")
-        github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        github_btn.setFixedHeight(36)
-        github_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0067c0;
-                border: none;
-                border-radius: 6px;
-                color: white;
-                font-size: 13px;
-                padding: 0 16px;
-            }
-            QPushButton:hover { background-color: #005a9e; }
-            QPushButton:pressed { background-color: #004578; }
-        """)
-        github_btn.clicked.connect(self.open_github)
-        top_layout.addWidget(github_btn)
-
-        card1_layout.addWidget(top_row)
-
+        # 分隔线
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("color: #e0e0e0;")
+        separator.setStyleSheet("color: #ebebeb;")
         card1_layout.addWidget(separator)
 
+        # 项目简介
         desc_label = QLabel(
             "基于 Arduino/ESP32 的低成本理化实验数字化采集系统，"
             "为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
         )
         desc_label.setWordWrap(True)
         desc_label.setFont(QFont("Microsoft YaHei", 11))
-        desc_label.setStyleSheet("color: #444444; line-height: 1.5;")
+        desc_label.setStyleSheet("color: #444444; line-height: 1.6;")
         card1_layout.addWidget(desc_label)
 
+        # 标签
         tags_layout = QHBoxLayout()
         tags_layout.setSpacing(8)
         tags = [
-            ("MIT 开源", "#e8f5e9", "#2e7d32"),
+            ("GPL-3.0 开源", "#e8f5e9", "#2e7d32"),
             ("教学实验", "#f3e5f5", "#7b1fa2"),
             ("模块化架构", "#e3f2fd", "#1565c0"),
         ]
@@ -307,8 +363,8 @@ class HomePageWidget(QWidget):
             tag.setStyleSheet(f"""
                 background-color: {bg};
                 color: {fg};
-                border-radius: 4px;
-                padding: 4px 10px;
+                border-radius: 10px;
+                padding: 4px 12px;
             """)
             tags_layout.addWidget(tag)
         tags_layout.addStretch()
@@ -316,17 +372,80 @@ class HomePageWidget(QWidget):
 
         self.content_layout.addWidget(card1)
 
+        # ========== 卡片2：项目地址（可折叠，3 平台，可复制可访问） ==========
+        # 内容区（不含标题，标题由 CollapsibleCard 的 header 提供）
+        repo_content = QWidget()
+        repo_card_layout = QVBoxLayout(repo_content)
+        repo_card_layout.setContentsMargins(24, 4, 24, 14)
+        repo_card_layout.setSpacing(6)
+
+        repo_card_layout.addSpacing(2)
+
+        # 收集所有 url_edit 以便主题切换时刷新（它们用 _theme_colors() 预烘焙了 QSS）
+        self._url_edits = []
+
+        # 3 个平台 URL 行
+        repo_urls = [
+            ("GitHub",  "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
+            ("Gitee",   "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
+            ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"),
+        ]
+        for i, (name, url) in enumerate(repo_urls):
+            row = QHBoxLayout()
+            row.setSpacing(10)
+
+            name_lbl = QLabel(name)
+            name_lbl.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+            name_lbl.setStyleSheet("color: #0078d4;")
+            name_lbl.setFixedWidth(64)
+            row.addWidget(name_lbl)
+
+            url_edit = QLineEdit(url)
+            url_edit.setReadOnly(True)
+            url_edit.setFont(QFont("Consolas", 10))
+            url_edit.setStyleSheet(self._url_edit_qss())
+            url_edit.setCursor(Qt.CursorShape.IBeamCursor)
+            url_edit.setToolTip("点击全选，Ctrl+C 复制")
+            row.addWidget(url_edit, stretch=1)
+            self._url_edits.append(url_edit)
+
+            copy_btn = PushButton("复制")
+            copy_btn.setFixedHeight(26)
+            copy_btn.setFixedWidth(64)
+            copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            copy_btn.clicked.connect(lambda _=False, u=url: self._copy_to_clipboard(u))
+            row.addWidget(copy_btn)
+
+            open_btn = PushButton("访问")
+            open_btn.setFixedHeight(26)
+            open_btn.setFixedWidth(64)
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            open_btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
+            row.addWidget(open_btn)
+
+            repo_card_layout.addLayout(row)
+
+            # 行间细分隔线（最后一行不画）
+            if i < len(repo_urls) - 1:
+                line = QFrame()
+                line.setFrameShape(QFrame.Shape.HLine)
+                line.setStyleSheet("color: #f0f0f0;")
+                repo_card_layout.addWidget(line)
+
+        # 用 CollapsibleCard 包裹，标题"项目地址"显示在 header，可点击折叠
+        repo_collapsible = CollapsibleCard("项目地址", repo_content, expanded=True)
+        self.content_layout.addWidget(repo_collapsible)
+
         # 模块卡片容器（动态填充）
         self.modules_container = QWidget()
         self.modules_container_layout = QVBoxLayout(self.modules_container)
         self.modules_container_layout.setContentsMargins(0, 0, 0, 0)
-        self.modules_container_layout.setSpacing(16)
+        self.modules_container_layout.setSpacing(10)
         self.content_layout.addWidget(self.modules_container)
 
         self.content_layout.addStretch()
         self.scroll.setWidget(self.content)
         main_layout.addWidget(self.scroll)
-        self.setLayout(main_layout)
 
     def _rebuild_module_cards(self):
         """根据 self._modules 重建模块卡片"""
@@ -341,79 +460,83 @@ class HomePageWidget(QWidget):
         for icon, name, cat in self._modules:
             categories.setdefault(cat, []).append((icon, name))
 
+        # 物理和化学合并到一个可折叠卡片，用分割线隔开
+        if categories:
+            card = self._create_combined_module_card(categories)
+            self.modules_container_layout.addWidget(card)
+
+    def _create_combined_module_card(self, categories):
+        """创建合并了物理/化学模块的可折叠卡片。
+
+        各类别之间用水平分割线隔开，每个类别带小标题 + 模块网格。
+        """
         # 类别显示名映射
         cat_names = {
-            'physics': ('物理实验模块', '⚛️', '#0067c0'),
-            'chemistry': ('化学实验模块', '🧪', '#7b1fa2'),
+            'physics': '物理实验模块',
+            'chemistry': '化学实验模块',
         }
 
-        # 物理和化学并排
-        if 'physics' in categories or 'chemistry' in categories:
-            row_layout = QHBoxLayout()
-            row_layout.setSpacing(16)
-
-            for cat_key in ['physics', 'chemistry']:
-                if cat_key not in categories:
-                    continue
-                display_name, icon_char, color = cat_names.get(
-                    cat_key, (cat_key, '📦', '#666666')
-                )
-                mods = categories[cat_key]
-                card = self._create_grid_module_card(
-                    display_name,
-                    f"{len(mods)} 个模块",
-                    mods,
-                    icon_char,
-                    color,
-                )
-                row_layout.addWidget(card, stretch=2)
-
-            self.modules_container_layout.addLayout(row_layout)
-
-    def _create_grid_module_card(self, title, subtitle, modules, title_icon, title_color):
-        """创建现代化设置风格的网格卡片"""
-        card = QWidget()
-        card.setObjectName("card")
-        card.setStyleSheet(self.CARD_STYLE)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(20, 20, 20, 16)
-        card_layout.setSpacing(0)
-
-        title_label = QLabel(title)
-        title_label.setFont(QFont("Microsoft YaHei", 16, QFont.Weight.Bold))
-        title_label.setStyleSheet("color: #1a1a1a;")
-        card_layout.addWidget(title_label)
-
-        subtitle_label = QLabel(subtitle)
-        subtitle_label.setFont(QFont("Microsoft YaHei", 10))
-        subtitle_label.setStyleSheet("color: #666666; margin-bottom: 12px;")
-        card_layout.addWidget(subtitle_label)
+        # 内容区
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(18, 4, 18, 12)
+        content_layout.setSpacing(0)
 
         from PySide6.QtWidgets import QGridLayout
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(8)
 
-        for i, (icon_text, name) in enumerate(modules):
-            row, col = divmod(i, 2)
-            item = self._create_grid_module_item(icon_text, name)
-            grid.addWidget(item, row, col)
+        first = True
+        for cat_key in ['physics', 'chemistry']:
+            if cat_key not in categories or not categories[cat_key]:
+                continue
 
-        card_layout.addLayout(grid)
-        card_layout.addSpacing(4)
-        return card
+            # 类别之间用分割线隔开（第一个类别前不画）
+            if not first:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.HLine)
+                sep.setStyleSheet("color: #e5e5e5; background: transparent;")
+                content_layout.addWidget(sep)
+                content_layout.addSpacing(8)
+            first = False
+
+            display_name = cat_names.get(cat_key, cat_key)
+            mods = categories[cat_key]
+
+            # 类别小标题
+            cat_label = QLabel(display_name)
+            cat_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+            cat_label.setStyleSheet("color: #444444; background: transparent; margin-top: 4px;")
+            content_layout.addWidget(cat_label)
+
+            count_label = QLabel(f"{len(mods)} 个模块")
+            count_label.setFont(QFont("Microsoft YaHei", 9))
+            count_label.setStyleSheet("color: #999999; background: transparent; margin-bottom: 6px;")
+            content_layout.addWidget(count_label)
+
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setSpacing(8)
+
+            for i, (icon_text, name) in enumerate(mods):
+                row, col = divmod(i, 2)
+                item = self._create_grid_module_item(icon_text, name)
+                grid.addWidget(item, row, col)
+
+            content_layout.addLayout(grid)
+            content_layout.addSpacing(4)
+
+        return CollapsibleCard("传感器模块", content, expanded=True)
 
     def _create_grid_module_item(self, icon_text, name):
         """创建网格内的单个模块项"""
         btn = QPushButton()
         btn.setObjectName("module_item")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setFixedHeight(48)
+        btn.setFixedHeight(42)
         btn.setMaximumWidth(200)
         btn.setStyleSheet(self.CARD_HOVER_STYLE)
 
         btn_layout = QHBoxLayout(btn)
-        btn_layout.setContentsMargins(12, 6, 12, 6)
+        btn_layout.setContentsMargins(12, 4, 12, 4)
         btn_layout.setSpacing(10)
 
         icon_label = QLabel(icon_text)
@@ -421,9 +544,8 @@ class HomePageWidget(QWidget):
         icon_label.setFixedSize(32, 32)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setStyleSheet("""
-            background-color: #e8f0fe;
-            border-radius: 6px;
-            color: #0067c0;
+            background-color: #ffffff;
+            color: #000000;
         """)
         btn_layout.addWidget(icon_label)
 
@@ -440,67 +562,84 @@ class HomePageWidget(QWidget):
         btn.clicked.connect(lambda: self.on_module_clicked(name))
         return btn
 
-    def open_github(self):
-        import webbrowser
-        webbrowser.open("https://github.com/wangzhidong2/PhysChem-DigitizerP")
+    def _copy_to_clipboard(self, text: str):
+        """把文本拷到系统剪贴板，并在状态栏给一个轻提示。"""
+        clip = QGuiApplication.clipboard()
+        if clip:
+            clip.setText(text)
+        try:
+            InfoBar.success(
+                title="已复制",
+                content=text,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.BOTTOM_RIGHT,
+                duration=1500,
+                parent=self,
+            )
+        except Exception:
+            pass
 
     def on_module_clicked(self, module_name):
         self.module_clicked.emit(module_name)
 
     def apply_theme(self, theme):
-        if theme == "dark":
-            self.CARD_STYLE = """
-                QWidget#card {
-                    background-color: #2d2d2d;
-                    border: 1px solid #404040;
-                    border-radius: 8px;
-                }
-                QWidget#card QLabel,
-                QWidget#card QFrame {
-                    background-color: transparent;
-                }
-            """
-            self.CARD_HOVER_STYLE = """
-                QPushButton#module_item {
-                    background-color: transparent;
-                    border: none;
-                    border-radius: 6px;
-                    text-align: left;
-                    padding: 12px 16px;
-                }
-                QPushButton#module_item:hover { background-color: #404040; }
-                QPushButton#module_item:pressed { background-color: #505050; }
-            """
-            self.scroll.setStyleSheet("QScrollArea { border: none; background: #202020; }")
-            self.content.setStyleSheet("background: #202020;")
-        else:
-            self.CARD_STYLE = """
-                QWidget#card {
-                    background-color: #ffffff;
-                    border: 1px solid #e5e5e5;
-                    border-radius: 8px;
-                }
-                QWidget#card QLabel,
-                QWidget#card QFrame {
-                    background-color: transparent;
-                }
-            """
-            self.CARD_HOVER_STYLE = """
-                QPushButton#module_item {
-                    background-color: transparent;
-                    border: none;
-                    border-radius: 6px;
-                    text-align: left;
-                    padding: 12px 16px;
-                }
-                QPushButton#module_item:hover { background-color: #f0f0f0; }
-                QPushButton#module_item:pressed { background-color: #e5e5e5; }
-            """
-            self.scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
-            self.content.setStyleSheet("background: #f3f3f3;")
+        """主题切换：刷新主页背景、卡片样式、滚动区。
 
-        # 刷新已显示的卡片样式
+        委托给 core.apply_module_theme() 统一处理：刷新 QScrollArea/QWidget#card/
+        CollapsibleCard/QLabel/QLineEdit/QFrame 的样式表，并触发 polish。
+        同时也刷新 self.CARD_STYLE / self.CARD_HOVER_STYLE（用于动态重建的模块卡片）。
+        """
+        from core import apply_module_theme
+        c = _theme_colors()
+        self.CARD_STYLE = f"""
+            QWidget#card {{
+                background-color: {c['card_bg']};
+                border: 1px solid {c['card_border']};
+                border-radius: 8px;
+            }}
+            QWidget#card QLabel,
+            QWidget#card QFrame {{
+                background-color: transparent;
+            }}
+        """
+        self.CARD_HOVER_STYLE = f"""
+            QPushButton#module_item {{
+                background-color: transparent;
+                border: none;
+                border-radius: 6px;
+                text-align: left;
+                padding: 12px 16px;
+            }}
+            QPushButton#module_item:hover {{ background-color: {c['hover_bg']}; }}
+            QPushButton#module_item:pressed {{ background-color: {c['pressed_bg']}; }}
+        """
+
+        # 委托通用主题刷新：刷新滚动区/卡片/QLabel/QLineEdit 等
+        apply_module_theme(self, theme)
+
+        # url_edit 用 _theme_colors() 预烘焙 QSS，需要单独刷新
+        for url_edit in getattr(self, '_url_edits', []):
+            url_edit.setStyleSheet(self._url_edit_qss())
+
+        # 刷新已显示的模块卡片（apply_module_theme 不处理动态创建的 QPushButton#module_item）
         self._rebuild_module_cards()
+
+    def _url_edit_qss(self):
+        """主题感知的只读 QLineEdit 样式（用于主页项目地址行）"""
+        c = _theme_colors()
+        return f"""
+            QLineEdit {{
+                background-color: {c['input_bg']};
+                border: 1px solid {c['card_border']};
+                border-radius: 5px;
+                padding: 5px 10px;
+                color: {c['text_secondary']};
+                selection-background-color: {c['accent']};
+                selection-color: #ffffff;
+            }}
+            QLineEdit:focus {{ border: 1px solid {c['accent']}; background-color: {c['card_bg']}; }}
+        """
 
 
 # ============================================================
@@ -792,170 +931,177 @@ class SidebarWidget(QWidget):
 
 
 # ============================================================
-# 设置
+# 设置（主题切换 + 关于信息）
 # ============================================================
 class SettingsWidget(QWidget):
-    """设置界面组件"""
+    """设置页 —— 主题切换 / 关于。
 
-    theme_changed = Signal(str)
+    用 FluentWidgets 的 SettingCardGroup + SettingCard 系列组件搭建，
+    样式自动适配亮/暗主题。当前包含三组：
+    - 个性化：应用主题（亮色可用；深色模式 / 跟随系统开发中）
+    - 关于：项目名、版本、许可证、源码仓库
+    - 反馈：issue 链接
+    """
+
+    theme_change_requested = Signal(str)  # 'light' / 'dark'
+
+    APP_VERSION = "1.3"
 
     def __init__(self):
         super().__init__()
-        self.current_theme = "light"
+        # 深色模式 / 跟随系统暂未完成（字体颜色有问题），先只做浅色；
+        # 后两项仅占位，灰显不可点击并标注「（开发中）」。
+        self._theme_combo_items = ["浅色模式", "深色模式", "跟随系统"]
+        self._theme_combo_values = ["light", "dark", "auto"]
         self.init_ui()
+        # 仅支持浅色：固定选中亮色
+        self._theme_combo.setCurrentIndex(0)
 
     def init_ui(self):
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(20)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        title = QLabel("设置")
-        title.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet(scroll_area_style())
+
+        self._content = QWidget()
+        self._content.setStyleSheet(page_bg_style())
+        layout = QVBoxLayout(self._content)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(16)
+
+        # 页面标题：用 TitleLabel 自动适配主题
+        title = TitleLabel("设置")
         layout.addWidget(title)
 
-        appearance_group = QGroupBox("外观")
-        appearance_layout = QVBoxLayout()
-        appearance_layout.setSpacing(15)
+        # ===== 个性化分组 =====
+        group_personal = SettingCardGroup("个性化", self._content)
+        self._theme_card = self._build_theme_card(group_personal)
+        group_personal.addSettingCard(self._theme_card)
+        layout.addWidget(group_personal)
 
-        theme_label = QLabel("应用主题")
-        theme_label.setFont(QFont("Microsoft YaHei", 12, QFont.Weight.Bold))
-        appearance_layout.addWidget(theme_label)
+        # ===== 关于分组 =====
+        group_about = SettingCardGroup("关于", self._content)
+        group_about.addSettingCard(self._build_about_card(
+            FIF.APPLICATION, "应用名称", "PhysChem-DigitizerP"))
+        group_about.addSettingCard(self._build_about_card(
+            FIF.INFO, "版本", f"v{self.APP_VERSION}"))
+        group_about.addSettingCard(self._build_about_card(
+            FIF.COPY, "版权", "Copyright © 2026 wangzhidong2"))
+        group_about.addSettingCard(self._build_about_card(
+            FIF.CERTIFICATE, "开源许可证", "GPL-3.0-only",
+            "本应用遵循 GPL-3.0-only 协议开源"))
+        layout.addWidget(group_about)
 
-        theme_desc = QLabel("选择要显示的应用主题")
-        theme_desc.setStyleSheet("color: #666; font-size: 11px;")
-        appearance_layout.addWidget(theme_desc)
-
-        self.theme_button_group = QVBoxLayout()
-        self.theme_button_group.setSpacing(8)
-
-        self.theme_buttons = {}
-        themes = [
-            ("system", "使用系统设置"),
-            ("light", "浅色"),
-            ("dark", "深色"),
-        ]
-
-        for theme_id, theme_name in themes:
-            btn = QPushButton(f"  {theme_name}")
-            btn.setCheckable(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setMinimumHeight(40)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: white;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    text-align: left;
-                    padding-left: 15px;
-                    font-size: 13px;
-                    color: #333;
-                }
-                QPushButton:hover {
-                    background-color: #f5f5f5;
-                    border-color: #0078d4;
-                }
-                QPushButton:checked {
-                    background-color: #e6f2ff;
-                    border-left: 3px solid #0078d4;
-                    color: #0078d4;
-                    font-weight: bold;
-                }
-            """)
-            btn.clicked.connect(lambda checked, tid=theme_id: self.change_theme(tid))
-            self.theme_buttons[theme_id] = btn
-            self.theme_button_group.addWidget(btn)
-
-        appearance_layout.addLayout(self.theme_button_group)
-        appearance_group.setLayout(appearance_layout)
-        layout.addWidget(appearance_group)
+        # ===== 源码与反馈分组 =====
+        group_repo = SettingCardGroup("源码 & 反馈", self._content)
+        group_repo.addSettingCard(self._build_link_card(
+            FIF.GITHUB, "GitHub 仓库", "wangzhidong2/PhysChem-DigitizerP",
+            "https://github.com/wangzhidong2/PhysChem-DigitizerP"))
+        group_repo.addSettingCard(self._build_link_card(
+            FIF.CODE, "Gitee 仓库", "wangzhidong2/PhysChem-DigitizerP",
+            "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"))
+        group_repo.addSettingCard(self._build_link_card(
+            FIF.CODE, "GitCode 仓库", "wangzhidong2/PhysChem-DigitizerP",
+            "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"))
+        group_repo.addSettingCard(self._build_link_card(
+            FIF.FEEDBACK, "问题反馈", "提交 Issue / 功能建议",
+            "https://github.com/wangzhidong2/PhysChem-DigitizerP/issues"))
+        layout.addWidget(group_repo)
 
         layout.addStretch()
-        self.setLayout(layout)
-        self.theme_buttons["light"].setChecked(True)
+        self._scroll.setWidget(self._content)
+        outer.addWidget(self._scroll)
 
-    def change_theme(self, theme_id):
-        for btn in self.theme_buttons.values():
-            btn.setChecked(False)
-        self.theme_buttons[theme_id].setChecked(True)
-        self.current_theme = theme_id
-        self.theme_changed.emit(theme_id)
+    def _build_theme_card(self, parent):
+        """主题切换卡片：自定义 SettingCard，内嵌一个 ComboBox。
+
+        深色模式 / 跟随系统尚未完成，仅作占位：禁用且标注「（开发中）」，
+        当前只允许选择亮色。
+        """
+        card = SettingCard(FIF.PALETTE, "应用主题",
+                           "切换亮色 / 深色模式 / 跟随系统", parent)
+        combo = ComboBox(card)
+        combo.addItems(self._theme_combo_items)
+        combo.setMinimumWidth(160)
+        # 占位项灰显不可点击 + 标注开发中
+        combo.setItemEnabled(1, False)  # 深色模式
+        combo.setItemEnabled(2, False)  # 跟随系统
+        combo.setItemText(1, "深色模式（开发中）")
+        combo.setItemText(2, "跟随系统（开发中）")
+        combo.currentIndexChanged.connect(self._on_theme_combo_changed)
+        card.hBoxLayout.addWidget(combo)
+        card.hBoxLayout.addSpacing(16)
+        self._theme_combo = combo
+        return card
+
+    def _build_about_card(self, icon, title, value, content=None):
+        """只读信息卡片：右侧显示 value 文本，content 为副标题（可选）"""
+        card = SettingCard(icon, title, content)
+        value_lbl = BodyLabel(value)
+        # 次要文字色，比标题弱一档
+        value_lbl.setStyleSheet("color: #888888;")
+        card.hBoxLayout.addWidget(value_lbl)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _build_link_card(self, icon, title, content, url):
+        """带"访问"按钮的链接卡片"""
+        card = SettingCard(icon, title, content)
+        link_btn = HyperlinkButton()
+        link_btn.setText("访问")
+        link_btn.setUrl(url)
+        link_btn.setFixedHeight(34)
+        card.hBoxLayout.addWidget(link_btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _on_theme_combo_changed(self, idx: int):
+        if not (0 <= idx < len(self._theme_combo_values)):
+            return
+        # 占位项（深色模式 / 跟随系统）已被禁用，不应触发；防御性忽略。
+        if not self._theme_combo.items[idx].isEnabled:
+            return
+        mode = self._theme_combo_values[idx]
+        if mode == "auto":
+            # 跟随系统：交给 FluentWidgets 处理 AUTO 主题
+            setTheme(Theme.AUTO)
+            # 实际亮/暗由系统决定，通知主窗口刷新自定义 widget
+            actual = "dark" if isDarkTheme() else "light"
+            self.theme_change_requested.emit(actual)
+        else:
+            self.theme_change_requested.emit(mode)
+
+    def _sync_theme_combo_from_current(self):
+        """根据当前 FluentWidgets 主题，反向同步下拉框选项。
+
+        当前仅支持浅色，始终选中亮色；深色 / 跟随系统为占位项不选中。
+        """
+        self._theme_combo.setCurrentIndex(0)
 
     def apply_theme(self, theme):
-        if theme == "dark":
-            self.setStyleSheet("""
-                QWidget { background-color: #202020; color: #ffffff; }
-                QGroupBox {
-                    font-weight: bold;
-                    border: 2px solid #3d3d3d;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: #ffffff;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: #ffffff;
-                }
-                QLabel { color: #ffffff; }
-                QPushButton {
-                    background-color: #333333;
-                    border: 1px solid #444444;
-                    color: #ffffff;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-size: 14px;
-                }
-                QPushButton:hover { background-color: #404040; border-color: #0078d4; }
-                QPushButton:checked {
-                    background-color: #003366;
-                    border-left: 3px solid #0078d4;
-                    color: #0078d4;
-                    font-weight: bold;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QWidget { background-color: #fafafa; color: #000000; }
-                QGroupBox {
-                    font-weight: bold;
-                    border: 2px solid #e0e0e0;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: #000000;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: #000000;
-                }
-                QLabel { color: #000000; }
-                QPushButton {
-                    background-color: white;
-                    border: 1px solid #e0e0e0;
-                    color: #333333;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-size: 14px;
-                }
-                QPushButton:hover { background-color: #f5f5f5; border-color: #0078d4; }
-                QPushButton:checked {
-                    background-color: #e6f2ff;
-                    border-left: 3px solid #0078d4;
-                    color: #0078d4;
-                    font-weight: bold;
-                }
-            """)
+        """主题切换时刷新本页背景与下拉框同步。"""
+        # 用存储的引用刷新页面/滚动区背景
+        self._scroll.setStyleSheet(scroll_area_style())
+        self._content.setStyleSheet(page_bg_style())
+        # 同步下拉框
+        self._sync_theme_combo_from_current()
+
 
 
 # ============================================================
 # 主窗口 + 动态加载器
 # ============================================================
-class MainWindow(QMainWindow):
-    """主窗口 - 启动时扫描模块目录并动态加载各传感器模块"""
+class MainWindow(FluentWindow):
+    """主窗口 - 启动时扫描模块目录并动态加载各传感器模块
+
+    基于 FluentWindow（PySide6-Fluent-Widgets），自动获得 WinUI3 风格的
+    NavigationInterface（左侧导航）+ stackedWidget（内容栈）+ 主题切换。
+    各传感器 widget 通过 addSubInterface 注册到导航。
+    """
 
     def __init__(self):
         super().__init__()
@@ -972,21 +1118,8 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
-        self.setGeometry(100, 100, 1200, 800)
-
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-
-        main_layout = QHBoxLayout()
-
-        # 侧边栏
-        self.sidebar = SidebarWidget()
-        self.sidebar.module_changed.connect(self.switch_module)
-        main_layout.addWidget(self.sidebar)
-
-        # 内容栈
-        self.content_stack = QStackedWidget()
-        main_layout.addWidget(self.content_stack)
+        self.resize(1200, 800)
+        # FluentWindow 自带 NavigationInterface + stackedWidget，无需手动布局
 
         # === 加载模块 ===
         # 确定传感器代码目录（与 main.py 同级）
@@ -995,15 +1128,17 @@ class MainWindow(QMainWindow):
 
         discovered = scan_modules(modules_dir)
 
-        # 主页（始终在第 0 位）
+        # 主页（始终在第 0 位）—— 用 FluentIcon.HOME 注册到导航顶部
         home_page = HomePageWidget()
         home_page.module_clicked.connect(self.on_home_module_clicked)
-        self.content_stack.addWidget(home_page)
+        home_page.setObjectName("home_page")
+        self.addSubInterface(home_page, FIF.HOME, "主页")
         self.modules["主页"] = home_page
         self.module_widgets.append(home_page)
 
         # 各传感器模块（按发现顺序加载）
-        sidebar_modules = []  # [(icon, name, desc), ...] 给侧边栏用
+        # 图标：用识别区里的文字（V/F/x/pH/v/A）渲染成 QIcon，
+        #       而不是 FluentIcon.PLAY（那个是三角形播放图标，不适合传感器）
         home_modules = []  # [(icon, name, category), ...] 给主页用
 
         for info in discovered:
@@ -1014,27 +1149,35 @@ class MainWindow(QMainWindow):
                 print(f"❌ 实例化模块 {info['name']} 失败: {e}")
                 continue
 
-            self.content_stack.addWidget(widget)
+            # FluentWindow.addSubInterface 要求 widget 有 objectName
+            # 用模块名作为唯一标识（去掉空格等特殊字符）
+            obj_name = "module_" + info['name'].replace(" ", "_").replace("（", "_").replace("）", "_")
+            widget.setObjectName(obj_name)
+            # 把识别区文字图标（V/F/x/pH/v/A）画成 QIcon
+            text_icon = make_text_icon(info.get('icon', '?'))
+            self.addSubInterface(widget, text_icon, info['name'])
             self.modules[info['name']] = widget
             self.module_widgets.append(widget)
 
-            desc = self._get_module_desc(info['name'])
-            sidebar_modules.append((info['icon'], info['name'], desc))
             home_modules.append((info['icon'], info['name'], info['category']))
 
-        # 设置（始终在最后）
+        # 设置（始终在最后）—— 用 FluentIcon.SETTING 注册到导航底部
+        # 用 FluentWidgets SettingCard 系列组件实现的真实设置页
         settings_widget = SettingsWidget()
-        settings_widget.theme_changed.connect(self.change_app_theme)
-        self.content_stack.addWidget(settings_widget)
+        settings_widget.setObjectName("settings_page")
+        settings_widget.theme_change_requested.connect(self.change_app_theme)
+        self.addSubInterface(
+            settings_widget, FIF.SETTING, "设置",
+            position=NavigationItemPosition.BOTTOM
+        )
         self.modules["设置"] = settings_widget
         self.module_widgets.append(settings_widget)
 
-        # 把模块列表传给侧边栏和主页
-        self.sidebar.set_modules(sidebar_modules)
+        # 把模块列表传给主页
         home_page.set_modules(home_modules)
 
-        central_widget.setLayout(main_layout)
-        self.sidebar.set_current_row(0)
+        # 默认显示主页
+        self.switchTo(home_page)
 
     def _get_module_desc(self, name):
         """根据模块名返回简短描述"""
@@ -1049,29 +1192,42 @@ class MainWindow(QMainWindow):
         return descs.get(name, '传感器数据采集')
 
     def switch_module(self, index):
-        if 0 <= index < self.content_stack.count():
-            self.content_stack.setCurrentIndex(index)
+        """兼容旧接口：按索引切换（实际用 switchTo(widget)）"""
+        if 0 <= index < len(self.module_widgets):
+            self.switchTo(self.module_widgets[index])
 
     def on_home_module_clicked(self, module_name):
         """主页模块卡片点击 → 切换到对应模块"""
-        for i, (icon, name, desc) in enumerate(self.sidebar.modules):
-            if name == module_name:
-                self.sidebar.set_current_row(i)
-                self.switch_module(i)
-                return
+        if module_name in self.modules:
+            self.switchTo(self.modules[module_name])
 
     def change_app_theme(self, theme):
+        """切换应用主题（light/dark）。
+
+        流程：
+        1. 先切换 FluentWidgets 主题（setTheme）—— 这会自动刷新所有
+           FluentWidgets 组件（ComboBox/PushButton/SettingCard/...）的颜色；
+        2. 再通知各页面 apply_theme() 刷新自定义 widget 的硬编码颜色
+           （QScrollArea 背景、QLabel 颜色、CollapsibleCard 等）。
+        """
+        if theme not in ("light", "dark"):
+            return
         self.current_theme = theme
         self.apply_theme(theme)
 
-        if hasattr(self, 'sidebar'):
-            self.sidebar.apply_theme(theme)
-
+        # 先刷新设置页（主题下拉框需要反向同步当前主题）
         if "设置" in self.modules:
-            self.modules["设置"].apply_theme(theme)
+            try:
+                self.modules["设置"].apply_theme(theme)
+            except Exception as e:
+                print(f"⚠️ 设置页主题切换失败: {e}")
 
+        # 主页（卡片、滚动区背景）
         if "主页" in self.modules:
-            self.modules["主页"].apply_theme(theme)
+            try:
+                self.modules["主页"].apply_theme(theme)
+            except Exception as e:
+                print(f"⚠️ 主页主题切换失败: {e}")
 
         # 各传感器模块若支持主题切换则一并刷新
         for name, widget in self.modules.items():
@@ -1084,70 +1240,15 @@ class MainWindow(QMainWindow):
                     print(f"⚠️ 模块 {name} 主题切换失败: {e}")
 
     def apply_theme(self, theme):
+        """切换 FluentWidgets 主题（light/dark）。
+
+        FluentWindow 自带 WinUI3 风格样式，不再需要手动 QSS。
+        setTheme 会自动刷新所有 FluentWidgets 组件的颜色。
+        """
         if theme == "dark":
-            self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #202020;
-                    color: white;
-                }
-                QGroupBox {
-                    font-weight: bold;
-                    border: 2px solid #3d3d3d;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: white;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: white;
-                }
-                QPushButton {
-                    background-color: #0078d4;
-                    border: none;
-                    color: white;
-                    padding: 8px 16px;
-                    border-radius: 4px;
-                    font-size: 14px;
-                }
-                QPushButton:hover { background-color: #106ebe; }
-                QPushButton:disabled { background-color: #444444; color: #888888; }
-                QLabel { font-size: 14px; color: white; }
-            """)
+            setTheme(Theme.DARK)
         else:
-            self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #f3f3f3;
-                    color: black;
-                }
-                QGroupBox {
-                    font-weight: bold;
-                    border: 2px solid #e0e0e0;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: black;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: black;
-                }
-                QPushButton {
-                    background-color: #0078d4;
-                    border: none;
-                    color: white;
-                    padding: 8px 16px;
-                    border-radius: 4px;
-                    font-size: 14px;
-                }
-                QPushButton:hover { background-color: #106ebe; }
-                QPushButton:disabled { background-color: #cccccc; color: #666666; }
-                QLabel { font-size: 14px; color: black; }
-            """)
+            setTheme(Theme.LIGHT)
 
     def apply_modern_style(self):
         self.current_theme = "light"
@@ -1156,7 +1257,9 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyle('Fusion')
+    # 让 ComboBox 展开时箭头朝上（FluentWidgets 默认始终朝下）
+    patch_combobox_arrow_flip()
+    # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

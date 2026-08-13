@@ -1,3 +1,6 @@
+# Copyright (c) 2026 wangzhidong2
+# SPDX-License-Identifier: GPL-3.0-only
+
 # === MODULE META ===
 # icon: A
 # name: 电流传感器
@@ -13,12 +16,14 @@ import os
 import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -29,11 +34,12 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    SerialThread, BLESerialThread, scan_ble_devices,
-    SampleRateDialog,
+    SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
+    SampleRateComboBox,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    BLE_AVAILABLE,
+    BLE_AVAILABLE, CollapsibleCard, ExpandableTextEdit,
+    scroll_area_style, page_bg_style, apply_module_theme,
 )
 
 
@@ -53,6 +59,29 @@ class CurrentSensorWidget(QWidget):
     # ADC 位数 → 满量程计数值
     ADC_BITS_OPTIONS = {8: 256, 10: 1024, 12: 4096, 14: 16384, 16: 65536}
     VREF = 3.3  # ESP32 ADC 参考电压
+
+    # 连接控制卡片内按钮统一样式：白底黑字
+    CARD_BTN_STYLE = """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            color: #1a1a1a;
+            border-radius: 6px;
+            padding: 0 16px;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background-color: #f5f5f5;
+            border: 1px solid #0078d4;
+            color: #0078d4;
+        }
+        QPushButton:pressed { background-color: #e5e5e5; }
+        QPushButton:disabled {
+            background-color: #f5f5f5;
+            color: #aaaaaa;
+            border: 1px solid #e5e5e5;
+        }
+    """
 
     # ACS712 量程参数：灵敏度（V/A）、标称量程（A）、说明
     ACS712_RANGES = {
@@ -167,48 +196,41 @@ class CurrentSensorWidget(QWidget):
     # UI 构建
     # ------------------------------------------------------------------
     def init_ui(self):
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
+        scroll.setStyleSheet(scroll_area_style())
 
         content = QWidget()
-        content.setStyleSheet("background: #f3f3f3;")
+        content.setStyleSheet(page_bg_style())
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 20, 24, 24)
         layout.setSpacing(16)
 
-        title = QLabel("电流")
-        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
-        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        # 页面标题：用 TitleLabel 自动适配主题
+        title = TitleLabel("电流")
         layout.addWidget(title)
 
-        # ========== 卡片1：连接控制 ==========
-        card_conn = QWidget()
-        card_conn.setObjectName("card")
-        card_conn.setStyleSheet(card_style())
-        card_layout = QVBoxLayout(card_conn)
-        card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片1：连接控制（可折叠） ==========
+        card_conn_content = QWidget()
+        card_conn_content.setObjectName("card")
+        card_conn_content.setStyleSheet(card_style())
+        card_layout = QVBoxLayout(card_conn_content)
+        card_layout.setContentsMargins(20, 4, 20, 16)
         card_layout.setSpacing(12)
-
-        card_title = QLabel("连接控制")
-        card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        card_title.setStyleSheet("color: #1a1a1a;")
-        card_layout.addWidget(card_title)
 
         row1 = QHBoxLayout()
         row1.setSpacing(10)
 
         row1.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.setStyleSheet(modern_combo_style())
-        self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
+        self.mode_combo = ComboBox()
+        self.mode_combo.addItems(["有线串口", "BLE蓝牙", "模拟器"])
         if not BLE_AVAILABLE:
-            self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
+            self.mode_combo.setItemEnabled(1, False)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         row1.addWidget(self.mode_combo)
@@ -218,27 +240,26 @@ class CurrentSensorWidget(QWidget):
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setSpacing(8)
         serial_layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(140)
         serial_layout.addWidget(self.port_combo)
-        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn = PushButton("刷新")
         self.refresh_btn.setFixedHeight(36)
+        self.refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        self.refresh_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         serial_layout.addWidget(self.refresh_btn)
 
         self.ble_panel = QWidget()
         ble_layout = QHBoxLayout(self.ble_panel)
         ble_layout.setContentsMargins(0, 0, 0, 0)
         ble_layout.setSpacing(8)
-        self.ble_device_combo = QComboBox()
-        self.ble_device_combo.setStyleSheet(modern_combo_style())
+        self.ble_device_combo = ComboBox()
         self.ble_device_combo.setMinimumWidth(180)
         ble_layout.addWidget(self.ble_device_combo)
-        self.ble_scan_btn = QPushButton("扫描BLE")
+        self.ble_scan_btn = PushButton("扫描BLE")
         self.ble_scan_btn.setFixedHeight(36)
+        self.ble_scan_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.ble_scan_btn.clicked.connect(self.scan_ble)
         if not BLE_AVAILABLE:
             self.ble_scan_btn.setEnabled(False)
@@ -246,64 +267,62 @@ class CurrentSensorWidget(QWidget):
 
         row1.addWidget(self.serial_panel)
         row1.addWidget(self.ble_panel)
+
+        # 模拟器面板：无需选择端口
+        self.sim_panel = QWidget()
+        sim_layout = QHBoxLayout(self.sim_panel)
+        sim_layout.setContentsMargins(0, 0, 0, 0)
+        sim_layout.setSpacing(8)
+        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
+        sim_hint.setStyleSheet("color: #888;")
+        sim_layout.addWidget(sim_hint)
+        sim_layout.addStretch()
+        row1.addWidget(self.sim_panel)
+
         self.ble_panel.hide()
+        self.sim_panel.hide()
 
         row1.addSpacing(16)
-        self.connect_btn = QPushButton("连接")
+        self.connect_btn = PushButton("连接")
         self.connect_btn.setFixedHeight(36)
+        self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.connect_btn.clicked.connect(self.connect_device)
-        self.connect_btn.setStyleSheet(primary_btn_style())
         row1.addWidget(self.connect_btn)
 
-        self.disconnect_btn = QPushButton("断开")
+        self.disconnect_btn = PushButton("断开")
         self.disconnect_btn.setFixedHeight(36)
+        self.disconnect_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
-        self.disconnect_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         row1.addWidget(self.disconnect_btn)
+
+        row1.addSpacing(16)
+        row1.addWidget(QLabel("采样频率:"))
+        self.sample_rate_combo = SampleRateComboBox()
+        self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
+        self.sample_rate_combo.setMaximumWidth(120)
+        self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
+        row1.addWidget(self.sample_rate_combo)
 
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        # 第二行：采样频率
-        row2 = QHBoxLayout()
-        row2.setSpacing(10)
-        row2.addWidget(QLabel("采样频率:"))
-        self.sample_rate_label = QLabel(f"{1000 // self.sample_interval_ms}Hz")
-        self.sample_rate_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        self.sample_rate_label.setStyleSheet("color: #0078d4;")
-        row2.addWidget(self.sample_rate_label)
-
-        sample_settings_btn = QPushButton("⚙")
-        sample_settings_btn.setFixedSize(36, 36)
-        sample_settings_btn.setToolTip("设置采样频率")
-        sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
-        row2.addWidget(sample_settings_btn)
-        row2.addStretch()
-        card_layout.addLayout(row2)
-
+        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
         layout.addWidget(card_conn)
 
-        # ========== 卡片2：ACS712 参数 ==========
-        card_acs = QWidget()
-        card_acs.setObjectName("card")
-        card_acs.setStyleSheet(card_style())
-        acs_card_layout = QVBoxLayout(card_acs)
-        acs_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片2：ACS712 参数（可折叠） ==========
+        card_acs_content = QWidget()
+        card_acs_content.setObjectName("card")
+        card_acs_content.setStyleSheet(card_style())
+        acs_card_layout = QVBoxLayout(card_acs_content)
+        acs_card_layout.setContentsMargins(20, 4, 20, 16)
         acs_card_layout.setSpacing(12)
 
-        acs_card_title = QLabel("ACS712 参数")
-        acs_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        acs_card_title.setStyleSheet("color: #1a1a1a;")
-        acs_card_layout.addWidget(acs_card_title)
-
-        # 量程选择 + 测量类型 + ADC 位数
+        # 量程选择
         range_row = QHBoxLayout()
         range_row.setSpacing(10)
         range_row.addWidget(QLabel("量程:"))
-        self.range_combo = QComboBox()
-        self.range_combo.setStyleSheet(modern_combo_style())
+        self.range_combo = ComboBox()
         for key in ['5A', '20A', '30A']:
             self.range_combo.addItem(self.ACS712_RANGES[key]['desc'])
         range_idx = {'5A': 0, '20A': 1, '30A': 2}.get(self.acs_range, 0)
@@ -312,16 +331,14 @@ class CurrentSensorWidget(QWidget):
         range_row.addWidget(self.range_combo)
 
         range_row.addWidget(QLabel("测量类型:"))
-        self.mode_type_combo = QComboBox()
-        self.mode_type_combo.setStyleSheet(modern_combo_style())
+        self.mode_type_combo = ComboBox()
         self.mode_type_combo.addItems(["直流 DC", "交流 AC"])
         self.mode_type_combo.setCurrentIndex(0 if self.current_mode == 'DC' else 1)
         self.mode_type_combo.currentIndexChanged.connect(self.on_current_mode_changed)
         range_row.addWidget(self.mode_type_combo)
 
         range_row.addWidget(QLabel("ADC 位数:"))
-        self.adc_bits_combo = QComboBox()
-        self.adc_bits_combo.setStyleSheet(modern_combo_style())
+        self.adc_bits_combo = ComboBox()
         self.adc_bits_combo.addItems([
             "8 位 (0-255)",
             "10 位 (0-1023)",
@@ -339,14 +356,20 @@ class CurrentSensorWidget(QWidget):
         # 量程显示
         self.range_label = QLabel()
         self.range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self.range_label.setStyleSheet("color: #0078d4;")
+        self.range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.range_label)
 
         # 供电电压 + 零点电压 + 分压比
         params_row = QHBoxLayout()
         params_row.setSpacing(10)
 
-        params_row.addWidget(QLabel("供电 VCC:"))
+        # 供电/分压解释文字（原为常显灰色小字，现改为悬停 tooltip 显示）
+        params_hint_text = ("ACS712 输出最高约 4.5V，超出 ESP32 ADC 的 3.3V 量程，需在输出与 ADC 之间加分压电路\n"
+                            "分压比 ≈ 5/3.3 ≈ 1.515（将 5V 映射到 3.3V）；电流 = (Vout − 零点电压) / 灵敏度")
+
+        vcc_label = QLabel("供电 VCC:")
+        vcc_label.setToolTip(params_hint_text)
+        params_row.addWidget(vcc_label)
         self.vcc_spin = QDoubleSpinBox()
         self.vcc_spin.setRange(4.5, 5.5)
         self.vcc_spin.setDecimals(2)
@@ -354,10 +377,14 @@ class CurrentSensorWidget(QWidget):
         self.vcc_spin.setValue(self.vcc)
         self.vcc_spin.setSuffix(" V")
         self.vcc_spin.setMinimumWidth(90)
+        self.vcc_spin.setFixedHeight(32)
+        self.vcc_spin.setToolTip(params_hint_text)
         self.vcc_spin.valueChanged.connect(self.on_vcc_changed)
         params_row.addWidget(self.vcc_spin)
 
-        params_row.addWidget(QLabel("零点电压:"))
+        vquies_label = QLabel("零点电压:")
+        vquies_label.setToolTip(params_hint_text)
+        params_row.addWidget(vquies_label)
         self.vquies_spin = QDoubleSpinBox()
         self.vquies_spin.setRange(0.0, 5.5)
         self.vquies_spin.setDecimals(3)
@@ -365,8 +392,10 @@ class CurrentSensorWidget(QWidget):
         self.vquies_spin.setValue(self.v_quiescent)
         self.vquies_spin.setSuffix(" V")
         self.vquies_spin.setToolTip("零电流时 ACS712 输出电压，理论值 = VCC/2\n"
-                                    "实际传感器有偏差，建议用“零点校准”按钮自动获取")
+                                    "实际传感器有偏差，建议用“零点校准”按钮自动获取\n\n"
+                                    + params_hint_text)
         self.vquies_spin.setMinimumWidth(100)
+        self.vquies_spin.setFixedHeight(32)
         self.vquies_spin.valueChanged.connect(self.on_vquiescent_changed)
         params_row.addWidget(self.vquies_spin)
 
@@ -386,23 +415,14 @@ class CurrentSensorWidget(QWidget):
         # 可测范围显示
         self.actual_range_label = QLabel()
         self.actual_range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self.actual_range_label.setStyleSheet("color: #28a745;")
+        self.actual_range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.actual_range_label)
-
-        hint_label = QLabel(
-            "ACS712 输出最高约 4.5V，超出 ESP32 ADC 的 3.3V 量程，需在输出与 ADC 之间加分压电路\n"
-            "分压比 ≈ 5/3.3 ≈ 1.515（将 5V 映射到 3.3V）；电流 = (Vout − 零点电压) / 灵敏度"
-        )
-        hint_label.setStyleSheet("color: #888888; font-size: 11px;")
-        hint_label.setWordWrap(True)
-        acs_card_layout.addWidget(hint_label)
 
         # 显示单位 + 零点校准状态
         unit_row = QHBoxLayout()
         unit_row.setSpacing(10)
         unit_row.addWidget(QLabel("显示单位:"))
-        self.unit_combo = QComboBox()
-        self.unit_combo.setStyleSheet(modern_combo_style())
+        self.unit_combo = ComboBox()
         self.unit_combo.addItems(["安培 (A)", "毫安 (mA)"])
         self.unit_combo.setCurrentIndex(0 if self.current_unit == 'A' else 1)
         self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
@@ -432,23 +452,19 @@ class CurrentSensorWidget(QWidget):
         ac_row.addStretch()
         acs_card_layout.addLayout(ac_row)
 
+        card_acs = CollapsibleCard("ACS712 参数", card_acs_content, expanded=True)
         layout.addWidget(card_acs)
 
-        # ========== 卡片3：实时数据 ==========
-        card_data = QWidget()
-        card_data.setObjectName("card")
-        card_data.setStyleSheet(card_style())
-        data_card_layout = QVBoxLayout(card_data)
-        data_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片3：实时数据（可折叠） ==========
+        card_data_content = QWidget()
+        card_data_content.setObjectName("card")
+        card_data_content.setStyleSheet(card_style())
+        data_card_layout = QVBoxLayout(card_data_content)
+        data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        data_card_title = QLabel("实时数据")
-        data_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        data_card_title.setStyleSheet("color: #1a1a1a;")
-        data_card_layout.addWidget(data_card_title)
-
         self.current_value_label = QLabel("--.- A")
-        self.current_value_label.setFont(QFont("Microsoft YaHei", 32, QFont.Weight.Bold))
+        self.current_value_label.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
         self.current_value_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_value_label)
 
@@ -476,110 +492,87 @@ class CurrentSensorWidget(QWidget):
         self.stats_label.setStyleSheet("color: #888888;")
         data_card_layout.addWidget(self.stats_label)
 
+        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
         layout.addWidget(card_data)
 
-        # ========== 卡片4：图表 + 数据记录 ==========
-        card_chart = QWidget()
-        card_chart.setObjectName("card")
-        card_chart.setStyleSheet(card_style())
-        chart_card_layout = QVBoxLayout(card_chart)
-        chart_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片4：图表 + 数据记录（可折叠） ==========
+        card_chart_content = QWidget()
+        card_chart_content.setObjectName("card")
+        card_chart_content.setStyleSheet(card_style())
+        chart_card_layout = QVBoxLayout(card_chart_content)
+        chart_card_layout.setContentsMargins(20, 4, 20, 16)
         chart_card_layout.setSpacing(12)
-
-        chart_title = QLabel("电流-时间曲线")
-        chart_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        chart_title.setStyleSheet("color: #1a1a1a;")
-        chart_card_layout.addWidget(chart_title)
 
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
 
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
-
-        record_label = QLabel("数据记录")
-        record_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        record_label.setStyleSheet("color: #1a1a1a;")
-        left_layout.addWidget(record_label)
-
-        self.data_text = QTextEdit()
-        self.data_text.setReadOnly(True)
-        self.data_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #fafafa;
-                border: 1px solid #e5e5e5;
-                border-radius: 6px;
-                padding: 8px;
-                font-size: 11px;
-                color: #333333;
-            }
-        """)
-        left_layout.addWidget(self.data_text)
-        content_row.addWidget(left_panel, stretch=1)
+        # 左侧：数据记录（可展开/收起，默认3行高度）
+        self.data_text = ExpandableTextEdit()
+        content_row.addWidget(self.data_text, stretch=0)
 
         self.figure = Figure(figsize=(8, 5), dpi=100)
         self.figure.set_facecolor('#fafafa')
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_row.addWidget(self.canvas, stretch=2)
 
-        chart_card_layout.addLayout(content_row)
+        chart_card_layout.addLayout(content_row, 1)
+        card_chart = CollapsibleCard("电流-时间曲线", card_chart_content, expanded=True, fullscreen=True)
+        # 图表卡片加高为原来的 2 倍（内容区最小 400px），页面滚动查看
+        card_chart.set_chart_min_height(400)
+        # 全屏时：数据记录区作为可拖动折叠浮动面板浮于图表上方，折叠时显示实时电流值
+        card_chart.set_fullscreen_overlay(self.data_text, self.current_value_label)
         layout.addWidget(card_chart)
 
-        # ========== 卡片5：操作按钮 ==========
-        card_actions = QWidget()
-        card_actions.setObjectName("card")
-        card_actions.setStyleSheet(card_style())
-        actions_layout = QHBoxLayout(card_actions)
-        actions_layout.setContentsMargins(20, 12, 20, 12)
+        # ========== 卡片5：操作按钮（可折叠） ==========
+        card_actions_content = QWidget()
+        card_actions_content.setObjectName("card")
+        card_actions_content.setStyleSheet(card_style())
+        actions_layout = QHBoxLayout(card_actions_content)
+        actions_layout.setContentsMargins(20, 4, 20, 12)
         actions_layout.setSpacing(10)
 
-        self.start_btn = QPushButton("开始采集")
+        self.start_btn = PrimaryPushButton("开始采集")
         self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
-        self.start_btn.setStyleSheet(primary_btn_style())
         actions_layout.addWidget(self.start_btn)
 
         # 零点校准按钮：取最近若干个数据点平均的传感器输出作为零点电压
-        self.zero_cal_btn = QPushButton("零点校准" if not self.zero_cal_active else "取消零点")
+        self.zero_cal_btn = PushButton("零点校准" if not self.zero_cal_active else "取消零点")
         self.zero_cal_btn.setFixedHeight(38)
         self.zero_cal_btn.clicked.connect(self.toggle_zero_cal)
         self.zero_cal_btn.setEnabled(False)
-        self.zero_cal_btn.setStyleSheet(accent_btn_style("#fd7e14", "#e06b00", "#c75a00")
+        self.zero_cal_btn.setStyleSheet("background-color: #fd7e14; color: white;"
                                         if not self.zero_cal_active else
-                                        accent_btn_style("#28a745", "#218838", "#1e7e34"))
+                                        "background-color: #28a745; color: white;")
         actions_layout.addWidget(self.zero_cal_btn)
 
-        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn = PushButton("停止采集")
         self.stop_btn.setFixedHeight(38)
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.stop_btn)
 
-        self.save_btn = QPushButton("保存数据")
+        self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
-        self.save_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.save_btn)
 
-        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn = PushButton("清除数据")
         self.clear_btn.setFixedHeight(38)
         self.clear_btn.clicked.connect(self.clear_data)
-        self.clear_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
+        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
         layout.addWidget(card_actions)
 
         layout.addStretch()
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
-        self.setLayout(main_layout)
 
         self.update_range_display()
 
@@ -594,9 +587,15 @@ class CurrentSensorWidget(QWidget):
         if index == 0:
             self.serial_panel.show()
             self.ble_panel.hide()
-        else:
+            self.sim_panel.hide()
+        elif index == 1:
             self.serial_panel.hide()
             self.ble_panel.show()
+            self.sim_panel.hide()
+        else:
+            self.serial_panel.hide()
+            self.ble_panel.hide()
+            self.sim_panel.show()
 
     def on_range_changed(self, index):
         key_map = {0: '5A', 1: '20A', 2: '30A'}
@@ -670,10 +669,10 @@ class CurrentSensorWidget(QWidget):
     def update_zero_cal_btn(self):
         if self.zero_cal_active:
             self.zero_cal_btn.setText("取消零点")
-            self.zero_cal_btn.setStyleSheet(accent_btn_style("#28a745", "#218838", "#1e7e34"))
+            self.zero_cal_btn.setStyleSheet("background-color: #28a745; color: white;")
         else:
             self.zero_cal_btn.setText("零点校准")
-            self.zero_cal_btn.setStyleSheet(accent_btn_style("#fd7e14", "#e06b00", "#c75a00"))
+            self.zero_cal_btn.setStyleSheet("background-color: #fd7e14; color: white;")
 
     def toggle_zero_cal(self):
         """零点校准/取消切换
@@ -771,8 +770,30 @@ class CurrentSensorWidget(QWidget):
         mode = self.mode_combo.currentText()
         if "BLE" in mode:
             self.connect_ble()
+        elif "模拟器" in mode:
+            self.connect_simulator()
         else:
             self.connect_serial()
+
+    def connect_simulator(self):
+        """连接模拟器：随机生成 ADC 原始值，无需硬件"""
+        try:
+            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
+            self.serial_thread = SimulatorThread(
+                value_min=0, value_max=max_adc,
+                interval_ms=self.sample_interval_ms,
+                start_value=max_adc / 2.0)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.current_value_label.setText("--.- " + self.current_unit)
+            self.current_raw_label.setText("原始ADC: 模拟器连接中...")
+            self.current_vadc_label.setText("ADC端电压: --.- V")
+            self.current_vsensor_label.setText("传感器输出: --.- V")
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         port = self.port_combo.currentText()
@@ -1035,18 +1056,10 @@ class CurrentSensorWidget(QWidget):
     # ------------------------------------------------------------------
     # 采样频率 / 保存 / 清除
     # ------------------------------------------------------------------
-    def edit_sample_rate(self):
-        dialog = SampleRateDialog(self.sample_interval_ms, self)
-        if dialog.exec() == 1:
-            new_interval_ms = dialog.get_sample_interval()
-            self.sample_interval_ms = new_interval_ms
-            freq = 1000 // new_interval_ms
-            self.sample_rate_label.setText(f"{freq}Hz")
-            self.save_config()
-            QMessageBox.information(self, "成功",
-                                    f"采样频率已更新为 {freq} Hz！\n"
-                                    f"采样间隔：{new_interval_ms} ms\n"
-                                    f"配置已自动保存。")
+    def on_sample_interval_changed(self, interval_ms):
+        """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
+        self.sample_interval_ms = interval_ms
+        self.save_config()
 
     def save_data(self):
         if not self.current_data:
@@ -1083,3 +1096,14 @@ class CurrentSensorWidget(QWidget):
         self.figure.clear()
         self.canvas.draw()
         self.save_btn.setEnabled(False)
+
+    def apply_theme(self, theme):
+        """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
+        apply_module_theme(self, theme)
+        # 图表 figure 背景跟随主题
+        try:
+            from qfluentwidgets import isDarkTheme
+            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
+            self.canvas.draw()
+        except Exception:
+            pass

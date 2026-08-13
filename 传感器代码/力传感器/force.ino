@@ -1,3 +1,6 @@
+// Copyright (c) 2026 wangzhidong2
+// SPDX-License-Identifier: GPL-3.0-only
+
 // ESP32-S3 HX711 力传感器数据采集程序
 // 功能：通过串口实时传输 HX711 24位ADC原始值
 // 数据格式：timestamp_ms,raw_adc_value

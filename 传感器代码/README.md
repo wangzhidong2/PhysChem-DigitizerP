@@ -29,8 +29,9 @@
 │   ├── ESP32_Voltage_Sensor.ino             # ESP32-S3 内置 ADC 固件
 │   ├── HX711_Voltage.ino                    # HX711 24 位 ADC 固件
 │   └── voltage_sensor.py                    # 电压上位机模块（支持 HX711 模式）
-└── 电流传感器/                                 # 仅下位机，上位机模块待添加
-    └── ESP32_ADC_Raw_Data.ino               # ESP32-S3 ADC 原始数据固件
+└── 电流传感器/                                 # ACS712 电流传感器模块
+    ├── ESP32_ADC_Raw_Data.ino               # ESP32-S3 ADC 原始数据固件
+    └── current_sensor.py                    # 电流上位机模块（5A/20A/30A 量程，AC/DC，零点校准）
 ```
 
 ## 📋 支持的传感器
@@ -42,7 +43,7 @@
 | pH 值检测 | SEN0161 | ESP32-S3 | `ph_sensor.py` | ✅ 已完成 |
 | 力/质量测量 | HX711 | ESP32-S3 | `force_sensor.py` | ✅ 已完成 |
 | 电压采集 | ESP32 内置 ADC / HX711 | ESP32-S3 | `voltage_sensor.py` | ✅ 已完成 |
-| 电流采集 | ESP32 内置 ADC | ESP32-S3 | （待添加） | 🚧 待开发 |
+| 电流采集 | ACS712 | ESP32-S3 | `current_sensor.py` | ✅ 已完成 |
 
 ## 🔧 通用配置
 

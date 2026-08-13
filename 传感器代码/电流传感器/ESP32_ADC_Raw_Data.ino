@@ -1,3 +1,6 @@
+// Copyright (c) 2026 wangzhidong2
+// SPDX-License-Identifier: GPL-3.0-only
+
 // ESP32-S3 ADC 原始数据采集程序
 // 功能：通过串口实时传输 ADC 模拟原始值
 // 设置：ADC 衰减为 3.3V，最高精度配置

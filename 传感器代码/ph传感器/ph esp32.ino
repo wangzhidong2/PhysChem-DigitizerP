@@ -1,3 +1,6 @@
+// Copyright (c) 2026 wangzhidong2
+// SPDX-License-Identifier: GPL-3.0-only
+
 // ============================================================
 //  pH 传感器模块 - ESP32-S3 固件
 //  模块名称：pH 采集模块（pH Sensor）

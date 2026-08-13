@@ -1,3 +1,6 @@
+# Copyright (c) 2026 wangzhidong2
+# SPDX-License-Identifier: GPL-3.0-only
+
 # === MODULE META ===
 # icon: V
 # name: 电压传感器
@@ -13,12 +16,14 @@ import os
 import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -29,19 +34,57 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    SerialThread, BLESerialThread, scan_ble_devices,
-    SampleRateDialog,
+    SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
+    SampleRateComboBox,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    BLE_AVAILABLE,
+    BLE_AVAILABLE, CollapsibleCard, ExpandableTextEdit,
+    scroll_area_style, page_bg_style, apply_module_theme,
 )
 
 
 class VoltageSensorWidget(QWidget):
     """电压传感器模块界面 - 支持ADC位数选择和电压分压放大比"""
 
-    ADC_BITS_OPTIONS = {8: 256, 10: 1024, 12: 4095, 14: 16383, 16: 65535, 18: 262143, 20: 1048575, 22: 4194303, 24: 16777215}
+    # 有符号 ADC 满量程：±(2^N - 1)，例如 12 位 → ±4095
+    ADC_BITS_OPTIONS = {8: 255, 10: 1023, 12: 4095, 14: 16383, 16: 65535, 18: 262143, 20: 1048575, 22: 4194303, 24: 16777215}
     VREF = 3.3
+
+    # ADS1115 PGA 量程（TI ADS1115 数据手册 SBAS444E，9.3.3 节）
+    # 16 位有符号二进制补码（-32768~+32767），电压 = raw / 32768 × FSR
+    ADS1115_PGA_RANGES = {
+        '±6.144V': 6.144,
+        '±4.096V': 4.096,
+        '±2.048V': 2.048,  # 默认（PGA=010）
+        '±1.024V': 1.024,
+        '±0.512V': 0.512,
+        '±0.256V': 0.256,
+    }
+    # ADS1115 输入通道（MUX）：4 单端 + 2 差分
+    ADS1115_CHANNELS = ['AIN0', 'AIN1', 'AIN2', 'AIN3', 'AIN0-AIN1', 'AIN2-AIN3']
+
+    # 连接控制卡片内按钮统一样式：白底黑字
+    CARD_BTN_STYLE = """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            color: #1a1a1a;
+            border-radius: 6px;
+            padding: 0 16px;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background-color: #f5f5f5;
+            border: 1px solid #0078d4;
+            color: #0078d4;
+        }
+        QPushButton:pressed { background-color: #e5e5e5; }
+        QPushButton:disabled {
+            background-color: #f5f5f5;
+            color: #aaaaaa;
+            border: 1px solid #e5e5e5;
+        }
+    """
 
     def __init__(self):
         super().__init__()
@@ -63,6 +106,10 @@ class VoltageSensorWidget(QWidget):
         self.hx711_mode = False
         self.hx711_avdd = 5.0       # HX711 模块 AVDD 电压（V），常见为 5.0
         self.hx711_channel = 'B'    # 通道：A=增益128，B=增益32
+        # ADS1115 专用参数：16 位有符号补码 + 6 档 PGA + 4 单端/2 差分 MUX
+        self.ads1115_mode = False
+        self.ads1115_pga = '±2.048V'   # 默认 PGA=010（数据手册默认值）
+        self.ads1115_channel = 'AIN0'  # 默认单端 AIN0
         # 显示单位：内部 voltage_data 始终存伏特，仅在显示/保存时按当前单位换算
         self.current_unit = 'V'     # 可选：kV / V / mV
         # 去皮偏移：空载时传感器输出的非零电压，从测量值中扣除
@@ -76,6 +123,9 @@ class VoltageSensorWidget(QWidget):
         self.hx711_mode = self.config.get('hx711_mode', False)
         self.hx711_avdd = self.config.get('hx711_avdd', 5.0)
         self.hx711_channel = self.config.get('hx711_channel', 'B')
+        self.ads1115_mode = self.config.get('ads1115_mode', False)
+        self.ads1115_pga = self.config.get('ads1115_pga', '±2.048V')
+        self.ads1115_channel = self.config.get('ads1115_channel', 'AIN0')
         self.current_unit = self.config.get('current_unit', 'V')
         self.tare_offset_v = self.config.get('tare_offset_v', 0.0)
         self.tare_active = self.config.get('tare_active', False)
@@ -92,6 +142,9 @@ class VoltageSensorWidget(QWidget):
             self.hx711_mode = config.get('hx711_mode', False)
             self.hx711_avdd = config.get('hx711_avdd', 5.0)
             self.hx711_channel = config.get('hx711_channel', 'B')
+            self.ads1115_mode = config.get('ads1115_mode', False)
+            self.ads1115_pga = config.get('ads1115_pga', '±2.048V')
+            self.ads1115_channel = config.get('ads1115_channel', 'AIN0')
             self.current_unit = config.get('current_unit', 'V')
             self.tare_offset_v = config.get('tare_offset_v', 0.0)
             self.tare_active = config.get('tare_active', False)
@@ -106,6 +159,9 @@ class VoltageSensorWidget(QWidget):
             'hx711_mode': self.hx711_mode,
             'hx711_avdd': self.hx711_avdd,
             'hx711_channel': self.hx711_channel,
+            'ads1115_mode': self.ads1115_mode,
+            'ads1115_pga': self.ads1115_pga,
+            'ads1115_channel': self.ads1115_channel,
             'current_unit': self.current_unit,
             'tare_offset_v': self.tare_offset_v,
             'tare_active': self.tare_active
@@ -138,59 +194,62 @@ class VoltageSensorWidget(QWidget):
         return actual_voltage
 
     def adc_to_vadc(self, adc_value):
-        """计算 ADC 输入端电压（未做分压/放大还原）"""
+        """计算 ADC 输入端电压（未做分压/放大还原）。
+
+        统一有符号换算：下位机输出有符号 ADC 值，0 对应 0V，量程 -VREF~+VREF。
+        例如 12 位 ADC，原始值 -4095~+4095，0 对应 0V，
+        -4095 对应 -VREF，+4095 对应 +VREF。
+        公式：(adc / max_adc) × VREF
+        """
         # HX711 模式：24位有符号，参考电压 = AVDD / Gain
-        # 通道A 增益128，通道B 增益32（固定）
         if self.hx711_mode:
             gain = 128 if self.hx711_channel == 'A' else 32
             return adc_value / 8388608.0 * (self.hx711_avdd / gain)
-        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
+        # ADS1115 模式：16位有符号补码，电压 = raw / 32768 × FSR
+        # 数据手册 SBAS444E 9.3.3 节：FSR 由 PGA 设置（±6.144V ~ ±0.256V）
+        if self.ads1115_mode:
+            fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
+            return adc_value / 32768.0 * fsr
+        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
         return (adc_value / max_adc) * self.VREF
 
     def init_ui(self):
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
+        scroll.setStyleSheet(scroll_area_style())
 
         content = QWidget()
-        content.setStyleSheet("background: #f3f3f3;")
+        content.setStyleSheet(page_bg_style())
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 20, 24, 24)
         layout.setSpacing(16)
 
-        title = QLabel("电压")
-        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
-        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        # 页面标题：用 TitleLabel 自动适配主题
+        title = TitleLabel("电压")
         layout.addWidget(title)
 
-        # ========== 卡片1：连接控制 ==========
-        card_conn = QWidget()
-        card_conn.setObjectName("card")
-        card_conn.setStyleSheet(card_style())
-        card_layout = QVBoxLayout(card_conn)
-        card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片1：连接控制（可折叠） ==========
+        card_conn_content = QWidget()
+        card_conn_content.setObjectName("card")
+        card_conn_content.setStyleSheet(card_style())
+        card_layout = QVBoxLayout(card_conn_content)
+        card_layout.setContentsMargins(20, 4, 20, 16)
         card_layout.setSpacing(12)
-
-        card_title = QLabel("连接控制")
-        card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        card_title.setStyleSheet("color: #1a1a1a;")
-        card_layout.addWidget(card_title)
 
         # 第一行：连接方式 + 设备选择 + 按钮
         row1 = QHBoxLayout()
         row1.setSpacing(10)
 
         row1.addWidget(QLabel("连接方式:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.setStyleSheet(modern_combo_style())
-        self.mode_combo.addItems(["有线串口", "BLE蓝牙"])
+        self.mode_combo = ComboBox()
+        self.mode_combo.addItems(["有线串口", "BLE蓝牙", "模拟器"])
         if not BLE_AVAILABLE:
-            self.mode_combo.setItemData(1, 0, Qt.ItemDataRole.UserRole - 1)
+            self.mode_combo.setItemEnabled(1, False)
             self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         row1.addWidget(self.mode_combo)
@@ -200,101 +259,98 @@ class VoltageSensorWidget(QWidget):
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setSpacing(8)
         serial_layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(140)
         serial_layout.addWidget(self.port_combo)
-        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn = PushButton("刷新")
         self.refresh_btn.setFixedHeight(36)
+        self.refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        self.refresh_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         serial_layout.addWidget(self.refresh_btn)
 
         self.ble_panel = QWidget()
         ble_layout = QHBoxLayout(self.ble_panel)
         ble_layout.setContentsMargins(0, 0, 0, 0)
         ble_layout.setSpacing(8)
-        self.ble_device_combo = QComboBox()
-        self.ble_device_combo.setStyleSheet(modern_combo_style())
+        self.ble_device_combo = ComboBox()
         self.ble_device_combo.setMinimumWidth(180)
         ble_layout.addWidget(self.ble_device_combo)
-        self.ble_scan_btn = QPushButton("扫描BLE")
+        self.ble_scan_btn = PushButton("扫描BLE")
         self.ble_scan_btn.setFixedHeight(36)
+        self.ble_scan_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.ble_scan_btn.clicked.connect(self.scan_ble)
         if not BLE_AVAILABLE:
             self.ble_scan_btn.setEnabled(False)
         ble_layout.addWidget(self.ble_scan_btn)
 
+        # 模拟器面板：无需选择端口
+        self.sim_panel = QWidget()
+        sim_layout = QHBoxLayout(self.sim_panel)
+        sim_layout.setContentsMargins(0, 0, 0, 0)
+        sim_layout.setSpacing(8)
+        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
+        sim_hint.setStyleSheet("color: #888;")
+        sim_layout.addWidget(sim_hint)
+        sim_layout.addStretch()
+
         row1.addWidget(self.serial_panel)
         row1.addWidget(self.ble_panel)
+        row1.addWidget(self.sim_panel)
         self.ble_panel.hide()
+        self.sim_panel.hide()
 
         row1.addSpacing(16)
-        self.connect_btn = QPushButton("连接")
+        self.connect_btn = PushButton("连接")
         self.connect_btn.setFixedHeight(36)
+        self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.connect_btn.clicked.connect(self.connect_device)
-        self.connect_btn.setStyleSheet(primary_btn_style())
         row1.addWidget(self.connect_btn)
 
-        self.disconnect_btn = QPushButton("断开")
+        self.disconnect_btn = PushButton("断开")
         self.disconnect_btn.setFixedHeight(36)
+        self.disconnect_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
-        self.disconnect_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         row1.addWidget(self.disconnect_btn)
+
+        row1.addSpacing(16)
+        row1.addWidget(QLabel("采样频率:"))
+        self.sample_rate_combo = SampleRateComboBox()
+        self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
+        self.sample_rate_combo.setMaximumWidth(120)
+        self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
+        row1.addWidget(self.sample_rate_combo)
 
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        # 第二行：采样频率
-        row2 = QHBoxLayout()
-        row2.setSpacing(10)
-        row2.addWidget(QLabel("采样频率:"))
-        self.sample_rate_label = QLabel(f"{1000 // self.sample_interval_ms}Hz")
-        self.sample_rate_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        self.sample_rate_label.setStyleSheet("color: #0078d4;")
-        row2.addWidget(self.sample_rate_label)
-
-        sample_settings_btn = QPushButton("⚙")
-        sample_settings_btn.setFixedSize(36, 36)
-        sample_settings_btn.setToolTip("设置采样频率")
-        sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
-        row2.addWidget(sample_settings_btn)
-        row2.addStretch()
-        card_layout.addLayout(row2)
-
+        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
         layout.addWidget(card_conn)
 
-        # ========== 卡片2：ADC 与电路参数 ==========
-        card_adc = QWidget()
-        card_adc.setObjectName("card")
-        card_adc.setStyleSheet(card_style())
-        adc_card_layout = QVBoxLayout(card_adc)
-        adc_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片2：ADC 与电路参数（可折叠） ==========
+        card_adc_content = QWidget()
+        card_adc_content.setObjectName("card")
+        # 卡片内所有 QLabel 默认黑色（后续特殊状态标签可单独覆盖）
+        card_adc_content.setStyleSheet(card_style() + " QWidget#card QLabel { color: #1a1a1a; }")
+        adc_card_layout = QVBoxLayout(card_adc_content)
+        adc_card_layout.setContentsMargins(20, 4, 20, 16)
         adc_card_layout.setSpacing(12)
-
-        adc_card_title = QLabel("ADC 与电路参数")
-        adc_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        adc_card_title.setStyleSheet("color: #1a1a1a;")
-        adc_card_layout.addWidget(adc_card_title)
 
         bits_row = QHBoxLayout()
         bits_row.setSpacing(10)
         bits_row.addWidget(QLabel("ADC 位数:"))
-        self.adc_bits_combo = QComboBox()
-        self.adc_bits_combo.setStyleSheet(modern_combo_style())
+        self.adc_bits_combo = ComboBox()
         self.adc_bits_combo.addItems([
-            "8 位 (0-255)",
-            "10 位 (0-1023)",
-            "12 位 (0-4095)  ESP32内置",
-            "14 位 (0-16383)",
-            "16 位 (0-65535)  ADS1115等",
-            "18 位 (0-262143)",
-            "20 位 (0-1048575)",
-            "22 位 (0-4194303)",
-            "24 位 (0-16777215)  HX711等"
+            "8 位 (-255~+255)",
+            "10 位 (-1023~+1023)",
+            "12 位 (-4095~+4095)  ESP32内置",
+            "14 位 (-16383~+16383)",
+            "16 位 (-65535~+65535)  ADS1115等",
+            "18 位 (-262143~+262143)",
+            "20 位 (-1048575~+1048575)",
+            "22 位 (-4194303~+4194303)",
+            "24 位 (-16777215~+16777215)  HX711等"
         ])
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
         self.adc_bits_combo.setCurrentIndex(bits_map.get(self.adc_bits, 2))
@@ -302,15 +358,16 @@ class VoltageSensorWidget(QWidget):
         bits_row.addWidget(self.adc_bits_combo)
 
         bits_row.addWidget(QLabel("参考电压: 3.3V"))
-        self.range_label = QLabel(f"量程: 0 ~ {self.VREF:.1f}V")
+        self.range_label = QLabel(f"量程: -{self.VREF:.2f}V~+{self.VREF:.2f}V")
         self.range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self.range_label.setStyleSheet("color: #0078d4;")
         bits_row.addWidget(self.range_label)
         bits_row.addStretch()
         adc_card_layout.addLayout(bits_row)
 
-        # HX711 模式行：复选框 + AVDD + 通道选择
-        hx711_row = QHBoxLayout()
+        # HX711 模式行：仅在 ADC 位数=24 时显示（用容器包裹便于整体显隐）
+        self.hx711_panel = QWidget()
+        hx711_row = QHBoxLayout(self.hx711_panel)
+        hx711_row.setContentsMargins(0, 0, 0, 0)
         hx711_row.setSpacing(10)
         self.hx711_check = QCheckBox("HX711 模式（24位有符号）")
         self.hx711_check.setChecked(self.hx711_mode)
@@ -331,8 +388,7 @@ class VoltageSensorWidget(QWidget):
         hx711_row.addWidget(self.hx711_avdd_spin)
 
         hx711_row.addWidget(QLabel("通道:"))
-        self.hx711_channel_combo = QComboBox()
-        self.hx711_channel_combo.setStyleSheet(modern_combo_style())
+        self.hx711_channel_combo = ComboBox()
         self.hx711_channel_combo.addItems(["B (增益 32, ±156mV)", "A (增益 128, ±39mV)"])
         self.hx711_channel_combo.setCurrentIndex(0 if self.hx711_channel == 'B' else 1)
         self.hx711_channel_combo.currentIndexChanged.connect(self.on_hx711_channel_changed)
@@ -340,11 +396,64 @@ class VoltageSensorWidget(QWidget):
         hx711_row.addWidget(self.hx711_channel_combo)
 
         hx711_row.addStretch()
-        adc_card_layout.addLayout(hx711_row)
+        adc_card_layout.addWidget(self.hx711_panel)
+        # 仅 24 位时显示 HX711 选项；非 24 位时自动取消勾选
+        self.hx711_panel.setVisible(self.adc_bits == 24)
+        if self.adc_bits != 24 and self.hx711_mode:
+            self.hx711_check.setChecked(False)
+
+        # ADS1115 模式行：仅在 ADC 位数=16 时显示
+        # TI ADS1115：16位有符号补码 + 6档PGA + 4单端/2差分 MUX，I2C 接口
+        # 数据手册 SBAS444E
+        self.ads1115_panel = QWidget()
+        ads1115_row = QHBoxLayout(self.ads1115_panel)
+        ads1115_row.setContentsMargins(0, 0, 0, 0)
+        ads1115_row.setSpacing(10)
+        self.ads1115_check = QCheckBox("ADS1115 模式（16位有符号补码）")
+        self.ads1115_check.setChecked(self.ads1115_mode)
+        self.ads1115_check.setToolTip(
+            "TI ADS1115 16位 I2C ADC\n"
+            "有符号二进制补码（-32768~+32767）\n"
+            "电压 = raw / 32768 × FSR\n"
+            "6档PGA量程：±6.144V ~ ±0.256V\n"
+            "4路单端或2路差分输入（MUX）"
+        )
+        self.ads1115_check.toggled.connect(self.on_ads1115_mode_changed)
+        ads1115_row.addWidget(self.ads1115_check)
+
+        ads1115_row.addWidget(QLabel("PGA:"))
+        self.ads1115_pga_combo = ComboBox()
+        self.ads1115_pga_combo.addItems(list(self.ADS1115_PGA_RANGES.keys()))
+        self.ads1115_pga_combo.setCurrentText(self.ads1115_pga)
+        self.ads1115_pga_combo.currentIndexChanged.connect(self.on_ads1115_pga_changed)
+        self.ads1115_pga_combo.setEnabled(self.ads1115_mode)
+        ads1115_row.addWidget(self.ads1115_pga_combo)
+
+        ads1115_row.addWidget(QLabel("通道:"))
+        self.ads1115_channel_combo = ComboBox()
+        self.ads1115_channel_combo.addItems(self.ADS1115_CHANNELS)
+        self.ads1115_channel_combo.setCurrentText(self.ads1115_channel)
+        self.ads1115_channel_combo.currentIndexChanged.connect(self.on_ads1115_channel_changed)
+        self.ads1115_channel_combo.setEnabled(self.ads1115_mode)
+        ads1115_row.addWidget(self.ads1115_channel_combo)
+
+        ads1115_row.addStretch()
+        adc_card_layout.addWidget(self.ads1115_panel)
+        # 仅 16 位时显示 ADS1115 选项；非 16 位时自动取消勾选
+        self.ads1115_panel.setVisible(self.adc_bits == 16)
+        if self.adc_bits != 16 and self.ads1115_mode:
+            self.ads1115_check.setChecked(False)
 
         params_row = QHBoxLayout()
         params_row.setSpacing(10)
-        params_row.addWidget(QLabel("分压比 (R1+R2)/R2:"))
+
+        # 分压比/放大倍数解释文字（原为常显灰色小字，现改为悬停 tooltip 显示）
+        params_hint_text = ("分压比 = (R1+R2)/R2，用于还原分压前的原始电压；\n"
+                            "放大倍数 = 运放增益，用于还原放大前的信号电压")
+
+        divider_label = QLabel("分压比 (R1+R2)/R2:")
+        divider_label.setToolTip(params_hint_text)
+        params_row.addWidget(divider_label)
         self.divider_spin = QDoubleSpinBox()
         self.divider_spin.setRange(1.0, 1000.0)
         self.divider_spin.setDecimals(2)
@@ -352,10 +461,14 @@ class VoltageSensorWidget(QWidget):
         self.divider_spin.setValue(self.divider_ratio)
         self.divider_spin.setSuffix(" x")
         self.divider_spin.setMinimumWidth(120)
+        self.divider_spin.setFixedHeight(32)
+        self.divider_spin.setToolTip(params_hint_text)
         self.divider_spin.valueChanged.connect(self.on_divider_changed)
         params_row.addWidget(self.divider_spin)
 
-        params_row.addWidget(QLabel("放大倍数:"))
+        amp_label = QLabel("放大倍数:")
+        amp_label.setToolTip(params_hint_text)
+        params_row.addWidget(amp_label)
         self.amp_spin = QDoubleSpinBox()
         self.amp_spin.setRange(0.01, 1000.0)
         self.amp_spin.setDecimals(2)
@@ -363,27 +476,22 @@ class VoltageSensorWidget(QWidget):
         self.amp_spin.setValue(self.amp_ratio)
         self.amp_spin.setSuffix(" x")
         self.amp_spin.setMinimumWidth(120)
+        self.amp_spin.setFixedHeight(32)
+        self.amp_spin.setToolTip(params_hint_text)
         self.amp_spin.valueChanged.connect(self.on_amp_changed)
         params_row.addWidget(self.amp_spin)
 
-        self.actual_range_label = QLabel(f"实际量程: 0 ~ {self.VREF * self.divider_ratio / self.amp_ratio:.2f}V")
+        self.actual_range_label = QLabel(f"实际量程: -{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V~+{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V")
         self.actual_range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self.actual_range_label.setStyleSheet("color: #28a745;")
         params_row.addWidget(self.actual_range_label)
         params_row.addStretch()
         adc_card_layout.addLayout(params_row)
-
-        hint_label = QLabel("分压比 = (R1+R2)/R2，用于还原分压前的原始电压；放大倍数 = 运放增益，用于还原放大前的信号电压")
-        hint_label.setStyleSheet("color: #888888; font-size: 11px;")
-        hint_label.setWordWrap(True)
-        adc_card_layout.addWidget(hint_label)
 
         # 显示单位选择
         unit_row = QHBoxLayout()
         unit_row.setSpacing(10)
         unit_row.addWidget(QLabel("显示单位:"))
-        self.unit_combo = QComboBox()
-        self.unit_combo.setStyleSheet(modern_combo_style())
+        self.unit_combo = ComboBox()
         self.unit_combo.addItems(["千伏 (kV)", "伏 (V)", "毫伏 (mV)"])
         unit_map = {'kV': 0, 'V': 1, 'mV': 2}
         self.unit_combo.setCurrentIndex(unit_map.get(self.current_unit, 1))
@@ -404,23 +512,19 @@ class VoltageSensorWidget(QWidget):
         tare_row.addStretch()
         adc_card_layout.addLayout(tare_row)
 
+        card_adc = CollapsibleCard("ADC 与电路参数", card_adc_content, expanded=True)
         layout.addWidget(card_adc)
 
-        # ========== 卡片3：实时数据 ==========
-        card_data = QWidget()
-        card_data.setObjectName("card")
-        card_data.setStyleSheet(card_style())
-        data_card_layout = QVBoxLayout(card_data)
-        data_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片3：实时数据（可折叠） ==========
+        card_data_content = QWidget()
+        card_data_content.setObjectName("card")
+        card_data_content.setStyleSheet(card_style())
+        data_card_layout = QVBoxLayout(card_data_content)
+        data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        data_card_title = QLabel("实时数据")
-        data_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        data_card_title.setStyleSheet("color: #1a1a1a;")
-        data_card_layout.addWidget(data_card_title)
-
         self.current_voltage_label = QLabel("--.- V")
-        self.current_voltage_label.setFont(QFont("Microsoft YaHei", 32, QFont.Weight.Bold))
+        self.current_voltage_label.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
         self.current_voltage_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_voltage_label)
 
@@ -443,110 +547,87 @@ class VoltageSensorWidget(QWidget):
         self.stats_label.setStyleSheet("color: #888888;")
         data_card_layout.addWidget(self.stats_label)
 
+        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
         layout.addWidget(card_data)
 
-        # ========== 卡片4：图表 + 数据记录 ==========
-        card_chart = QWidget()
-        card_chart.setObjectName("card")
-        card_chart.setStyleSheet(card_style())
-        chart_card_layout = QVBoxLayout(card_chart)
-        chart_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片4：图表 + 数据记录（可折叠） ==========
+        card_chart_content = QWidget()
+        card_chart_content.setObjectName("card")
+        card_chart_content.setStyleSheet(card_style())
+        chart_card_layout = QVBoxLayout(card_chart_content)
+        chart_card_layout.setContentsMargins(20, 4, 20, 16)
         chart_card_layout.setSpacing(12)
-
-        chart_title = QLabel("电压-时间曲线")
-        chart_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        chart_title.setStyleSheet("color: #1a1a1a;")
-        chart_card_layout.addWidget(chart_title)
 
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
 
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
-
-        record_label = QLabel("数据记录")
-        record_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        record_label.setStyleSheet("color: #1a1a1a;")
-        left_layout.addWidget(record_label)
-
-        self.data_text = QTextEdit()
-        self.data_text.setReadOnly(True)
-        self.data_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #fafafa;
-                border: 1px solid #e5e5e5;
-                border-radius: 6px;
-                padding: 8px;
-                font-size: 11px;
-                color: #333333;
-            }
-        """)
-        left_layout.addWidget(self.data_text)
-        content_row.addWidget(left_panel, stretch=1)
+        # 左侧：数据记录（可展开/收起，默认3行高度）
+        self.data_text = ExpandableTextEdit()
+        content_row.addWidget(self.data_text, stretch=0)
 
         self.figure = Figure(figsize=(8, 5), dpi=100)
         self.figure.set_facecolor('#fafafa')
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_row.addWidget(self.canvas, stretch=2)
 
-        chart_card_layout.addLayout(content_row)
+        chart_card_layout.addLayout(content_row, 1)
+        card_chart = CollapsibleCard("电压-时间曲线", card_chart_content, expanded=True, fullscreen=True)
+        # 图表卡片加高为原来的 2 倍（内容区最小 400px），页面滚动查看
+        card_chart.set_chart_min_height(400)
+        # 全屏时：数据记录区作为可拖动折叠浮动面板浮于图表上方，折叠时显示实时电压值
+        card_chart.set_fullscreen_overlay(self.data_text, self.current_voltage_label)
         layout.addWidget(card_chart)
 
-        # ========== 卡片5：操作按钮 ==========
-        card_actions = QWidget()
-        card_actions.setObjectName("card")
-        card_actions.setStyleSheet(card_style())
-        actions_layout = QHBoxLayout(card_actions)
-        actions_layout.setContentsMargins(20, 12, 20, 12)
+        # ========== 卡片5：操作按钮（可折叠） ==========
+        card_actions_content = QWidget()
+        card_actions_content.setObjectName("card")
+        card_actions_content.setStyleSheet(card_style())
+        actions_layout = QHBoxLayout(card_actions_content)
+        actions_layout.setContentsMargins(20, 4, 20, 12)
         actions_layout.setSpacing(10)
 
-        self.start_btn = QPushButton("开始采集")
+        self.start_btn = PrimaryPushButton("开始采集")
         self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
-        self.start_btn.setStyleSheet(primary_btn_style())
         actions_layout.addWidget(self.start_btn)
 
         # 去皮按钮：取最近若干个数据点平均值作为空载偏移
-        self.tare_btn = QPushButton("去皮" if not self.tare_active else "取消去皮")
+        self.tare_btn = PushButton("去皮" if not self.tare_active else "取消去皮")
         self.tare_btn.setFixedHeight(38)
         self.tare_btn.clicked.connect(self.toggle_tare)
         self.tare_btn.setEnabled(False)
-        self.tare_btn.setStyleSheet(accent_btn_style("#fd7e14", "#e06b00", "#c75a00")
+        self.tare_btn.setStyleSheet("background-color: #fd7e14; color: white;"
                                     if not self.tare_active else
-                                    accent_btn_style("#28a745", "#218838", "#1e7e34"))
+                                    "background-color: #28a745; color: white;")
         actions_layout.addWidget(self.tare_btn)
 
-        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn = PushButton("停止采集")
         self.stop_btn.setFixedHeight(38)
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.stop_btn)
 
-        self.save_btn = QPushButton("保存数据")
+        self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
-        self.save_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.save_btn)
 
-        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn = PushButton("清除数据")
         self.clear_btn.setFixedHeight(38)
         self.clear_btn.clicked.connect(self.clear_data)
-        self.clear_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
+        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
         layout.addWidget(card_actions)
 
         layout.addStretch()
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
-        self.setLayout(main_layout)
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_chart)
@@ -556,13 +637,29 @@ class VoltageSensorWidget(QWidget):
         if index == 0:
             self.serial_panel.show()
             self.ble_panel.hide()
-        else:
+            self.sim_panel.hide()
+        elif index == 1:
             self.serial_panel.hide()
             self.ble_panel.show()
+            self.sim_panel.hide()
+        else:
+            self.serial_panel.hide()
+            self.ble_panel.hide()
+            self.sim_panel.show()
 
     def on_adc_bits_changed(self, index):
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
         self.adc_bits = bits_map.get(index, 12)
+        # HX711 选项仅 24 位时显示；切到非 24 位时自动取消 HX711 模式
+        is_24bit = (self.adc_bits == 24)
+        self.hx711_panel.setVisible(is_24bit)
+        if not is_24bit and self.hx711_mode:
+            self.hx711_check.setChecked(False)
+        # ADS1115 选项仅 16 位时显示；切到非 16 位时自动取消 ADS1115 模式
+        is_16bit = (self.adc_bits == 16)
+        self.ads1115_panel.setVisible(is_16bit)
+        if not is_16bit and self.ads1115_mode:
+            self.ads1115_check.setChecked(False)
         self.save_config()
         self.update_range_display()
 
@@ -598,6 +695,29 @@ class VoltageSensorWidget(QWidget):
         self.save_config()
         self.update_range_display()
 
+    def on_ads1115_mode_changed(self, checked):
+        """ADS1115 模式开关：启用后强制 ADC 位数=16"""
+        self.ads1115_mode = checked
+        self.ads1115_pga_combo.setEnabled(checked)
+        self.ads1115_channel_combo.setEnabled(checked)
+        if checked:
+            self.adc_bits_combo.setCurrentIndex(4)  # 16 位
+            self.adc_bits = 16
+        self.save_config()
+        self.update_range_display()
+
+    def on_ads1115_pga_changed(self, index):
+        """切换 ADS1115 PGA 量程"""
+        self.ads1115_pga = self.ads1115_pga_combo.itemText(index)
+        self.save_config()
+        self.update_range_display()
+
+    def on_ads1115_channel_changed(self, index):
+        """切换 ADS1115 输入通道（MUX）"""
+        self.ads1115_channel = self.ads1115_channel_combo.itemText(index)
+        self.save_config()
+        self.update_range_display()
+
     def on_unit_changed(self, index):
         """切换显示单位：kV / V / mV。内部数据不变，仅刷新显示"""
         unit_map = {0: 'kV', 1: 'V', 2: 'mV'}
@@ -619,12 +739,12 @@ class VoltageSensorWidget(QWidget):
                 f"已启用 (偏移 {self.format_voltage(self.tare_offset_v)} {self.current_unit})")
             self.tare_status_label.setStyleSheet("color: green; font-weight: bold;")
             self.tare_btn.setText("取消去皮")
-            self.tare_btn.setStyleSheet(accent_btn_style("#28a745", "#218838", "#1e7e34"))
+            self.tare_btn.setStyleSheet("background-color: #28a745; color: white;")
         else:
             self.tare_status_label.setText("未启用")
             self.tare_status_label.setStyleSheet("color: #888; font-weight: bold;")
             self.tare_btn.setText("去皮")
-            self.tare_btn.setStyleSheet(accent_btn_style("#fd7e14", "#e06b00", "#c75a00"))
+            self.tare_btn.setStyleSheet("background-color: #fd7e14; color: white;")
 
     def toggle_tare(self):
         """去皮/取消去皮切换
@@ -670,11 +790,17 @@ class VoltageSensorWidget(QWidget):
             self.range_label.setText(f"量程: ±{fs*1000:.1f}mV (HX711 通道{self.hx711_channel}, Gain{gain})")
             actual_max = fs * self.divider_ratio / self.amp_ratio
             self.actual_range_label.setText(f"实际量程: ±{actual_max*1000:.2f}mV")
+        elif self.ads1115_mode:
+            fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
+            self.range_label.setText(f"量程: ±{fsr:.3f}V (ADS1115 PGA={self.ads1115_pga}, 通道{self.ads1115_channel})")
+            actual_max = fsr * self.divider_ratio / self.amp_ratio
+            self.actual_range_label.setText(f"实际量程: ±{actual_max:.3f}V")
         else:
-            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
-            self.range_label.setText(f"量程: 0 ~ {self.VREF:.1f}V (ADC {max_adc})")
-            actual_max = self.VREF * self.divider_ratio / self.amp_ratio
-            self.actual_range_label.setText(f"实际量程: 0 ~ {actual_max:.2f}V")
+            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+            full = self.VREF
+            self.range_label.setText(f"量程: -{full:.2f}V~+{full:.2f}V (ADC -{max_adc}~+{max_adc})")
+            actual_full = full * self.divider_ratio / self.amp_ratio
+            self.actual_range_label.setText(f"实际量程: -{actual_full:.2f}V~+{actual_full:.2f}V")
 
     def refresh_ports(self):
         self.port_combo.clear()
@@ -709,8 +835,29 @@ class VoltageSensorWidget(QWidget):
         mode = self.mode_combo.currentText()
         if "BLE" in mode:
             self.connect_ble()
+        elif "模拟器" in mode:
+            self.connect_simulator()
         else:
             self.connect_serial()
+
+    def connect_simulator(self):
+        """连接模拟器：随机生成 ADC 原始值，无需硬件"""
+        try:
+            # 模拟器产生有符号 ADC 范围的原始值，中点为 0V
+            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+            self.serial_thread = SimulatorThread(
+                value_min=-max_adc, value_max=max_adc,
+                interval_ms=self.sample_interval_ms)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.current_voltage_label.setText("--.- V")
+            self.current_raw_label.setText("原始ADC: 模拟器连接中...")
+            self.current_vadc_label.setText("ADC端电压: --.- V")
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         port = self.port_combo.currentText()
@@ -908,19 +1055,10 @@ class VoltageSensorWidget(QWidget):
             self.figure.tight_layout()
             self.canvas.draw()
 
-    def edit_sample_rate(self):
-        """编辑采样频率对话框"""
-        dialog = SampleRateDialog(self.sample_interval_ms, self)
-        if dialog.exec() == 1:  # QDialog.Accepted
-            new_interval_ms = dialog.get_sample_interval()
-            self.sample_interval_ms = new_interval_ms
-            freq = 1000 // new_interval_ms
-            self.sample_rate_label.setText(f"{freq}Hz")
-            self.save_config()
-            QMessageBox.information(self, "成功",
-                                   f"采样频率已更新为 {freq} Hz！\n"
-                                   f"采样间隔：{new_interval_ms} ms\n"
-                                   f"配置已自动保存。")
+    def on_sample_interval_changed(self, interval_ms):
+        """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
+        self.sample_interval_ms = interval_ms
+        self.save_config()
 
     def save_data(self):
         if len(self.voltage_data) == 0:
@@ -950,3 +1088,13 @@ class VoltageSensorWidget(QWidget):
         self.figure.clear()
         self.canvas.draw()
         self.save_btn.setEnabled(False)
+
+    def apply_theme(self, theme):
+        """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
+        apply_module_theme(self, theme)
+        try:
+            from qfluentwidgets import isDarkTheme
+            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
+            self.canvas.draw()
+        except Exception:
+            pass

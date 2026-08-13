@@ -1,3 +1,6 @@
+# Copyright (c) 2026 wangzhidong2
+# SPDX-License-Identifier: GPL-3.0-only
+
 # === MODULE META ===
 # icon: x
 # name: 超声波位移
@@ -12,12 +15,14 @@ import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QInputDialog, QGridLayout, QStyle, QScrollArea, QMessageBox,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -28,10 +33,11 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    SerialThread, SampleRateDialog,
+    SerialThread, SampleRateComboBox, SimulatorThread,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style,
-    modern_combo_style,
+    modern_combo_style, CollapsibleCard, ExpandableTextEdit,
+    scroll_area_style, page_bg_style, apply_module_theme,
 )
 
 
@@ -53,93 +59,94 @@ class UltrasonicWidget(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
+        scroll.setStyleSheet(scroll_area_style())
 
         content = QWidget()
-        content.setStyleSheet("background: #f3f3f3;")
+        content.setStyleSheet(page_bg_style())
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 20, 24, 24)
         layout.setSpacing(16)
 
-        # 页面标题
-        title = QLabel("超声波位移")
-        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
-        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        # 页面标题：用 TitleLabel 自动适配主题
+        title = TitleLabel("超声波位移")
         layout.addWidget(title)
 
-        # ========== 卡片1：连接控制 ==========
-        card_conn = QWidget()
-        card_conn.setObjectName("card")
-        card_conn.setStyleSheet(card_style())
-        card_layout = QVBoxLayout(card_conn)
-        card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片1：连接控制（可折叠） ==========
+        card_conn_content = QWidget()
+        card_conn_content.setObjectName("card")
+        card_conn_content.setStyleSheet(card_style())
+        card_layout = QVBoxLayout(card_conn_content)
+        card_layout.setContentsMargins(20, 4, 20, 16)
         card_layout.setSpacing(12)
-
-        card_title = QLabel("连接控制")
-        card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        card_title.setStyleSheet("color: #1a1a1a;")
-        card_layout.addWidget(card_title)
 
         conn_row = QHBoxLayout()
         conn_row.setSpacing(10)
 
-        conn_row.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setStyleSheet(modern_combo_style())
+        conn_row.addWidget(QLabel("连接方式:"))
+        self.mode_combo = ComboBox()
+        self.mode_combo.addItems(["有线串口", "模拟器"])
+        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
+        conn_row.addWidget(self.mode_combo)
+
+        self.serial_panel = QWidget()
+        serial_row = QHBoxLayout(self.serial_panel)
+        serial_row.setContentsMargins(0, 0, 0, 0)
+        serial_row.setSpacing(8)
+        serial_row.addWidget(QLabel("串口:"))
+        self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(160)
-        conn_row.addWidget(self.port_combo)
+        serial_row.addWidget(self.port_combo)
 
-        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn = PushButton("刷新")
         self.refresh_btn.setFixedHeight(36)
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        self.refresh_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
-        conn_row.addWidget(self.refresh_btn)
+        serial_row.addWidget(self.refresh_btn)
+        conn_row.addWidget(self.serial_panel)
 
-        self.connect_btn = QPushButton("连接")
+        # 模拟器面板：无需选择端口
+        self.sim_panel = QWidget()
+        sim_row = QHBoxLayout(self.sim_panel)
+        sim_row.setContentsMargins(0, 0, 0, 0)
+        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
+        sim_hint.setStyleSheet("color: #888;")
+        sim_row.addWidget(sim_hint)
+        sim_row.addStretch()
+        conn_row.addWidget(self.sim_panel)
+        self.sim_panel.hide()
+
+        self.connect_btn = PrimaryPushButton("连接")
         self.connect_btn.setFixedHeight(36)
         self.connect_btn.clicked.connect(self.toggle_connection)
-        self.connect_btn.setStyleSheet(primary_btn_style())
         conn_row.addWidget(self.connect_btn)
 
         conn_row.addSpacing(20)
 
         conn_row.addWidget(QLabel("采样:"))
-        self.sample_rate_label = QLabel(f"{1000 // self.sample_interval_ms}Hz")
-        self.sample_rate_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        self.sample_rate_label.setStyleSheet("color: #0078d4;")
-        conn_row.addWidget(self.sample_rate_label)
-
-        sample_settings_btn = QPushButton("⚙")
-        sample_settings_btn.setFixedSize(36, 36)
-        sample_settings_btn.setToolTip("设置采样频率")
-        sample_settings_btn.clicked.connect(self.edit_sample_rate)
-        sample_settings_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
-        conn_row.addWidget(sample_settings_btn)
+        self.sample_rate_combo = SampleRateComboBox()
+        self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
+        self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
+        conn_row.addWidget(self.sample_rate_combo)
 
         conn_row.addStretch()
         card_layout.addLayout(conn_row)
+        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
         layout.addWidget(card_conn)
 
-        # ========== 卡片2：实时数据 ==========
-        card_data = QWidget()
-        card_data.setObjectName("card")
-        card_data.setStyleSheet(card_style())
-        data_card_layout = QVBoxLayout(card_data)
-        data_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片2：实时数据（可折叠） ==========
+        card_data_content = QWidget()
+        card_data_content.setObjectName("card")
+        card_data_content.setStyleSheet(card_style())
+        data_card_layout = QVBoxLayout(card_data_content)
+        data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
-
-        data_card_title = QLabel("实时数据")
-        data_card_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        data_card_title.setStyleSheet("color: #1a1a1a;")
-        data_card_layout.addWidget(data_card_title)
 
         self.current_data_label = QLabel("等待连接...")
         self.current_data_label.setFont(QFont("Microsoft YaHei", 11))
@@ -151,105 +158,78 @@ class UltrasonicWidget(QWidget):
         self.stats_label.setStyleSheet("color: #888888;")
         data_card_layout.addWidget(self.stats_label)
 
+        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
         layout.addWidget(card_data)
 
-        # ========== 卡片3：图表 + 数据记录 ==========
-        card_chart = QWidget()
-        card_chart.setObjectName("card")
-        card_chart.setStyleSheet(card_style())
-        chart_card_layout = QVBoxLayout(card_chart)
-        chart_card_layout.setContentsMargins(20, 16, 20, 16)
+        # ========== 卡片3：图表 + 数据记录（可折叠） ==========
+        card_chart_content = QWidget()
+        card_chart_content.setObjectName("card")
+        card_chart_content.setStyleSheet(card_style())
+        chart_card_layout = QVBoxLayout(card_chart_content)
+        chart_card_layout.setContentsMargins(20, 4, 20, 16)
         chart_card_layout.setSpacing(12)
-
-        chart_header = QHBoxLayout()
-        chart_title = QLabel("距离-时间曲线")
-        chart_title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        chart_title.setStyleSheet("color: #1a1a1a;")
-        chart_header.addWidget(chart_title)
-        chart_header.addStretch()
-        chart_card_layout.addLayout(chart_header)
 
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
 
-        # 左侧：数据记录
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
-
-        record_label = QLabel("数据记录")
-        record_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        record_label.setStyleSheet("color: #1a1a1a;")
-        left_layout.addWidget(record_label)
-
-        self.data_text = QTextEdit()
-        self.data_text.setReadOnly(True)
-        self.data_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #fafafa;
-                border: 1px solid #e5e5e5;
-                border-radius: 6px;
-                padding: 8px;
-                font-size: 11px;
-                color: #333333;
-            }
-        """)
-        left_layout.addWidget(self.data_text)
-        content_row.addWidget(left_panel, stretch=1)
+        # 左侧：数据记录（可展开/收起，默认3行高度）
+        self.data_text = ExpandableTextEdit()
+        content_row.addWidget(self.data_text, stretch=0)
 
         # 右侧：图表
         self.figure = Figure(figsize=(8, 6), dpi=100)
         self.figure.set_facecolor('#fafafa')
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_row.addWidget(self.canvas, stretch=2)
 
-        chart_card_layout.addLayout(content_row)
+        chart_card_layout.addLayout(content_row, 1)
+        card_chart = CollapsibleCard("距离-时间曲线", card_chart_content, expanded=True, fullscreen=True)
+        # 图表卡片加高为原来的 2 倍（内容区最小 400px），页面滚动查看
+        card_chart.set_chart_min_height(400)
+        # 全屏时：数据记录区作为可拖动折叠浮动面板浮于图表上方，折叠时显示实时位移值
+        card_chart.set_fullscreen_overlay(self.data_text, self.current_data_label)
         layout.addWidget(card_chart)
 
-        # ========== 卡片4：操作按钮 ==========
-        card_actions = QWidget()
-        card_actions.setObjectName("card")
-        card_actions.setStyleSheet(card_style())
-        actions_layout = QHBoxLayout(card_actions)
-        actions_layout.setContentsMargins(20, 12, 20, 12)
+        # ========== 卡片4：操作按钮（可折叠） ==========
+        card_actions_content = QWidget()
+        card_actions_content.setObjectName("card")
+        card_actions_content.setStyleSheet(card_style())
+        actions_layout = QHBoxLayout(card_actions_content)
+        actions_layout.setContentsMargins(20, 4, 20, 12)
         actions_layout.setSpacing(10)
 
-        self.start_btn = QPushButton("开始采集")
+        self.start_btn = PrimaryPushButton("开始采集")
         self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.start_collection)
         self.start_btn.setEnabled(False)
-        self.start_btn.setStyleSheet(primary_btn_style())
         actions_layout.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton("停止采集")
+        self.stop_btn = PushButton("停止采集")
         self.stop_btn.setFixedHeight(38)
         self.stop_btn.clicked.connect(self.stop_collection)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.stop_btn)
 
-        self.save_btn = QPushButton("保存数据")
+        self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
-        self.save_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.save_btn)
 
-        self.clear_btn = QPushButton("清除数据")
+        self.clear_btn = PushButton("清除数据")
         self.clear_btn.setFixedHeight(38)
         self.clear_btn.clicked.connect(self.clear_data)
-        self.clear_btn.setStyleSheet(accent_btn_style("#f0f0f0", "#e0e0e0", "#d0d0d0"))
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
+        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
         layout.addWidget(card_actions)
 
         layout.addStretch()
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
-        self.setLayout(main_layout)
 
         # 定时器用于更新图表
         self.timer = QTimer()
@@ -263,12 +243,40 @@ class UltrasonicWidget(QWidget):
         for port in ports:
             self.port_combo.addItem(port.device)
 
+    def on_mode_changed(self, index):
+        if index == 0:
+            self.serial_panel.show()
+            self.sim_panel.hide()
+        else:
+            self.serial_panel.hide()
+            self.sim_panel.show()
+
     def toggle_connection(self):
-        """切换串口连接状态"""
+        """切换连接状态"""
         if self.serial_thread and self.serial_thread.isRunning():
             self.disconnect_serial()
-        else:
+        elif self.mode_combo.currentIndex() == 0:
             self.connect_serial()
+        else:
+            self.connect_simulator()
+
+    def connect_simulator(self):
+        """连接模拟器：随机生成回波时间（µs），无需硬件。时间戳以微秒计。"""
+        try:
+            # echo_time 100~60000µs（约 1.7cm~1m），在 11600µs(约20cm)附近漂移
+            self.serial_thread = SimulatorThread(
+                value_min=100, value_max=60000,
+                interval_ms=self.sample_interval_ms,
+                start_value=11600, timestamp_scale=1000)
+            self.serial_thread.data_received.connect(self.handle_data)
+            self.serial_thread.start()
+
+            self.connect_btn.setText("断开")
+            self.start_btn.setEnabled(True)
+            self.current_data_label.setText("模拟器已连接，等待数据...")
+
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         """连接串口"""
@@ -429,17 +437,9 @@ class UltrasonicWidget(QWidget):
 
             self.canvas.draw()
 
-    def edit_sample_rate(self):
-        """编辑采样频率对话框"""
-        dialog = SampleRateDialog(self.sample_interval_ms, self)
-        if dialog.exec() == 1:  # QDialog.Accepted
-            new_interval_ms = dialog.get_sample_interval()
-            self.sample_interval_ms = new_interval_ms
-            freq = 1000 // new_interval_ms
-            self.sample_rate_label.setText(f"{freq}Hz")
-            QMessageBox.information(self, "成功",
-                                   f"采样频率已更新为 {freq} Hz！\n"
-                                   f"采样间隔：{new_interval_ms} ms")
+    def on_sample_interval_changed(self, interval_ms):
+        """采样频率改变时更新间隔（内联下拉框触发）"""
+        self.sample_interval_ms = interval_ms
 
     def save_data(self):
         """保存数据到文件"""
@@ -468,3 +468,13 @@ class UltrasonicWidget(QWidget):
         self.figure.clear()
         self.canvas.draw()
         self.save_btn.setEnabled(False)
+
+    def apply_theme(self, theme):
+        """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
+        apply_module_theme(self, theme)
+        try:
+            from qfluentwidgets import isDarkTheme
+            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
+            self.canvas.draw()
+        except Exception:
+            pass

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 wangzhidong2
+// SPDX-License-Identifier: GPL-3.0-only
+
 // ============================================================
 //  电压传感器模块 - ESP32-S3 固件
 //  模块名称：电压采集模块（Voltage Sensor）
