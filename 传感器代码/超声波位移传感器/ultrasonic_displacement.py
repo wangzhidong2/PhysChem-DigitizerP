@@ -175,7 +175,7 @@ class UltrasonicWidget(QWidget):
 
         # 左侧：数据记录（可展开/收起，默认3行高度）
         self.data_text = ExpandableTextEdit()
-        content_row.addWidget(self.data_text, stretch=1)
+        content_row.addWidget(self.data_text, stretch=0)
 
         # 右侧：图表
         self.figure = Figure(figsize=(8, 6), dpi=100)
@@ -187,6 +187,8 @@ class UltrasonicWidget(QWidget):
 
         chart_card_layout.addLayout(content_row, 1)
         card_chart = CollapsibleCard("距离-时间曲线", card_chart_content, expanded=True, fullscreen=True)
+        # 图表卡片加高为原来的 2 倍（内容区最小 400px），页面滚动查看
+        card_chart.set_chart_min_height(400)
         # 全屏时：数据记录区作为可拖动折叠浮动面板浮于图表上方，折叠时显示实时位移值
         card_chart.set_fullscreen_overlay(self.data_text, self.current_data_label)
         layout.addWidget(card_chart)

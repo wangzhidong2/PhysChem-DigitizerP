@@ -26,14 +26,17 @@ import threading
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
-    QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy,
+    QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
 )
 from PySide6.QtCore import Qt, Signal, QThread, QPoint, QTimer
-from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QPainterPath
+from PySide6.QtGui import (
+    QFont, QColor, QPainter, QPen, QBrush, QPainterPath,
+    QFontMetrics, QTextOption,
+)
 
 from qfluentwidgets import (
-    PushButton, PrimaryPushButton, ComboBox, EditableComboBox,
-    LineEdit, TextEdit, Dialog, MessageBox,
+    PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
+    LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
 )
 
 import serial
@@ -374,6 +377,7 @@ class ExpandableTextEdit(QWidget):
         super().__init__(parent)
         self._expanded = False
         self._embedded = False
+        self._longest_line_width = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -384,33 +388,27 @@ class ExpandableTextEdit(QWidget):
         top_row = QHBoxLayout(self._header_container)
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(8)
-        self.title_label = QLabel("数据记录")
-        self.title_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        self.title_label.setStyleSheet("color: #1a1a1a; background: transparent;")
+        # 使用 fluent 主题化标签，自动适配亮/暗主题
+        self.title_label = StrongBodyLabel("数据记录")
         top_row.addWidget(self.title_label)
         top_row.addStretch()
 
-        self.toggle_btn = QPushButton("展开 ▼")
+        self.toggle_btn = HyperlinkButton()
+        self.toggle_btn.setText("展开 ▼")
         self.toggle_btn.setFixedHeight(24)
         self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.toggle_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: none;
-                color: #0078d4;
-                font-size: 12px;
-                padding: 0 4px;
-            }
-            QPushButton:hover { color: #005a9e; text-decoration: underline; }
-        """)
         self.toggle_btn.clicked.connect(self._toggle)
         top_row.addWidget(self.toggle_btn)
         layout.addWidget(self._header_container)
 
-        # 文本区
-        from qfluentwidgets import TextEdit
+        # 文本区：小字号 + 不自动换行，宽度按最长一行数据动态预留
         self.text_edit = TextEdit()
         self.text_edit.setReadOnly(True)
+        self.text_edit.setFont(QFont("Microsoft YaHei", 9))
+        opt = QTextOption()
+        opt.setWrapMode(QTextOption.WrapMode.NoWrap)
+        self.text_edit.document().setDefaultTextOption(opt)
+        self.text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(self.text_edit, 1)
 
         # 初始应用折叠状态
@@ -446,15 +444,28 @@ class ExpandableTextEdit(QWidget):
     # 代理 TextEdit 的常用方法，保持与原 data_text 调用兼容
     def append(self, text):
         self.text_edit.append(text)
+        self._track_line_width(text)
+
+    def setPlainText(self, text):
+        self.text_edit.setPlainText(text)
+        self._longest_line_width = 0
+        for line in text.split("\n"):
+            self._track_line_width(line)
+
+    def _track_line_width(self, text):
+        """记录最长一行数据的像素宽度，动态调整预留宽度，
+        保证左侧数据记录区始终能完整放下一行数据。"""
+        w = QFontMetrics(self.text_edit.font()).horizontalAdvance(text)
+        if w > self._longest_line_width:
+            self._longest_line_width = w
+            # 文本区左右内边距 + 垂直滚动条 + 少量余量
+            self.text_edit.setMinimumWidth(w + 48)
 
     def clear(self):
         self.text_edit.clear()
 
     def toPlainText(self):
         return self.text_edit.toPlainText()
-
-    def setPlainText(self, text):
-        self.text_edit.setPlainText(text)
 
     def verticalScrollBar(self):
         return self.text_edit.verticalScrollBar()
@@ -501,9 +512,8 @@ class FloatingDataPanel(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(8)
 
-        self.title_label = QLabel(title)
-        self.title_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        self.title_label.setStyleSheet("color: #1a1a1a; background: transparent; border: none;")
+        self.title_label = StrongBodyLabel(title)
+        self.title_label.setStyleSheet("background: transparent; border: none;")
         header_layout.addWidget(self.title_label)
 
         self.summary_label = QLabel("")
@@ -513,20 +523,9 @@ class FloatingDataPanel(QWidget):
         header_layout.addWidget(self.summary_label)
         header_layout.addStretch()
 
-        self.toggle_btn = QPushButton("折叠")
+        self.toggle_btn = PrimaryPushButton("折叠")
         self.toggle_btn.setFixedHeight(26)
         self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.toggle_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                border: none;
-                border-radius: 4px;
-                color: white;
-                font-size: 12px;
-                padding: 2px 10px;
-            }
-            QPushButton:hover { background-color: #106ebe; }
-        """)
         self.toggle_btn.clicked.connect(self._toggle)
         header_layout.addWidget(self.toggle_btn)
 
@@ -708,6 +707,7 @@ class CollapsibleCard(QWidget):
         self._overlay_orig_stretch = 0        # 浮动控件在原布局中的 stretch
         self._floating_panel = None           # 全屏时的 FloatingDataPanel 实例
         self._fullscreen_hidden_widgets = []  # 全屏时需隐藏的控件
+        self._chart_min_height = 0            # 图表内容区最小高度（0 表示不限制）
 
         self.setObjectName("collapsible_card")
         self.setStyleSheet(self.CARD_STYLE)
@@ -772,6 +772,29 @@ class CollapsibleCard(QWidget):
         # 否则无父级的 content_widget 会被当作顶级窗口闪现
         layout.addWidget(self._content_widget, 1)
         self._content_widget.setVisible(expanded)
+
+    def set_chart_min_height(self, height):
+        """设置图表内容区的最小高度（用于加高图表卡片）。
+
+        通过同时抬高 sizeHint 与 minimumSizeHint，让外层滚动区布局
+        为图表卡片分配足够高度，页面滚动查看即可，不要求一页放下。
+        """
+        self._chart_min_height = height
+        self._content_widget.setMinimumHeight(height)
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        if self._chart_min_height > 0 and self._expanded:
+            hint.setHeight(max(hint.height(),
+                               self.header.sizeHint().height() + self._chart_min_height))
+        return hint
+
+    def minimumSizeHint(self):
+        hint = super().minimumSizeHint()
+        if self._chart_min_height > 0 and self._expanded:
+            hint.setHeight(max(hint.height(),
+                               self.header.sizeHint().height() + self._chart_min_height))
+        return hint
 
     def paintEvent(self, e):
         """直接用 QPainter 绘制白色圆角背景，绕过样式表级联覆盖。"""
