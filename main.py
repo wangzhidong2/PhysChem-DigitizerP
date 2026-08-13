@@ -34,15 +34,17 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics,
 # 文档：https://qfluentwidgets.com/
 from qfluentwidgets import (
     FluentWindow, FluentIcon as FIF, NavigationItemPosition,
-    Theme, setTheme, setThemeColor, PushButton, PrimaryPushButton,
-    ComboBox, InfoBar, InfoBarPosition, CardWidget, BodyLabel,
-    TitleLabel, SubtitleLabel, CaptionLabel,
+    Theme, setTheme, PushButton, PrimaryPushButton,
+    ComboBox, InfoBar, InfoBarPosition, BodyLabel,
+    TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
+    SettingCard, SettingCardGroup, qconfig, isDarkTheme,
 )
 
 # 公共模块（与各传感器模块共享）
 from core import (
     card_style, primary_btn_style, accent_btn_style,
     patch_combobox_arrow_flip, CollapsibleCard,
+    page_bg_style, scroll_area_style, _theme_colors,
 )
 
 
@@ -292,19 +294,18 @@ class HomePageWidget(QWidget):
         self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
+        self.scroll.setStyleSheet(scroll_area_style())
 
         self.content = QWidget()
         self.content.setObjectName("home_content")
-        self.content.setStyleSheet("QWidget#home_content { background: #f3f3f3; }")
+        self.content.setStyleSheet(
+            f"QWidget#home_content {{ background: {_theme_colors()['page_bg']}; }}")
         self.content_layout = QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(24, 16, 24, 18)
         self.content_layout.setSpacing(10)
 
-        # 页面标题
-        title = QLabel("主页")
-        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
-        title.setStyleSheet("color: #1a1a1a; margin-bottom: 2px;")
+        # 页面标题：用 FluentWidgets TitleLabel 自动适配主题
+        title = TitleLabel("主页")
         self.content_layout.addWidget(title)
 
         # ========== 卡片1：项目信息 ==========
@@ -320,13 +321,11 @@ class HomePageWidget(QWidget):
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(20)
 
-        # 左：项目名
+        # 左：项目名（用 SubtitleLabel 自动适配主题）
         info_layout = QVBoxLayout()
         info_layout.setSpacing(2)
 
-        app_name = QLabel("PhysChem-DigitizerP")
-        app_name.setFont(QFont("Microsoft YaHei", 22, QFont.Weight.Bold))
-        app_name.setStyleSheet("color: #1a1a1a;")
+        app_name = SubtitleLabel("PhysChem-DigitizerP")
         info_layout.addWidget(app_name)
 
         header_row.addLayout(info_layout)
@@ -382,6 +381,9 @@ class HomePageWidget(QWidget):
 
         repo_card_layout.addSpacing(2)
 
+        # 收集所有 url_edit 以便主题切换时刷新（它们用 _theme_colors() 预烘焙了 QSS）
+        self._url_edits = []
+
         # 3 个平台 URL 行
         repo_urls = [
             ("GitHub",  "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
@@ -401,21 +403,11 @@ class HomePageWidget(QWidget):
             url_edit = QLineEdit(url)
             url_edit.setReadOnly(True)
             url_edit.setFont(QFont("Consolas", 10))
-            url_edit.setStyleSheet("""
-                QLineEdit {
-                    background-color: #fafafa;
-                    border: 1px solid #ececec;
-                    border-radius: 5px;
-                    padding: 5px 10px;
-                    color: #333333;
-                    selection-background-color: #0078d4;
-                    selection-color: #ffffff;
-                }
-                QLineEdit:focus { border: 1px solid #0078d4; background-color: #ffffff; }
-            """)
+            url_edit.setStyleSheet(self._url_edit_qss())
             url_edit.setCursor(Qt.CursorShape.IBeamCursor)
             url_edit.setToolTip("点击全选，Ctrl+C 复制")
             row.addWidget(url_edit, stretch=1)
+            self._url_edits.append(url_edit)
 
             copy_btn = PushButton("复制")
             copy_btn.setFixedHeight(26)
@@ -592,59 +584,62 @@ class HomePageWidget(QWidget):
         self.module_clicked.emit(module_name)
 
     def apply_theme(self, theme):
-        if theme == "dark":
-            self.CARD_STYLE = """
-                QWidget#card {
-                    background-color: #2d2d2d;
-                    border: 1px solid #404040;
-                    border-radius: 8px;
-                }
-                QWidget#card QLabel,
-                QWidget#card QFrame {
-                    background-color: transparent;
-                }
-            """
-            self.CARD_HOVER_STYLE = """
-                QPushButton#module_item {
-                    background-color: transparent;
-                    border: none;
-                    border-radius: 6px;
-                    text-align: left;
-                    padding: 12px 16px;
-                }
-                QPushButton#module_item:hover { background-color: #404040; }
-                QPushButton#module_item:pressed { background-color: #505050; }
-            """
-            self.scroll.setStyleSheet("QScrollArea { border: none; background: #202020; }")
-            self.content.setStyleSheet("QWidget#home_content { background: #202020; }")
-        else:
-            self.CARD_STYLE = """
-                QWidget#card {
-                    background-color: #ffffff;
-                    border: 1px solid #e5e5e5;
-                    border-radius: 8px;
-                }
-                QWidget#card QLabel,
-                QWidget#card QFrame {
-                    background-color: transparent;
-                }
-            """
-            self.CARD_HOVER_STYLE = """
-                QPushButton#module_item {
-                    background-color: transparent;
-                    border: none;
-                    border-radius: 6px;
-                    text-align: left;
-                    padding: 12px 16px;
-                }
-                QPushButton#module_item:hover { background-color: #f0f0f0; }
-                QPushButton#module_item:pressed { background-color: #e5e5e5; }
-            """
-            self.scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
-            self.content.setStyleSheet("QWidget#home_content { background: #f3f3f3; }")
+        """主题切换：刷新主页背景、卡片样式、滚动区。
 
-        # 刷新已显示的卡片样式
+        委托给 core.apply_module_theme() 统一处理：刷新 QScrollArea/QWidget#card/
+        CollapsibleCard/QLabel/QLineEdit/QFrame 的样式表，并触发 polish。
+        同时也刷新 self.CARD_STYLE / self.CARD_HOVER_STYLE（用于动态重建的模块卡片）。
+        """
+        from core import apply_module_theme
+        c = _theme_colors()
+        self.CARD_STYLE = f"""
+            QWidget#card {{
+                background-color: {c['card_bg']};
+                border: 1px solid {c['card_border']};
+                border-radius: 8px;
+            }}
+            QWidget#card QLabel,
+            QWidget#card QFrame {{
+                background-color: transparent;
+            }}
+        """
+        self.CARD_HOVER_STYLE = f"""
+            QPushButton#module_item {{
+                background-color: transparent;
+                border: none;
+                border-radius: 6px;
+                text-align: left;
+                padding: 12px 16px;
+            }}
+            QPushButton#module_item:hover {{ background-color: {c['hover_bg']}; }}
+            QPushButton#module_item:pressed {{ background-color: {c['pressed_bg']}; }}
+        """
+
+        # 委托通用主题刷新：刷新滚动区/卡片/QLabel/QLineEdit 等
+        apply_module_theme(self, theme)
+
+        # url_edit 用 _theme_colors() 预烘焙 QSS，需要单独刷新
+        for url_edit in getattr(self, '_url_edits', []):
+            url_edit.setStyleSheet(self._url_edit_qss())
+
+        # 刷新已显示的模块卡片（apply_module_theme 不处理动态创建的 QPushButton#module_item）
         self._rebuild_module_cards()
+
+    def _url_edit_qss(self):
+        """主题感知的只读 QLineEdit 样式（用于主页项目地址行）"""
+        c = _theme_colors()
+        return f"""
+            QLineEdit {{
+                background-color: {c['input_bg']};
+                border: 1px solid {c['card_border']};
+                border-radius: 5px;
+                padding: 5px 10px;
+                color: {c['text_secondary']};
+                selection-background-color: {c['accent']};
+                selection-color: #ffffff;
+            }}
+            QLineEdit:focus {{ border: 1px solid {c['accent']}; background-color: {c['card_bg']}; }}
+        """
 
 
 # ============================================================
@@ -936,36 +931,153 @@ class SidebarWidget(QWidget):
 
 
 # ============================================================
-# 设置（功能开发中，占位页面）
+# 设置（主题切换 + 关于信息）
 # ============================================================
-class SettingsPlaceholderWidget(QWidget):
-    """设置页占位组件 —— 功能正在开发中。
+class SettingsWidget(QWidget):
+    """设置页 —— 主题切换 / 关于。
 
-    侧边栏底部保留"设置"图标（FIF.SETTING）以便未来接入，
-    但内容区只显示"功能正在开发中"提示。
+    用 FluentWidgets 的 SettingCardGroup + SettingCard 系列组件搭建，
+    样式自动适配亮/暗主题。当前包含三组：
+    - 个性化：应用主题（亮色/暗色/跟随系统）
+    - 关于：项目名、版本、许可证、源码仓库
+    - 反馈：issue 链接
     """
+
+    theme_change_requested = Signal(str)  # 'light' / 'dark'
+
+    APP_VERSION = "1.0.0"
 
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(40, 32, 40, 32)
+        self._theme_combo_items = ["亮色", "暗色", "跟随系统"]
+        self._theme_combo_values = ["light", "dark", "auto"]
+        self.init_ui()
+        # 同步初始主题选项
+        self._sync_theme_combo_from_current()
+
+    def init_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet(scroll_area_style())
+
+        self._content = QWidget()
+        self._content.setStyleSheet(page_bg_style())
+        layout = QVBoxLayout(self._content)
+        layout.setContentsMargins(24, 20, 24, 24)
         layout.setSpacing(16)
 
-        title = QLabel("设置")
-        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
-        title.setObjectName("settings_title")
+        # 页面标题：用 TitleLabel 自动适配主题
+        title = TitleLabel("设置")
         layout.addWidget(title)
 
-        placeholder = QLabel("功能正在开发中")
-        placeholder.setFont(QFont("Microsoft YaHei", 14))
-        placeholder.setStyleSheet("color: #888888;")
-        layout.addWidget(placeholder)
+        # ===== 个性化分组 =====
+        group_personal = SettingCardGroup("个性化", self._content)
+        self._theme_card = self._build_theme_card(group_personal)
+        group_personal.addSettingCard(self._theme_card)
+        layout.addWidget(group_personal)
+
+        # ===== 关于分组 =====
+        group_about = SettingCardGroup("关于", self._content)
+        group_about.addSettingCard(self._build_about_card(
+            FIF.APPLICATION, "应用名称", "PhysChem-DigitizerP",
+            "低成本理化实验数字化采集系统"))
+        group_about.addSettingCard(self._build_about_card(
+            FIF.INFO, "版本", f"v{self.APP_VERSION}",
+            "基于 PySide6 + FluentWidgets + Arduino/ESP32"))
+        group_about.addSettingCard(self._build_about_card(
+            FIF.CERTIFICATE, "开源许可证", "GPL-3.0-only",
+            "本应用遵循 GPL-3.0-only 协议开源"))
+        layout.addWidget(group_about)
+
+        # ===== 源码与反馈分组 =====
+        group_repo = SettingCardGroup("源码 & 反馈", self._content)
+        group_repo.addSettingCard(self._build_link_card(
+            FIF.GITHUB, "GitHub 仓库", "wangzhidong2/PhysChem-DigitizerP",
+            "https://github.com/wangzhidong2/PhysChem-DigitizerP"))
+        group_repo.addSettingCard(self._build_link_card(
+            FIF.GITHUB, "Gitee 仓库", "wangzhidong2/PhysChem-DigitizerP",
+            "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"))
+        group_repo.addSettingCard(self._build_link_card(
+            FIF.FEEDBACK, "问题反馈", "提交 Issue / 功能建议",
+            "https://github.com/wangzhidong2/PhysChem-DigitizerP/issues"))
+        layout.addWidget(group_repo)
 
         layout.addStretch()
+        self._scroll.setWidget(self._content)
+        outer.addWidget(self._scroll)
+
+    def _build_theme_card(self, parent):
+        """主题切换卡片：自定义 SettingCard，内嵌一个 ComboBox。"""
+        card = SettingCard(FIF.PALETTE, "应用主题", "切换亮色 / 暗色 / 跟随系统", parent)
+        combo = ComboBox(card)
+        combo.addItems(self._theme_combo_items)
+        combo.setMinimumWidth(140)
+        combo.currentIndexChanged.connect(self._on_theme_combo_changed)
+        card.hBoxLayout.addWidget(combo)
+        card.hBoxLayout.addSpacing(16)
+        self._theme_combo = combo
+        return card
+
+    def _build_about_card(self, icon, title, value, content):
+        """只读信息卡片：右侧显示 value 文本"""
+        card = SettingCard(icon, title, content)
+        value_lbl = BodyLabel(value)
+        # 次要文字色，比标题弱一档
+        value_lbl.setStyleSheet("color: #888888;")
+        card.hBoxLayout.addWidget(value_lbl)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _build_link_card(self, icon, title, content, url):
+        """带"访问"按钮的链接卡片"""
+        card = SettingCard(icon, title, content)
+        link_btn = HyperlinkButton()
+        link_btn.setText("访问")
+        link_btn.setUrl(url)
+        link_btn.setFixedHeight(34)
+        card.hBoxLayout.addWidget(link_btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _on_theme_combo_changed(self, idx: int):
+        if not (0 <= idx < len(self._theme_combo_values)):
+            return
+        mode = self._theme_combo_values[idx]
+        if mode == "auto":
+            # 跟随系统：交给 FluentWidgets 处理 AUTO 主题
+            setTheme(Theme.AUTO)
+            # 实际亮/暗由系统决定，通知主窗口刷新自定义 widget
+            actual = "dark" if isDarkTheme() else "light"
+            self.theme_change_requested.emit(actual)
+        else:
+            self.theme_change_requested.emit(mode)
+
+    def _sync_theme_combo_from_current(self):
+        """根据当前 FluentWidgets 主题，反向同步下拉框选项。"""
+        try:
+            t = qconfig.theme
+        except Exception:
+            return
+        if t == Theme.AUTO:
+            self._theme_combo.setCurrentIndex(2)
+        elif t == Theme.DARK:
+            self._theme_combo.setCurrentIndex(1)
+        else:
+            self._theme_combo.setCurrentIndex(0)
 
     def apply_theme(self, theme):
-        # 占位页面，暂无主题相关样式需要刷新
-        pass
+        """主题切换时刷新本页背景与下拉框同步。"""
+        # 用存储的引用刷新页面/滚动区背景
+        self._scroll.setStyleSheet(scroll_area_style())
+        self._content.setStyleSheet(page_bg_style())
+        # 同步下拉框
+        self._sync_theme_combo_from_current()
+
 
 
 # ============================================================
@@ -1038,9 +1150,10 @@ class MainWindow(FluentWindow):
             home_modules.append((info['icon'], info['name'], info['category']))
 
         # 设置（始终在最后）—— 用 FluentIcon.SETTING 注册到导航底部
-        # 内容暂为占位页，侧边栏图标保留以便未来接入完整设置
-        settings_widget = SettingsPlaceholderWidget()
+        # 用 FluentWidgets SettingCard 系列组件实现的真实设置页
+        settings_widget = SettingsWidget()
         settings_widget.setObjectName("settings_page")
+        settings_widget.theme_change_requested.connect(self.change_app_theme)
         self.addSubInterface(
             settings_widget, FIF.SETTING, "设置",
             position=NavigationItemPosition.BOTTOM
@@ -1077,15 +1190,32 @@ class MainWindow(FluentWindow):
             self.switchTo(self.modules[module_name])
 
     def change_app_theme(self, theme):
-        """切换应用主题（light/dark）"""
+        """切换应用主题（light/dark）。
+
+        流程：
+        1. 先切换 FluentWidgets 主题（setTheme）—— 这会自动刷新所有
+           FluentWidgets 组件（ComboBox/PushButton/SettingCard/...）的颜色；
+        2. 再通知各页面 apply_theme() 刷新自定义 widget 的硬编码颜色
+           （QScrollArea 背景、QLabel 颜色、CollapsibleCard 等）。
+        """
+        if theme not in ("light", "dark"):
+            return
         self.current_theme = theme
         self.apply_theme(theme)
 
+        # 先刷新设置页（主题下拉框需要反向同步当前主题）
         if "设置" in self.modules:
-            self.modules["设置"].apply_theme(theme)
+            try:
+                self.modules["设置"].apply_theme(theme)
+            except Exception as e:
+                print(f"⚠️ 设置页主题切换失败: {e}")
 
+        # 主页（卡片、滚动区背景）
         if "主页" in self.modules:
-            self.modules["主页"].apply_theme(theme)
+            try:
+                self.modules["主页"].apply_theme(theme)
+            except Exception as e:
+                print(f"⚠️ 主页主题切换失败: {e}")
 
         # 各传感器模块若支持主题切换则一并刷新
         for name, widget in self.modules.items():

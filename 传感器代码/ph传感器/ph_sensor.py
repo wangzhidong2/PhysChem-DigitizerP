@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -37,6 +37,7 @@ from core import (
     load_sensor_config, save_sensor_config, _get_config_file_path,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, ExpandableTextEdit,
+    scroll_area_style, page_bg_style, apply_module_theme,
 )
 
 
@@ -169,17 +170,16 @@ class PhSensorWidget(QWidget):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: #f3f3f3; }")
+        scroll.setStyleSheet(scroll_area_style())
 
         content = QWidget()
-        content.setStyleSheet("background: #f3f3f3;")
+        content.setStyleSheet(page_bg_style())
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 20, 24, 24)
         layout.setSpacing(16)
 
-        title = QLabel("pH")
-        title.setFont(QFont("Microsoft YaHei", 28, QFont.Weight.Bold))
-        title.setStyleSheet("color: #1a1a1a; margin-bottom: 4px;")
+        # 页面标题：用 TitleLabel 自动适配主题
+        title = TitleLabel("pH")
         layout.addWidget(title)
 
         # ========== 卡片1：连接控制（可折叠） ==========
@@ -679,3 +679,13 @@ class PhSensorWidget(QWidget):
 
             QMessageBox.information(self, "成功",
                                    "校准参数已更新并保存！\n新的校准曲线将立即生效。\n下次启动程序时会自动加载此配置。")
+
+    def apply_theme(self, theme):
+        """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
+        apply_module_theme(self, theme)
+        try:
+            from qfluentwidgets import isDarkTheme
+            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
+            self.canvas.draw()
+        except Exception:
+            pass

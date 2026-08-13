@@ -37,6 +37,8 @@ from PySide6.QtGui import (
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
     LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
+    TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
+    isDarkTheme, qconfig,
 )
 
 import serial
@@ -582,11 +584,18 @@ class FloatingDataPanel(QWidget):
         return None
 
     def paintEvent(self, e):
-        """绘制半透明白色圆角背景"""
+        """绘制半透明圆角背景，颜色随主题切换。"""
+        c = _theme_colors()
+        if isDarkTheme():
+            bg = QColor(45, 45, 45, 245)
+            border = QColor("#5d5d5d")
+        else:
+            bg = QColor(255, 255, 255, 245)
+            border = QColor("#b0b0b0")
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(QBrush(QColor(255, 255, 255, 245)))
-        painter.setPen(QPen(QColor("#b0b0b0"), 1))
+        painter.setBrush(QBrush(bg))
+        painter.setPen(QPen(border, 1))
         path = QPainterPath()
         path.addRoundedRect(0.5, 0.5, self.width() - 1, self.height() - 1, 8, 8)
         painter.drawPath(path)
@@ -724,9 +733,8 @@ class CollapsibleCard(QWidget):
         header_layout.setContentsMargins(24, 14, 24, 14)
         header_layout.setSpacing(8)
 
-        self.title_label = QLabel(title)
-        self.title_label.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
-        self.title_label.setStyleSheet("color: #1a1a1a;")
+        # 用 SubtitleLabel 替代手写 QLabel，自动随 FluentWidgets 主题切换文字颜色
+        self.title_label = SubtitleLabel(title)
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
 
@@ -736,7 +744,7 @@ class CollapsibleCard(QWidget):
             self.fullscreen_hint = QLabel("全屏查看图表")
             self.fullscreen_hint.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
             self.fullscreen_hint.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.fullscreen_hint.setStyleSheet("color: #0078d4; padding: 0 2px;")
+            self.fullscreen_hint.setObjectName("card_accent_text")
             self.fullscreen_hint.mouseReleaseEvent = lambda e: (
                 self.toggle_fullscreen()
                 if e.button() == Qt.MouseButton.LeftButton else None)
@@ -746,22 +754,13 @@ class CollapsibleCard(QWidget):
             self.fullscreen_btn.setFixedSize(28, 28)
             self.fullscreen_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.fullscreen_btn.setToolTip("全屏显示 / 退出全屏")
-            self.fullscreen_btn.setStyleSheet("""
-                QPushButton {
-                    background: transparent;
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 16px;
-                    color: #0078d4;
-                }
-                QPushButton:hover { background: #f0f0f0; color: #0078d4; }
-            """)
+            self.fullscreen_btn.setObjectName("card_accent_btn")
             self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
             header_layout.addWidget(self.fullscreen_btn)
 
         self.arrow_label = QLabel("▲" if expanded else "▼")
         self.arrow_label.setFont(QFont("Microsoft YaHei", 12))
-        self.arrow_label.setStyleSheet("color: #666666;")
+        self.arrow_label.setObjectName("card_arrow")
         header_layout.addWidget(self.arrow_label)
 
         self.header.clicked.connect(self._toggle)
@@ -773,6 +772,9 @@ class CollapsibleCard(QWidget):
         layout.addWidget(self._content_widget, 1)
         self._content_widget.setVisible(expanded)
 
+        # 应用一次主题样式（标题色、箭头色、全屏按钮色等）
+        self._apply_theme_style()
+
     def set_chart_min_height(self, height):
         """设置图表内容区的最小高度（用于加高图表卡片）。
 
@@ -781,6 +783,40 @@ class CollapsibleCard(QWidget):
         """
         self._chart_min_height = height
         self._content_widget.setMinimumHeight(height)
+
+    def apply_theme(self, theme):
+        """主题切换时刷新卡片内部硬编码颜色（箭头、全屏按钮等）。
+
+        title_label 用 SubtitleLabel，会自动随 FluentWidgets 主题更新；
+        但全屏按钮、全屏提示文字、箭头是用 QLabel/QPushButton + 硬编码
+        QSS 画的，需要在这里手动刷新。
+        """
+        self._apply_theme_style()
+        # 内容区里的卡片（QWidget#card）样式表也需要刷新
+        # 通过查找子 widget 并刷新同名样式表即可，但更稳的做法是让
+        # 外层模块自己刷新——这里只负责卡片自身 header。
+
+    def _apply_theme_style(self):
+        """按当前主题刷新 header 内的箭头、全屏按钮、全屏提示文字颜色。"""
+        c = _theme_colors()
+        # 箭头：使用次要文字色
+        self.arrow_label.setStyleSheet(
+            f"color: {c['text_secondary']}; background: transparent;")
+        # 全屏提示文字与按钮：使用强调色
+        if hasattr(self, 'fullscreen_hint'):
+            self.fullscreen_hint.setStyleSheet(
+                f"color: {c['accent']}; padding: 0 2px; background: transparent;")
+        if hasattr(self, 'fullscreen_btn'):
+            self.fullscreen_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 16px;
+                    color: {c['accent']};
+                }}
+                QPushButton:hover {{ background: {c['hover_bg']}; color: {c['accent']}; }}
+            """)
 
     def sizeHint(self):
         hint = super().sizeHint()
@@ -797,11 +833,16 @@ class CollapsibleCard(QWidget):
         return hint
 
     def paintEvent(self, e):
-        """直接用 QPainter 绘制白色圆角背景，绕过样式表级联覆盖。"""
+        """直接用 QPainter 绘制圆角背景，绕过样式表级联覆盖。
+
+        颜色按当前 FluentWidgets 主题切换：亮色画白底浅灰边，
+        暗色画深灰底深灰边，与 FluentWidgets 自带卡片视觉一致。
+        """
+        c = _theme_colors()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(QBrush(QColor("#ffffff")))
-        painter.setPen(QPen(QColor("#e5e5e5"), 1))
+        painter.setBrush(QBrush(QColor(c['card_bg'])))
+        painter.setPen(QPen(QColor(c['card_border']), 1))
         path = QPainterPath()
         path.addRoundedRect(0.5, 0.5, self.width() - 1, self.height() - 1, 8, 8)
         painter.drawPath(path)
@@ -1099,8 +1140,176 @@ class CollapsibleCard(QWidget):
 # ============================================================
 # 共享样式 — 现代化风格
 # ============================================================
+def _theme_colors():
+    """返回当前主题对应的常用颜色字典。
+
+    用 isDarkTheme() 判断 FluentWidgets 当前主题，返回一组配套颜色，
+    避免在样式表里硬编码 #ffffff/#1a1a1a 等亮色值——这些在暗色主题下
+    会变成"白底白字"或刺眼的高对比块。
+
+    Returns:
+        dict: 颜色键值对，键为语义名（page_bg/card_bg/text_primary/...）
+    """
+    if isDarkTheme():
+        return {
+            'page_bg':     '#202020',
+            'card_bg':     '#2d2d2d',
+            'card_border': '#404040',
+            'text_primary':'#ffffff',
+            'text_secondary':'#c0c0c0',
+            'text_hint':   '#888888',
+            'accent':      '#60cdff',
+            'accent_hover':'#7dd8ff',
+            'input_bg':    '#2d2d2d',
+            'hover_bg':    '#3d3d3d',
+            'pressed_bg':  '#454545',
+            'separator':   '#3a3a3a',
+        }
+    return {
+        'page_bg':     '#f3f3f3',
+        'card_bg':     '#ffffff',
+        'card_border': '#e5e5e5',
+        'text_primary':'#1a1a1a',
+        'text_secondary':'#444444',
+        'text_hint':   '#888888',
+        'accent':      '#0078d4',
+        'accent_hover':'#106ebe',
+        'input_bg':    '#ffffff',
+        'hover_bg':    '#f0f0f0',
+        'pressed_bg':  '#e5e5e5',
+        'separator':   '#ebebeb',
+    }
+
+
+def page_bg_style():
+    """页面（QScrollArea 内层 content widget）的背景样式，适配当前主题。"""
+    c = _theme_colors()
+    return f"background: {c['page_bg']};"
+
+
+def scroll_area_style():
+    """QScrollArea 的边框/背景样式，适配当前主题。"""
+    c = _theme_colors()
+    return f"QScrollArea {{ border: none; background: {c['page_bg']}; }}"
+
+
+def apply_module_theme(widget, theme=None):
+    """刷新传感器模块 widget 内所有与主题相关的硬编码样式。
+
+    传感器模块的 init_ui 在加载时按当前主题生成 QSS（如 `background: #f3f3f3;`），
+    主题切换后这些 QSS 不会自动更新。本函数递归查找模块 widget 内的：
+      - QScrollArea：重新应用 scroll_area_style()
+      - 直接子 QWidget（页面 content）：重新应用 page_bg_style()
+      - objectName=='card' 的 QWidget：重新应用 card_style()
+      - CollapsibleCard：调用其 apply_theme(theme) 刷新 header 颜色
+      - QLabel / QLineEdit / QFrame：把样式表里的硬编码文字色（#1a1a1a/#444/#888）
+        按当前主题替换为语义色（亮→暗用浅色，暗→亮还原为深色）
+    并触发一次全树 polish，让 FluentWidgets 子组件重新读取主题色。
+
+    实现要点：第一次调用时把每个控件的原始 QSS 缓存到 dynamic property
+    `_orig_qss`，后续主题切换始终从原始 QSS 重新派生，避免反复替换导致
+    "切回亮色后仍是浅色字"的问题。
+
+    Args:
+        widget: 传感器模块的根 QWidget（self）
+        theme: 'light' / 'dark' / None。None 时按当前 FluentWidgets 主题
+               （isDarkTheme()）刷新——这是推荐用法，因为 setTheme 已经
+               在调用方先执行，isDarkTheme() 能反映新主题。
+    """
+    from PySide6.QtWidgets import (
+        QScrollArea, QWidget as _QW, QLabel as _QLabel,
+        QLineEdit as _QLineEdit, QFrame as _QFrame,
+    )
+
+    c = _theme_colors()
+    dark = isDarkTheme()
+    # 亮色硬编码色 → 暗色语义色
+    light_to_dark = {
+        '#1a1a1a': c['text_primary'],
+        '#1A1A1A': c['text_primary'],
+        '#444444': c['text_secondary'],
+        '#444':    c['text_secondary'],
+        '#666666': c['text_secondary'],
+        '#888888': c['text_hint'],
+        '#888':    c['text_hint'],
+        '#999999': c['text_hint'],
+        '#999':    c['text_hint'],
+        '#fafafa': c['card_bg'],
+        '#f5f5f5': c['card_bg'],
+        '#f0f0f0': c['hover_bg'],
+        '#e5e5e5': c['card_border'],
+        '#ebebeb': c['separator'],
+        '#ececec': c['card_border'],
+        '#d0d0d0': c['card_border'],
+        '#b0b0b0': c['card_border'],
+        '#333333': c['text_secondary'],
+        '#333':    c['text_secondary'],
+    }
+
+    def _derive_qss(orig_qss: str) -> str:
+        """从原始 QSS 派生当前主题的 QSS。"""
+        if not orig_qss:
+            return orig_qss
+        if dark:
+            out = orig_qss
+            for old, new in light_to_dark.items():
+                out = out.replace(old, new)
+            return out
+        # 亮色：直接用原始 QSS
+        return orig_qss
+
+    # 1. 递归刷新 QScrollArea 与 QWidget#card 的样式表，并 remap QLabel/QLineEdit/QFrame 颜色
+    def _refresh(w):
+        if isinstance(w, QScrollArea):
+            w.setStyleSheet(scroll_area_style())
+        if isinstance(w, _QW) and w.objectName() == 'card':
+            w.setStyleSheet(card_style())
+        # CollapsibleCard 自己有 apply_theme，单独调用
+        if isinstance(w, CollapsibleCard):
+            try:
+                w.apply_theme(theme or ('dark' if dark else 'light'))
+            except Exception:
+                pass
+        for child in w.findChildren(_QW):
+            if isinstance(child, (QScrollArea,)):
+                _refresh(child)
+            elif child.objectName() == 'card':
+                _refresh(child)
+            elif isinstance(child, CollapsibleCard):
+                _refresh(child)
+            elif isinstance(child, (_QLabel, _QLineEdit, _QFrame)):
+                # 第一次：缓存原始 QSS；后续：从原始 QSS 派生
+                orig = child.property('_orig_qss')
+                if orig is None:
+                    orig = child.styleSheet() or ''
+                    child.setProperty('_orig_qss', orig)
+                new_qss = _derive_qss(orig)
+                if new_qss != child.styleSheet():
+                    child.setStyleSheet(new_qss)
+
+    _refresh(widget)
+
+    # 2. 找到模块内最外层的 QScrollArea，刷新其 content widget（页面背景）
+    scrolls = widget.findChildren(QScrollArea)
+    for s in scrolls:
+        content = s.widget()
+        if content is not None:
+            content.setStyleSheet(page_bg_style())
+
+    # 3. unpolish/polish 触发 FluentWidgets 子组件重读主题色
+    try:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            # 让 widget 及子 widget 的样式重算
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+    except Exception:
+        pass
+
+
 def card_style():
-    """卡片容器样式（浅色主题）。
+    """卡片容器样式（适配当前主题）。
 
     注意：页面容器常写 `content.setStyleSheet("background: #f3f3f3;")`，
     该无选择器的样式表会级联到所有子 widget，导致卡片内的中间容器
@@ -1109,15 +1318,16 @@ def card_style():
     背景置透明，使其透出卡片白色底；各控件（ComboBox/TextEdit/
     QPushButton 等）自身的样式表优先级更高，不受影响。
     """
-    return """
-        QWidget#card {
-            background-color: #ffffff;
-            border: 1px solid #e5e5e5;
+    c = _theme_colors()
+    return f"""
+        QWidget#card {{
+            background-color: {c['card_bg']};
+            border: 1px solid {c['card_border']};
             border-radius: 8px;
-        }
-        QWidget#card QWidget {
+        }}
+        QWidget#card QWidget {{
             background-color: transparent;
-        }
+        }}
         QWidget#card QComboBox,
         QWidget#card QTextEdit,
         QWidget#card QPlainTextEdit,
@@ -1128,36 +1338,40 @@ def card_style():
         QWidget#card QTreeView,
         QWidget#card QTableView,
         QWidget#card QScrollArea,
-        QWidget#card QAbstractScrollArea {
-            background-color: #ffffff;
-        }
+        QWidget#card QAbstractScrollArea {{
+            background-color: {c['input_bg']};
+        }}
     """
 
 
 def primary_btn_style():
     """主操作按钮样式（蓝色填充）"""
-    return """
-        QPushButton {
-            background-color: #0078d4;
+    c = _theme_colors()
+    return f"""
+        QPushButton {{
+            background-color: {c['accent']};
             border: none;
             color: white;
             border-radius: 6px;
             font-size: 13px;
             padding: 0 16px;
-        }
-        QPushButton:hover { background-color: #106ebe; }
-        QPushButton:pressed { background-color: #005a9e; }
-        QPushButton:disabled { background-color: #cccccc; color: #888888; }
+        }}
+        QPushButton:hover {{ background-color: {c['accent_hover']}; }}
+        QPushButton:pressed {{ background-color: {c['accent']}; }}
+        QPushButton:disabled {{ background-color: #cccccc; color: #888888; }}
     """
 
 
 def accent_btn_style(normal, hover, pressed):
     """次操作按钮样式（自定义颜色，带边框）"""
+    c = _theme_colors()
+    border = c['card_border']
+    text = c['text_primary']
     return f"""
         QPushButton {{
             background-color: {normal};
-            border: 1px solid #d0d0d0;
-            color: #1a1a1a;
+            border: 1px solid {border};
+            color: {text};
             border-radius: 6px;
             font-size: 13px;
             padding: 0 16px;
