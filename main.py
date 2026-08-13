@@ -37,7 +37,7 @@ from qfluentwidgets import (
     Theme, setTheme, PushButton, PrimaryPushButton,
     ComboBox, InfoBar, InfoBarPosition, BodyLabel,
     TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
-    SettingCard, SettingCardGroup, qconfig, isDarkTheme,
+    SettingCard, SettingCardGroup, isDarkTheme,
 )
 
 # 公共模块（与各传感器模块共享）
@@ -938,7 +938,7 @@ class SettingsWidget(QWidget):
 
     用 FluentWidgets 的 SettingCardGroup + SettingCard 系列组件搭建，
     样式自动适配亮/暗主题。当前包含三组：
-    - 个性化：应用主题（亮色/暗色/跟随系统）
+    - 个性化：应用主题（亮色可用；深色模式 / 跟随系统开发中）
     - 关于：项目名、版本、许可证、源码仓库
     - 反馈：issue 链接
     """
@@ -949,11 +949,13 @@ class SettingsWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        self._theme_combo_items = ["亮色", "暗色", "跟随系统"]
+        # 深色模式 / 跟随系统暂未完成（字体颜色有问题），先只做浅色；
+        # 后两项仅占位，灰显不可点击并标注「（开发中）」。
+        self._theme_combo_items = ["亮色", "深色模式", "跟随系统"]
         self._theme_combo_values = ["light", "dark", "auto"]
         self.init_ui()
-        # 同步初始主题选项
-        self._sync_theme_combo_from_current()
+        # 仅支持浅色：固定选中亮色
+        self._theme_combo.setCurrentIndex(0)
 
     def init_ui(self):
         outer = QVBoxLayout(self)
@@ -1015,11 +1017,21 @@ class SettingsWidget(QWidget):
         outer.addWidget(self._scroll)
 
     def _build_theme_card(self, parent):
-        """主题切换卡片：自定义 SettingCard，内嵌一个 ComboBox。"""
-        card = SettingCard(FIF.PALETTE, "应用主题", "切换亮色 / 暗色 / 跟随系统", parent)
+        """主题切换卡片：自定义 SettingCard，内嵌一个 ComboBox。
+
+        深色模式 / 跟随系统尚未完成，仅作占位：禁用且标注「（开发中）」，
+        当前只允许选择亮色。
+        """
+        card = SettingCard(FIF.PALETTE, "应用主题",
+                           "切换亮色 / 深色模式 / 跟随系统", parent)
         combo = ComboBox(card)
         combo.addItems(self._theme_combo_items)
-        combo.setMinimumWidth(140)
+        combo.setMinimumWidth(160)
+        # 占位项灰显不可点击 + 标注开发中
+        combo.setItemEnabled(1, False)  # 深色模式
+        combo.setItemEnabled(2, False)  # 跟随系统
+        combo.setItemText(1, "深色模式（开发中）")
+        combo.setItemText(2, "跟随系统（开发中）")
         combo.currentIndexChanged.connect(self._on_theme_combo_changed)
         card.hBoxLayout.addWidget(combo)
         card.hBoxLayout.addSpacing(16)
@@ -1050,6 +1062,9 @@ class SettingsWidget(QWidget):
     def _on_theme_combo_changed(self, idx: int):
         if not (0 <= idx < len(self._theme_combo_values)):
             return
+        # 占位项（深色模式 / 跟随系统）已被禁用，不应触发；防御性忽略。
+        if not self._theme_combo.items[idx].isEnabled:
+            return
         mode = self._theme_combo_values[idx]
         if mode == "auto":
             # 跟随系统：交给 FluentWidgets 处理 AUTO 主题
@@ -1061,17 +1076,11 @@ class SettingsWidget(QWidget):
             self.theme_change_requested.emit(mode)
 
     def _sync_theme_combo_from_current(self):
-        """根据当前 FluentWidgets 主题，反向同步下拉框选项。"""
-        try:
-            t = qconfig.theme
-        except Exception:
-            return
-        if t == Theme.AUTO:
-            self._theme_combo.setCurrentIndex(2)
-        elif t == Theme.DARK:
-            self._theme_combo.setCurrentIndex(1)
-        else:
-            self._theme_combo.setCurrentIndex(0)
+        """根据当前 FluentWidgets 主题，反向同步下拉框选项。
+
+        当前仅支持浅色，始终选中亮色；深色 / 跟随系统为占位项不选中。
+        """
+        self._theme_combo.setCurrentIndex(0)
 
     def apply_theme(self, theme):
         """主题切换时刷新本页背景与下拉框同步。"""
