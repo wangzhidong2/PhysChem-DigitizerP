@@ -945,7 +945,7 @@ class SettingsWidget(QWidget):
 
     theme_change_requested = Signal(str)  # 'light' / 'dark'
 
-    APP_VERSION = "1.0.0"
+    APP_VERSION = "1.3"
 
     def __init__(self):
         super().__init__()
@@ -984,11 +984,11 @@ class SettingsWidget(QWidget):
         # ===== 关于分组 =====
         group_about = SettingCardGroup("关于", self._content)
         group_about.addSettingCard(self._build_about_card(
-            FIF.APPLICATION, "应用名称", "PhysChem-DigitizerP",
-            "低成本理化实验数字化采集系统"))
+            FIF.APPLICATION, "应用名称", "PhysChem-DigitizerP"))
         group_about.addSettingCard(self._build_about_card(
-            FIF.INFO, "版本", f"v{self.APP_VERSION}",
-            "基于 PySide6 + FluentWidgets + Arduino/ESP32"))
+            FIF.INFO, "版本", f"v{self.APP_VERSION}"))
+        group_about.addSettingCard(self._build_about_card(
+            FIF.COPY, "版权", "Copyright © 2026 wangzhidong2"))
         group_about.addSettingCard(self._build_about_card(
             FIF.CERTIFICATE, "开源许可证", "GPL-3.0-only",
             "本应用遵循 GPL-3.0-only 协议开源"))
@@ -1000,8 +1000,11 @@ class SettingsWidget(QWidget):
             FIF.GITHUB, "GitHub 仓库", "wangzhidong2/PhysChem-DigitizerP",
             "https://github.com/wangzhidong2/PhysChem-DigitizerP"))
         group_repo.addSettingCard(self._build_link_card(
-            FIF.GITHUB, "Gitee 仓库", "wangzhidong2/PhysChem-DigitizerP",
+            FIF.CODE, "Gitee 仓库", "wangzhidong2/PhysChem-DigitizerP",
             "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"))
+        group_repo.addSettingCard(self._build_link_card(
+            FIF.CODE, "GitCode 仓库", "wangzhidong2/PhysChem-DigitizerP",
+            "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"))
         group_repo.addSettingCard(self._build_link_card(
             FIF.FEEDBACK, "问题反馈", "提交 Issue / 功能建议",
             "https://github.com/wangzhidong2/PhysChem-DigitizerP/issues"))
@@ -1023,8 +1026,8 @@ class SettingsWidget(QWidget):
         self._theme_combo = combo
         return card
 
-    def _build_about_card(self, icon, title, value, content):
-        """只读信息卡片：右侧显示 value 文本"""
+    def _build_about_card(self, icon, title, value, content=None):
+        """只读信息卡片：右侧显示 value 文本，content 为副标题（可选）"""
         card = SettingCard(icon, title, content)
         value_lbl = BodyLabel(value)
         # 次要文字色，比标题弱一档
