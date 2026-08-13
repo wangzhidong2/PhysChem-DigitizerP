@@ -951,7 +951,7 @@ class SettingsWidget(QWidget):
         super().__init__()
         # 深色模式 / 跟随系统暂未完成（字体颜色有问题），先只做浅色；
         # 后两项仅占位，灰显不可点击并标注「（开发中）」。
-        self._theme_combo_items = ["亮色", "深色模式", "跟随系统"]
+        self._theme_combo_items = ["浅色模式", "深色模式", "跟随系统"]
         self._theme_combo_values = ["light", "dark", "auto"]
         self.init_ui()
         # 仅支持浅色：固定选中亮色
