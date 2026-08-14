@@ -37,7 +37,7 @@ from qfluentwidgets import (
     Theme, setTheme, PushButton, PrimaryPushButton,
     ComboBox, InfoBar, InfoBarPosition, BodyLabel,
     TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
-    SettingCard, SettingCardGroup, isDarkTheme,
+    SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
 )
 
 # 公共模块（与各传感器模块共享）
@@ -996,20 +996,32 @@ class SettingsWidget(QWidget):
             "本应用遵循 GPL-3.0-only 协议开源"))
         layout.addWidget(group_about)
 
+        # ===== 开源信息（可折叠卡片） =====
+        layout.addWidget(self._build_open_source_card())
+
         # ===== 源码与反馈分组 =====
+        # 自绘 Gitee / GitCode logo（FluentWidgets 没有内置）
+        _img_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs", "images")
+        gitee_icon = self._load_icon(os.path.join(_img_dir, "gitee.svg")) or FIF.CODE
+        gitcode_icon = self._load_icon(os.path.join(_img_dir, "gitcode.svg")) or FIF.CODE
+
         group_repo = SettingCardGroup("源码 & 反馈", self._content)
-        group_repo.addSettingCard(self._build_link_card(
-            FIF.GITHUB, "GitHub 仓库", "wangzhidong2/PhysChem-DigitizerP",
+        group_repo.addSettingCard(self._build_repo_card(
+            FIF.GITHUB, "GitHub 仓库",
             "https://github.com/wangzhidong2/PhysChem-DigitizerP"))
-        group_repo.addSettingCard(self._build_link_card(
-            FIF.CODE, "Gitee 仓库", "wangzhidong2/PhysChem-DigitizerP",
+        group_repo.addSettingCard(self._build_repo_card(
+            gitee_icon, "Gitee 仓库",
             "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"))
-        group_repo.addSettingCard(self._build_link_card(
-            FIF.CODE, "GitCode 仓库", "wangzhidong2/PhysChem-DigitizerP",
+        group_repo.addSettingCard(self._build_repo_card(
+            gitcode_icon, "GitCode 仓库",
             "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"))
-        group_repo.addSettingCard(self._build_link_card(
-            FIF.FEEDBACK, "问题反馈", "提交 Issue / 功能建议",
-            "https://github.com/wangzhidong2/PhysChem-DigitizerP/issues"))
+        group_repo.addSettingCard(self._build_feedback_card(
+            FIF.FEEDBACK, "问题反馈", "提交 Issue / 功能建议", [
+                ("GitHub Issue",
+                 "https://github.com/wangzhidong2/PhysChem-DigitizerP/issues"),
+                ("GitCode Issue",
+                 "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/issues"),
+            ]))
         layout.addWidget(group_repo)
 
         layout.addStretch()
@@ -1049,14 +1061,104 @@ class SettingsWidget(QWidget):
         return card
 
     def _build_link_card(self, icon, title, content, url):
-        """带"访问"按钮的链接卡片"""
+        """带"访问"按钮的链接卡片（使用 PushButton 打开超链接）。"""
         card = SettingCard(icon, title, content)
-        link_btn = HyperlinkButton()
-        link_btn.setText("访问")
-        link_btn.setUrl(url)
+        link_btn = self._make_link_button("访问", url)
         link_btn.setFixedHeight(34)
         card.hBoxLayout.addWidget(link_btn)
         card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _build_repo_card(self, icon, title, url):
+        """仓库链接卡片：图标 + 标题 + "访问" PushButton。"""
+        card = SettingCard(icon, title, url)
+        btn = self._make_link_button("访问", url)
+        btn.setFixedHeight(34)
+        card.hBoxLayout.addWidget(btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _build_feedback_card(self, icon, title, content, links):
+        """反馈卡片：支持多个按钮（如 GitHub Issue / GitCode Issue）。
+
+        Args:
+            links: list of (btn_text, url)
+        """
+        card = SettingCard(icon, title, content)
+        for btn_text, url in links:
+            btn = self._make_link_button(btn_text, url)
+            btn.setFixedHeight(34)
+            card.hBoxLayout.addWidget(btn)
+            card.hBoxLayout.addSpacing(8)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    @staticmethod
+    def _load_icon(path):
+        """从本地图片加载 QIcon，失败返回 None。"""
+        try:
+            from PySide6.QtGui import QPixmap
+            pix = QPixmap(path)
+            if not pix.isNull():
+                return QIcon(pix)
+        except Exception:
+            pass
+        return None
+
+    def _make_link_button(self, text, url):
+        """带超链接的 PushButton：点击用 webbrowser 打开 url。"""
+        btn = PushButton(text)
+        if url:
+            btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
+        return btn
+
+    def _build_open_source_card(self):
+        """开源信息可折叠卡片：展示本项目依赖的开源库、协议与官网。
+
+        使用 FluentWidgets 原生的 ExpandGroupSettingCard，自动适配亮/暗主题，
+        自带展开/折叠箭头。每个库一行：图标 + 名称 + 协议/用途描述 + 访问按钮。
+        """
+        card = ExpandGroupSettingCard(
+            FIF.HEART, "开源信息",
+            "本项目依赖的开源库、协议与官网，点击展开查看详情")
+
+        # 依赖的开源库（名称, 协议, 用途, 官网/仓库链接）
+        for lib_name, lib_license, lib_purpose, lib_url in (
+            ("PySide6", "LGPLv3 / 商业双协议", "Qt for Python 图形界面框架",
+             "https://www.qt.io/"),
+            ("PySide6-Fluent-Widgets", "GPLv3 / 商业双协议",
+             "WinUI3 风格组件库（主窗口基于 FluentWindow）",
+             "https://qfluentwidgets.com/"),
+            ("pyserial", "Python Software Foundation License",
+             "串口通信", "https://github.com/pyserial/pyserial"),
+            ("matplotlib", "Matplotlib License (PSF based)",
+             "数据可视化", "https://matplotlib.org/"),
+            ("numpy", "BSD 3-Clause License",
+             "数值计算", "https://numpy.org/"),
+            ("bleak", "MIT License",
+             "BLE 无线通信（可选依赖）",
+             "https://github.com/hbldh/bleak"),
+        ):
+            link_btn = self._make_link_button("访问", lib_url)
+            content = f"{lib_license} · {lib_purpose}"
+            card.addGroup(FIF.CODE, lib_name, content, link_btn)
+
+        # 分组分隔：协议链接
+        for proto_name, proto_url, proto_desc in (
+            ("PhysChem-DigitizerP 协议",
+             "https://github.com/wangzhidong2/PhysChem-DigitizerP/blob/main/LICENSE",
+             "GPL-3.0-only · 本应用遵循此协议开源"),
+            ("PySide6 许可证",
+             "https://www.qt.io/licensing/",
+             "LGPLv3 / 商业双协议 · Qt 官方授权说明"),
+            ("Fluent-Widgets 许可证",
+             "https://github.com/zhiyiYo/PyQt-Fluent-Widgets/blob/main/LICENSE",
+             "GPLv3 / 商业双协议 · 组件库授权说明"),
+        ):
+            link_btn = self._make_link_button("查看", proto_url)
+            card.addGroup(FIF.CERTIFICATE, proto_name, proto_desc, link_btn)
+
+        self._open_source_card = card
         return card
 
     def _on_theme_combo_changed(self, idx: int):
