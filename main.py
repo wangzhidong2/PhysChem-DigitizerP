@@ -232,49 +232,48 @@ def scan_modules(modules_dir):
 # 主页
 # ============================================================
 class HomePageWidget(QWidget):
-    """主页面 - 现代化风格卡片布局（动态接收模块列表）"""
+    """主页面 - 基于 FluentWidgets 原生可折叠卡片（ExpandGroupSettingCard）"""
 
     module_clicked = Signal(str)
 
-    CARD_STYLE = """
-        QWidget#card {
-            background-color: #ffffff;
+    # 卡片统一白色背景样式（覆盖 ExpandSettingCard 默认半透明灰）
+    CARD_QSS = """
+        ExpandSettingCard {
             border: 1px solid #e5e5e5;
             border-radius: 8px;
+            background-color: #ffffff !important;
         }
-        QWidget#card QWidget {
-            background-color: transparent;
-        }
-        QWidget#card QComboBox,
-        QWidget#card QTextEdit,
-        QWidget#card QPlainTextEdit,
-        QWidget#card QSpinBox,
-        QWidget#card QDoubleSpinBox,
-        QWidget#card QLineEdit,
-        QWidget#card QListView,
-        QWidget#card QTreeView,
-        QWidget#card QTableView,
-        QWidget#card QScrollArea,
-        QWidget#card QAbstractScrollArea {
-            background-color: #ffffff;
-        }
-    """
-
-    CARD_HOVER_STYLE = """
-        QPushButton#module_item {
-            background-color: transparent;
+        ExpandSettingCard > #view {
+            background: #ffffff !important;
             border: none;
-            border-radius: 6px;
-            text-align: left;
-            padding: 12px 16px;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
         }
-        QPushButton#module_item:hover { background-color: #f0f0f0; }
-        QPushButton#module_item:pressed { background-color: #e5e5e5; }
+        ExpandSettingCard > #scrollWidget {
+            border: none;
+            background-color: #ffffff !important;
+        }
+        /* 内容物容器继承卡片白色（默认是 #f3f3f3 浅灰） */
+        ExpandSettingCard #view GroupWidget,
+        ExpandSettingCard #view GroupSeparator,
+        ExpandSettingCard #view SettingIconWidget,
+        ExpandSettingCard #view QWidget#scrollWidget {
+            background-color: #ffffff !important;
+            border: none;
+        }
+        /* BodyLabel 默认透明，但叠在浅灰容器上显灰，强制白底 */
+        ExpandSettingCard #view BodyLabel {
+            background-color: #ffffff !important;
+            border: none;
+        }
     """
 
     def __init__(self):
         super().__init__()
         self._modules = []  # [(icon, name, category), ...]
+        # 自绘 Gitee / GitCode logo（FluentWidgets 没有内置）
+        self._img_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "docs", "images")
         self.init_ui()
 
     def set_modules(self, modules):
@@ -298,8 +297,7 @@ class HomePageWidget(QWidget):
 
         self.content = QWidget()
         self.content.setObjectName("home_content")
-        self.content.setStyleSheet(
-            f"QWidget#home_content {{ background: {_theme_colors()['page_bg']}; }}")
+        self.content.setStyleSheet(page_bg_style())
         self.content_layout = QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(24, 16, 24, 18)
         self.content_layout.setSpacing(10)
@@ -308,135 +306,15 @@ class HomePageWidget(QWidget):
         title = TitleLabel("主页")
         self.content_layout.addWidget(title)
 
-        # ========== 卡片1：项目信息 ==========
-        card1 = QWidget()
-        card1.setObjectName("card")
-        card1.setStyleSheet(self.CARD_STYLE)
-        card1_layout = QVBoxLayout(card1)
-        card1_layout.setContentsMargins(24, 16, 24, 16)
-        card1_layout.setSpacing(10)
+        # ========== 项目信息卡片（不可折叠） ==========
+        info_card = self._build_info_card()
+        self._expand_and_lock(info_card)
 
-        # 顶部：标题区（左）+ 仓库按钮（右）
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(20)
+        # ========== 项目地址（可折叠卡片，默认展开） ==========
+        repo_card = self._build_repo_card()
+        self._default_expand(repo_card)
 
-        # 左：项目名（用 SubtitleLabel 自动适配主题）
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
-
-        app_name = SubtitleLabel("PhysChem-DigitizerP")
-        info_layout.addWidget(app_name)
-
-        header_row.addLayout(info_layout)
-        header_row.addStretch()
-
-        card1_layout.addLayout(header_row)
-
-        # 分隔线
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("color: #ebebeb;")
-        card1_layout.addWidget(separator)
-
-        # 项目简介
-        desc_label = QLabel(
-            "基于 Arduino/ESP32 的低成本理化实验数字化采集系统，"
-            "为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
-        )
-        desc_label.setWordWrap(True)
-        desc_label.setFont(QFont("Microsoft YaHei", 11))
-        desc_label.setStyleSheet("color: #444444; line-height: 1.6;")
-        card1_layout.addWidget(desc_label)
-
-        # 标签
-        tags_layout = QHBoxLayout()
-        tags_layout.setSpacing(8)
-        tags = [
-            ("GPL-3.0 开源", "#e8f5e9", "#2e7d32"),
-            ("教学实验", "#f3e5f5", "#7b1fa2"),
-            ("模块化架构", "#e3f2fd", "#1565c0"),
-        ]
-        for text, bg, fg in tags:
-            tag = QLabel(text)
-            tag.setFont(QFont("Microsoft YaHei", 9))
-            tag.setStyleSheet(f"""
-                background-color: {bg};
-                color: {fg};
-                border-radius: 10px;
-                padding: 4px 12px;
-            """)
-            tags_layout.addWidget(tag)
-        tags_layout.addStretch()
-        card1_layout.addLayout(tags_layout)
-
-        self.content_layout.addWidget(card1)
-
-        # ========== 卡片2：项目地址（可折叠，3 平台，可复制可访问） ==========
-        # 内容区（不含标题，标题由 CollapsibleCard 的 header 提供）
-        repo_content = QWidget()
-        repo_card_layout = QVBoxLayout(repo_content)
-        repo_card_layout.setContentsMargins(24, 4, 24, 14)
-        repo_card_layout.setSpacing(6)
-
-        repo_card_layout.addSpacing(2)
-
-        # 收集所有 url_edit 以便主题切换时刷新（它们用 _theme_colors() 预烘焙了 QSS）
-        self._url_edits = []
-
-        # 3 个平台 URL 行
-        repo_urls = [
-            ("GitHub",  "https://github.com/wangzhidong2/PhysChem-DigitizerP"),
-            ("Gitee",   "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"),
-            ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"),
-        ]
-        for i, (name, url) in enumerate(repo_urls):
-            row = QHBoxLayout()
-            row.setSpacing(10)
-
-            name_lbl = QLabel(name)
-            name_lbl.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-            name_lbl.setStyleSheet("color: #0078d4;")
-            name_lbl.setFixedWidth(64)
-            row.addWidget(name_lbl)
-
-            url_edit = QLineEdit(url)
-            url_edit.setReadOnly(True)
-            url_edit.setFont(QFont("Consolas", 10))
-            url_edit.setStyleSheet(self._url_edit_qss())
-            url_edit.setCursor(Qt.CursorShape.IBeamCursor)
-            url_edit.setToolTip("点击全选，Ctrl+C 复制")
-            row.addWidget(url_edit, stretch=1)
-            self._url_edits.append(url_edit)
-
-            copy_btn = PushButton("复制")
-            copy_btn.setFixedHeight(26)
-            copy_btn.setFixedWidth(64)
-            copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            copy_btn.clicked.connect(lambda _=False, u=url: self._copy_to_clipboard(u))
-            row.addWidget(copy_btn)
-
-            open_btn = PushButton("访问")
-            open_btn.setFixedHeight(26)
-            open_btn.setFixedWidth(64)
-            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            open_btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
-            row.addWidget(open_btn)
-
-            repo_card_layout.addLayout(row)
-
-            # 行间细分隔线（最后一行不画）
-            if i < len(repo_urls) - 1:
-                line = QFrame()
-                line.setFrameShape(QFrame.Shape.HLine)
-                line.setStyleSheet("color: #f0f0f0;")
-                repo_card_layout.addWidget(line)
-
-        # 用 CollapsibleCard 包裹，标题"项目地址"显示在 header，可点击折叠
-        repo_collapsible = CollapsibleCard("项目地址", repo_content, expanded=True)
-        self.content_layout.addWidget(repo_collapsible)
-
-        # 模块卡片容器（动态填充）
+        # ========== 传感器模块（动态填充可折叠卡片，默认展开） ==========
         self.modules_container = QWidget()
         self.modules_container_layout = QVBoxLayout(self.modules_container)
         self.modules_container_layout.setContentsMargins(0, 0, 0, 0)
@@ -447,8 +325,144 @@ class HomePageWidget(QWidget):
         self.scroll.setWidget(self.content)
         main_layout.addWidget(self.scroll)
 
+    def _apply_card_style(self, card):
+        """给 ExpandGroupSettingCard 应用统一白色背景样式。
+
+        样式表对某些 FluentWidgets 子组件（GroupWidget/SettingIconWidget 等）不生效，
+        因为它们用 paintEvent 直接绘制背景。所以除样式表外，再递归给所有子 QWidget
+        设置 autoFillBackground + 白色 palette，强制白底。
+        """
+        card.setStyleSheet(self.CARD_QSS)
+        try:
+            from PySide6.QtGui import QPalette, QColor
+            white = QPalette()
+            white.setColor(QPalette.ColorRole.Window, QColor("#ffffff"))
+            # 卡片自身
+            card.setAutoFillBackground(True)
+            card.setPalette(white)
+            # view + scrollWidget
+            for name in ("view", "scrollWidget"):
+                w = getattr(card, name, None)
+                if w is not None:
+                    w.setAutoFillBackground(True)
+                    w.setPalette(white)
+                    w.setStyleSheet("background-color: #ffffff; border: none;")
+            # 递归所有子 QWidget
+            for child in card.findChildren(QWidget):
+                # 保留标签自身的彩色背景（如 GPL-3.0 开源绿底）
+                if isinstance(child, QLabel) and child.styleSheet() and "background-color" in child.styleSheet():
+                    continue
+                child.setAutoFillBackground(True)
+                child.setPalette(white)
+        except Exception as e:
+            print(f"⚠️ _apply_card_style palette: {e}")
+        return card
+
+    def _build_info_card(self):
+        """项目信息卡片：项目名 + 简介 + 标签（不可折叠）。"""
+        card = ExpandGroupSettingCard(
+            FIF.HOME, "PhysChem-DigitizerP",
+            "基于 Arduino/ESP32 的低成本理化实验数字化采集系统")
+        self._apply_card_style(card)
+
+        # 项目简介（content 留空，避免与副标题重复的灰色注释）
+        desc = BodyLabel(
+            "为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
+            "采用模块化架构，新增传感器只需丢文件，无需修改主程序。"
+        )
+        desc.setWordWrap(True)
+        card.addGroup(FIF.INFO, "项目简介", "", desc)
+
+        # 标签
+        tags = QHBoxLayout()
+        tags.setSpacing(8)
+        for text, bg, fg in (
+            ("GPL-3.0 开源", "#e8f5e9", "#2e7d32"),
+            ("教学实验", "#f3e5f5", "#7b1fa2"),
+            ("模块化架构", "#e3f2fd", "#1565c0"),
+        ):
+            tag = QLabel(text)
+            tag.setFont(QFont("Microsoft YaHei", 9))
+            tag.setStyleSheet(f"""
+                background-color: {bg};
+                color: {fg};
+                border-radius: 10px;
+                padding: 4px 12px;
+            """)
+            tags.addWidget(tag)
+        tags.addStretch()
+
+        tags_widget = QWidget()
+        tags_widget.setLayout(tags)
+        card.addGroup(FIF.TAG, "标签", "", tags_widget)
+
+        self.content_layout.addWidget(card)
+        return card
+
+    def _load_platform_icon(self, svg_name, fallback=FIF.CODE):
+        """加载本地 SVG 平台 logo，失败回退 FluentIcon。"""
+        path = os.path.join(self._img_dir, svg_name)
+        pix = QPixmap(path)
+        if not pix.isNull():
+            return QIcon(pix)
+        return fallback
+
+    def _build_repo_card(self):
+        """项目地址可折叠卡片：3 平台 URL，可复制可访问。"""
+        gitee_icon = self._load_platform_icon("gitee.svg")
+        gitcode_icon = self._load_platform_icon("gitcode.svg")
+
+        card = ExpandGroupSettingCard(
+            FIF.LINK, "项目地址",
+            "GitHub / Gitee / GitCode 三平台仓库地址")
+        self._apply_card_style(card)
+
+        repo_urls = [
+            ("GitHub", "https://github.com/wangzhidong2/PhysChem-DigitizerP",
+             FIF.GITHUB),
+            ("Gitee", "https://gitee.com/wangzhidong2/PhysChem-DigitizerP",
+             gitee_icon),
+            ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP",
+             gitcode_icon),
+        ]
+
+        # 每个平台一行：URL 输入框（加宽完整显示）+ 复制按钮 + 访问按钮
+        for name, url, icon in repo_urls:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+
+            url_edit = QLineEdit(url)
+            url_edit.setReadOnly(True)
+            url_edit.setFont(QFont("Consolas", 10))
+            url_edit.setCursor(Qt.CursorShape.IBeamCursor)
+            url_edit.setMinimumWidth(420)  # 加宽，完整显示整个 URL
+            url_edit.setToolTip("点击全选，Ctrl+C 复制")
+            row.addWidget(url_edit, stretch=1)
+
+            copy_btn = PushButton("复制")
+            copy_btn.setFixedHeight(30)
+            copy_btn.setFixedWidth(64)
+            copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            copy_btn.clicked.connect(lambda _=False, u=url: self._copy_to_clipboard(u))
+            row.addWidget(copy_btn)
+
+            open_btn = PushButton("访问")
+            open_btn.setFixedHeight(30)
+            open_btn.setFixedWidth(64)
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            open_btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
+            row.addWidget(open_btn)
+
+            row_widget = QWidget()
+            row_widget.setLayout(row)
+            # content 留空，避免灰色重复注释
+            card.addGroup(icon, name, "", row_widget)
+
+        self.content_layout.addWidget(card)
+        return card
+
     def _rebuild_module_cards(self):
-        """根据 self._modules 重建模块卡片"""
+        """根据 self._modules 重建模块卡片（按物理/化学分组）。"""
         # 清空旧卡片
         while self.modules_container_layout.count():
             item = self.modules_container_layout.takeAt(0)
@@ -460,107 +474,79 @@ class HomePageWidget(QWidget):
         for icon, name, cat in self._modules:
             categories.setdefault(cat, []).append((icon, name))
 
-        # 物理和化学合并到一个可折叠卡片，用分割线隔开
         if categories:
-            card = self._create_combined_module_card(categories)
+            card = self._build_module_card(categories)
             self.modules_container_layout.addWidget(card)
 
-    def _create_combined_module_card(self, categories):
-        """创建合并了物理/化学模块的可折叠卡片。
+    def _build_module_card(self, categories):
+        """创建传感器模块可折叠卡片，按物理/化学分组。
 
-        各类别之间用水平分割线隔开，每个类别带小标题 + 模块网格。
+        每个模块一行：模块自己的图标文字 + 名称 + 进入按钮。
         """
-        # 类别显示名映射
+        card = ExpandGroupSettingCard(
+            FIF.MENU, "传感器模块",
+            "点击展开查看所有传感器模块")
+        self._apply_card_style(card)
+
         cat_names = {
             'physics': '物理实验模块',
             'chemistry': '化学实验模块',
         }
 
-        # 内容区
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(18, 4, 18, 12)
-        content_layout.setSpacing(0)
-
-        from PySide6.QtWidgets import QGridLayout
-
-        first = True
         for cat_key in ['physics', 'chemistry']:
             if cat_key not in categories or not categories[cat_key]:
                 continue
 
-            # 类别之间用分割线隔开（第一个类别前不画）
-            if not first:
-                sep = QFrame()
-                sep.setFrameShape(QFrame.Shape.HLine)
-                sep.setStyleSheet("color: #e5e5e5; background: transparent;")
-                content_layout.addWidget(sep)
-                content_layout.addSpacing(8)
-            first = False
-
             display_name = cat_names.get(cat_key, cat_key)
             mods = categories[cat_key]
 
-            # 类别小标题
-            cat_label = QLabel(display_name)
-            cat_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-            cat_label.setStyleSheet("color: #444444; background: transparent; margin-top: 4px;")
-            content_layout.addWidget(cat_label)
+            for icon_text, name in mods:
+                enter_btn = PushButton("进入")
+                enter_btn.setFixedHeight(30)
+                enter_btn.setFixedWidth(64)
+                enter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                enter_btn.clicked.connect(
+                    lambda _=False, n=name: self.on_module_clicked(n))
 
-            count_label = QLabel(f"{len(mods)} 个模块")
-            count_label.setFont(QFont("Microsoft YaHei", 9))
-            count_label.setStyleSheet("color: #999999; background: transparent; margin-bottom: 6px;")
-            content_layout.addWidget(count_label)
+                # 用模块自己的图标文字（icon_text）作为图标
+                module_icon = make_text_icon(icon_text, size=64)
+                content = f"{display_name} · {len(mods)} 个模块"
+                card.addGroup(module_icon, name, content, enter_btn)
 
-            grid = QGridLayout()
-            grid.setContentsMargins(0, 0, 0, 0)
-            grid.setSpacing(8)
+        # 模块卡片默认展开
+        self._default_expand(card)
+        return card
 
-            for i, (icon_text, name) in enumerate(mods):
-                row, col = divmod(i, 2)
-                item = self._create_grid_module_item(icon_text, name)
-                grid.addWidget(item, row, col)
+    @staticmethod
+    def _default_expand(card):
+        """默认展开可折叠卡片（保留折叠功能）。"""
+        try:
+            card.setExpand(True)
+        except Exception:
+            pass
 
-            content_layout.addLayout(grid)
-            content_layout.addSpacing(4)
+    @staticmethod
+    def _expand_and_lock(card):
+        """默认展开可折叠卡片，并隐藏折叠按钮使其不可折叠。
 
-        return CollapsibleCard("传感器模块", content, expanded=True)
-
-    def _create_grid_module_item(self, icon_text, name):
-        """创建网格内的单个模块项"""
-        btn = QPushButton()
-        btn.setObjectName("module_item")
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setFixedHeight(42)
-        btn.setMaximumWidth(200)
-        btn.setStyleSheet(self.CARD_HOVER_STYLE)
-
-        btn_layout = QHBoxLayout(btn)
-        btn_layout.setContentsMargins(12, 4, 12, 4)
-        btn_layout.setSpacing(10)
-
-        icon_label = QLabel(icon_text)
-        icon_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        icon_label.setFixedSize(32, 32)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet("""
-            background-color: #ffffff;
-            color: #000000;
-        """)
-        btn_layout.addWidget(icon_label)
-
-        name_label = QLabel(name)
-        name_label.setFont(QFont("Microsoft YaHei", 12))
-        name_label.setStyleSheet("color: #1a1a1a;")
-        btn_layout.addWidget(name_label)
-
-        arrow = QLabel(">")
-        arrow.setFont(QFont("Arial", 12))
-        arrow.setStyleSheet("color: #999999;")
-        btn_layout.addWidget(arrow)
-
-        btn.clicked.connect(lambda: self.on_module_clicked(name))
-        return btn
+        同时把内部 #view 背景设为透明，让展开内容区继承卡片整体背景色，
+        避免 header（透明）与 view（半透明白）背景不一致的视觉割裂。
+        """
+        try:
+            card.setExpand(True)
+        except Exception:
+            pass
+        try:
+            card.card.expandButton.hide()
+            # 断开折叠按钮的点击信号，防止点击 header 任意位置触发折叠
+            try:
+                card.card.expandButton.clicked.disconnect()
+            except Exception:
+                pass
+            # 阻断 HeaderSettingCard.eventFilter 里的"点击→折叠"链路
+            card.card.eventFilter = lambda obj, e: False
+        except Exception:
+            pass
 
     def _copy_to_clipboard(self, text: str):
         """把文本拷到系统剪贴板，并在状态栏给一个轻提示。"""
@@ -584,62 +570,9 @@ class HomePageWidget(QWidget):
         self.module_clicked.emit(module_name)
 
     def apply_theme(self, theme):
-        """主题切换：刷新主页背景、卡片样式、滚动区。
-
-        委托给 core.apply_module_theme() 统一处理：刷新 QScrollArea/QWidget#card/
-        CollapsibleCard/QLabel/QLineEdit/QFrame 的样式表，并触发 polish。
-        同时也刷新 self.CARD_STYLE / self.CARD_HOVER_STYLE（用于动态重建的模块卡片）。
-        """
-        from core import apply_module_theme
-        c = _theme_colors()
-        self.CARD_STYLE = f"""
-            QWidget#card {{
-                background-color: {c['card_bg']};
-                border: 1px solid {c['card_border']};
-                border-radius: 8px;
-            }}
-            QWidget#card QLabel,
-            QWidget#card QFrame {{
-                background-color: transparent;
-            }}
-        """
-        self.CARD_HOVER_STYLE = f"""
-            QPushButton#module_item {{
-                background-color: transparent;
-                border: none;
-                border-radius: 6px;
-                text-align: left;
-                padding: 12px 16px;
-            }}
-            QPushButton#module_item:hover {{ background-color: {c['hover_bg']}; }}
-            QPushButton#module_item:pressed {{ background-color: {c['pressed_bg']}; }}
-        """
-
-        # 委托通用主题刷新：刷新滚动区/卡片/QLabel/QLineEdit 等
-        apply_module_theme(self, theme)
-
-        # url_edit 用 _theme_colors() 预烘焙 QSS，需要单独刷新
-        for url_edit in getattr(self, '_url_edits', []):
-            url_edit.setStyleSheet(self._url_edit_qss())
-
-        # 刷新已显示的模块卡片（apply_module_theme 不处理动态创建的 QPushButton#module_item）
-        self._rebuild_module_cards()
-
-    def _url_edit_qss(self):
-        """主题感知的只读 QLineEdit 样式（用于主页项目地址行）"""
-        c = _theme_colors()
-        return f"""
-            QLineEdit {{
-                background-color: {c['input_bg']};
-                border: 1px solid {c['card_border']};
-                border-radius: 5px;
-                padding: 5px 10px;
-                color: {c['text_secondary']};
-                selection-background-color: {c['accent']};
-                selection-color: #ffffff;
-            }}
-            QLineEdit:focus {{ border: 1px solid {c['accent']}; background-color: {c['card_bg']}; }}
-        """
+        """主题切换：FluentWidgets 原生组件自动适配，仅刷新页面背景。"""
+        self.scroll.setStyleSheet(scroll_area_style())
+        self.content.setStyleSheet(page_bg_style())
 
 
 # ============================================================
