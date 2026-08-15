@@ -38,7 +38,7 @@ from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
     LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
-    isDarkTheme, qconfig,
+    isDarkTheme, qconfig, QConfig, ConfigItem,
 )
 
 import serial
@@ -55,6 +55,19 @@ plt.rcParams['axes.unicode_minus'] = False
 # 统一配置管理 — 所有传感器校准配置保存在同一个 JSON 文件
 # ============================================================
 CONFIG_FILENAME = 'sensor_config.json'
+
+# 应用自身配置 — 独立文件存放，不受传感器配置开关影响。
+# 开关状态若存进 sensor_config.json 会出现悖论：
+# 「关闭保存」后无人写入 → 下次启动没人记得开关是关的。
+class AppConfig(QConfig):
+    """应用级配置（app_config.json，始终持久化）"""
+    # 传感器配置持久化开关：False 时不读取也不写入 sensor_config.json，
+    # 所有更改仅本次会话有效（默认开启，保持原有行为）
+    configPersistenceEnabled = ConfigItem("General", "ConfigPersistenceEnabled", True)
+
+
+app_cfg = AppConfig()
+qconfig.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_config.json'), app_cfg)
 
 
 def _get_config_file_path():
@@ -78,6 +91,11 @@ def load_sensor_config(module_name):
     Returns:
         dict: 该模块的配置字典，不存在则返回空字典
     """
+    # 持久化开关关闭：不读取旧配置，各模块使用默认值
+    if not app_cfg.configPersistenceEnabled.value:
+        print(f"ℹ️ 配置保存已关闭，[{module_name}] 跳过读取，使用默认值")
+        return {}
+
     config_path = _get_config_file_path()
     try:
         if os.path.exists(config_path):
@@ -107,6 +125,11 @@ def save_sensor_config(module_name, config_dict):
     Returns:
         bool: 是否保存成功
     """
+    # 持久化开关关闭：静默丢弃写入（视为成功，避免 UI 报保存失败），
+    # 更改仅保留在各模块内存中，退出程序后销毁
+    if not app_cfg.configPersistenceEnabled.value:
+        return True
+
     config_path = _get_config_file_path()
     try:
         if os.path.exists(config_path):

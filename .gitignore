@@ -43,6 +43,7 @@ __pycache__/
 *.pyc
 .gitignore
 sensor_config.json
+app_config.json
 .vscode/settings.json
 .trae/rules/git-commit-message.md
 sensor_config.json
