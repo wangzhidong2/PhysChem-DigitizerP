@@ -38,13 +38,14 @@ from qfluentwidgets import (
     ComboBox, InfoBar, InfoBarPosition, BodyLabel,
     TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
     SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
+    SwitchSettingCard, MessageBox, qconfig,
 )
 
 # 公共模块（与各传感器模块共享）
 from core import (
     card_style, primary_btn_style, accent_btn_style,
     patch_combobox_arrow_flip, CollapsibleCard,
-    page_bg_style, scroll_area_style, _theme_colors,
+    page_bg_style, scroll_area_style, _theme_colors, app_cfg,
 )
 
 
@@ -914,6 +915,7 @@ class SettingsWidget(QWidget):
         group_personal = SettingCardGroup("个性化", self._content)
         self._theme_card = self._build_theme_card(group_personal)
         group_personal.addSettingCard(self._theme_card)
+        group_personal.addSettingCard(self._build_persistence_card())
         layout.addWidget(group_personal)
 
         # ===== 关于分组 =====
@@ -982,6 +984,46 @@ class SettingsWidget(QWidget):
         card.hBoxLayout.addSpacing(16)
         self._theme_combo = combo
         return card
+
+    def _build_persistence_card(self):
+        """配置持久化开关卡片：FluentWidgets 原生 SwitchSettingCard。
+
+        与 AppConfig.configPersistenceEnabled 双向绑定：
+        - 拨动开关 → qconfig.set() 自动写入 app_config.json
+        - 配置变化（含程序内 set）→ 开关 UI 自动同步
+        关闭后：不读取 sensor_config.json 旧配置（core.load_sensor_config
+        返回空），不写入新配置（save_sensor_config 静默丢弃），
+        本次运行的所有更改退出后销毁。
+        """
+        card = SwitchSettingCard(
+            FIF.SAVE, "保存配置",
+            "关闭后不读取已保存的校准配置，本次所有更改退出程序时销毁",
+            configItem=app_cfg.configPersistenceEnabled,
+        )
+        self._persistence_card = card
+        card.checkedChanged.connect(self._on_persistence_changed)
+        return card
+
+    def _on_persistence_changed(self, checked: bool):
+        """开关切换处理。
+
+        开 → 关：无风险，直接生效（此后不再写盘）。
+        关 → 开：当前会话是「默认值 + 本次随手修改」的状态，恢复写入后
+        下一次任何模块 save_config() 会把这套状态写进磁盘，可能覆盖
+        之前校准好的数据，因此先弹确认框；拒绝则切回关闭。
+        """
+        if not checked:
+            return
+        # 确认是否覆盖：从关闭切到开启
+        box = MessageBox(
+            "开启配置保存",
+            "开启后将恢复保存配置。当前会话内的更改会随下次修改写入磁盘，"
+            "可能覆盖之前保存的校准数据。\n是否继续？",
+            self,
+        )
+        if not box.exec():
+            # 拒绝：切回关闭（qconfig.set 会同步翻转开关 UI 并落盘）
+            qconfig.set(app_cfg.configPersistenceEnabled, False)
 
     def _build_about_card(self, icon, title, value, content=None):
         """只读信息卡片：右侧显示 value 文本，content 为副标题（可选）"""
