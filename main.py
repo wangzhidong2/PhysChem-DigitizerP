@@ -1000,6 +1000,9 @@ class SettingsWidget(QWidget):
             "关闭后不读取已保存的校准配置，本次所有更改退出程序时销毁",
             configItem=app_cfg.configPersistenceEnabled,
         )
+        # 开关按钮显示中文
+        card.switchButton.setOnText("开")
+        card.switchButton.setOffText("关")
         self._persistence_card = card
         card.checkedChanged.connect(self._on_persistence_changed)
         return card
@@ -1021,6 +1024,8 @@ class SettingsWidget(QWidget):
             "可能覆盖之前保存的校准数据。\n是否继续？",
             self,
         )
+        box.yesButton.setText("确定")
+        box.cancelButton.setText("取消")
         if not box.exec():
             # 拒绝：切回关闭（qconfig.set 会同步翻转开关 UI 并落盘）
             qconfig.set(app_cfg.configPersistenceEnabled, False)
