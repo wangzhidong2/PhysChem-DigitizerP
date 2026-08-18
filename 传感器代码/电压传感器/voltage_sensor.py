@@ -26,15 +26,13 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 import numpy as np
 
 # 从公共模块导入共享代码
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    fluent_message_box,
+    fluent_message_box, ChartPanel,
     SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
     SampleRateComboBox,
     load_sensor_config, save_sensor_config,
@@ -566,12 +564,9 @@ class VoltageSensorWidget(QWidget):
         self.data_text = ExpandableTextEdit()
         content_row.addWidget(self.data_text, stretch=0)
 
-        self.figure = Figure(figsize=(8, 5), dpi=100)
-        self.figure.set_facecolor('#fafafa')
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
-        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        content_row.addWidget(self.canvas, stretch=2)
+        # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
+        self.chart = ChartPanel()
+        content_row.addWidget(self.chart, stretch=2)
 
         chart_card_layout.addLayout(content_row, 1)
         card_chart = CollapsibleCard("电压-时间曲线", card_chart_content, expanded=True, fullscreen=True)
@@ -1038,23 +1033,18 @@ class VoltageSensorWidget(QWidget):
 
     def update_chart(self):
         if len(self.voltage_data) > 0:
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-
             # 图表数据按当前单位换算
             display_data = [self.to_current_unit(v) for v in self.voltage_data]
-            ax.plot(self.time_data, display_data, '#0078d4', linewidth=2, label=f'电压 ({self.current_unit})')
-            ax.set_xlabel('时间 (秒)')
-            ax.set_ylabel(f'电压 ({self.current_unit})')
-            ax.set_title('电压传感器实时数据', fontsize=14, fontweight='bold')
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc='upper right')
-
+            c = self.chart
+            c.begin()
+            c.plot(self.time_data, display_data, color='#0078d4', width=2,
+                   label=f'电压 ({self.current_unit})')
+            c.set_labels('时间 (秒)', f'电压 ({self.current_unit})')
+            c.set_title('电压传感器实时数据')
+            c.legend()
             if len(self.time_data) > 1:
-                ax.set_xlim(min(self.time_data), max(self.time_data))
-
-            self.figure.tight_layout()
-            self.canvas.draw()
+                c.set_xlim(min(self.time_data), max(self.time_data))
+            c.end()
 
     def on_sample_interval_changed(self, interval_ms):
         """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
@@ -1086,8 +1076,7 @@ class VoltageSensorWidget(QWidget):
         self.current_raw_label.setText("原始ADC: ------")
         self.current_vadc_label.setText(f"ADC端电压: --.- {self.current_unit}")
         self.stats_label.setText("统计信息: 暂无数据")
-        self.figure.clear()
-        self.canvas.draw()
+        self.chart.clear_chart()
         self.save_btn.setEnabled(False)
 
     def apply_theme(self, theme):
@@ -1095,7 +1084,6 @@ class VoltageSensorWidget(QWidget):
         apply_module_theme(self, theme)
         try:
             from qfluentwidgets import isDarkTheme
-            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
-            self.canvas.draw()
+            self.chart.apply_chart_theme(isDarkTheme())
         except Exception:
             pass

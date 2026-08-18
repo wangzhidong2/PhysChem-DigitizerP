@@ -25,15 +25,13 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 import numpy as np
 
 # 从公共模块导入共享代码
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    fluent_message_box,
+    fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, SimulatorThread,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, ExpandableTextEdit,
@@ -213,12 +211,9 @@ class UltrasonicVelocityWidget(QWidget):
         self.data_text = ExpandableTextEdit()
         content_row.addWidget(self.data_text, stretch=0)
 
-        self.figure = Figure(figsize=(8, 6), dpi=100)
-        self.figure.set_facecolor('#fafafa')
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
-        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        content_row.addWidget(self.canvas, stretch=2)
+        # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换；上下双子图）
+        self.chart = ChartPanel(n_plots=2)
+        content_row.addWidget(self.chart, stretch=2)
 
         chart_card_layout.addLayout(content_row, 1)
         card_chart = CollapsibleCard("速度-时间曲线", card_chart_content, expanded=True, fullscreen=True)
@@ -503,32 +498,21 @@ class UltrasonicVelocityWidget(QWidget):
             self.velocity_stats_label.setText(stats_text)
 
     def update_chart(self):
-        """更新速度图表"""
+        """更新速度图表（双子图：距离-时间 + 速度-时间）"""
         if len(self.velocity_data) > 0:
-            self.figure.clear()
-
-            # 创建子图
-            ax1 = self.figure.add_subplot(211)  # 距离-时间图
-            ax2 = self.figure.add_subplot(212)  # 速度-时间图
-
-            # 绘制距离-时间图
-            ax1.plot(self.time_data, self.distance_data, color='#0078d4', linewidth=2)
-            ax1.set_xlabel('时间 (秒)')
-            ax1.set_ylabel('距离 (厘米)')
-            ax1.set_title('距离传感器的距离')
-            ax1.grid(True, alpha=0.3)
-
-            # 绘制速度-时间图
-            ax2.plot(self.time_data[len(self.time_data)-len(self.velocity_data):],
-                    self.velocity_data, color='#1a1a1a', linewidth=2)
-            ax2.set_xlabel('时间 (秒)')
-            ax2.set_ylabel('速度 (厘米/秒)')
-            ax2.set_title('物体运动速度 - 回声定位法')
-            ax2.grid(True, alpha=0.3)
-
-            # 自动调整布局
-            self.figure.tight_layout()
-            self.canvas.draw()
+            c = self.chart
+            c.begin()
+            # 子图0：距离-时间图
+            c.plot(self.time_data, self.distance_data,
+                   color='#0078d4', width=2, index=0)
+            c.set_labels('时间 (秒)', '距离 (厘米)', index=0)
+            c.set_title('距离传感器的距离', index=0)
+            # 子图1：速度-时间图（速度序列由距离差分得到，起点对齐）
+            c.plot(self.time_data[len(self.time_data)-len(self.velocity_data):],
+                   self.velocity_data, color='#1a1a1a', width=2, index=1)
+            c.set_labels('时间 (秒)', '速度 (厘米/秒)', index=1)
+            c.set_title('物体运动速度 - 回声定位法', index=1)
+            c.end()
 
     def on_sample_interval_changed(self, interval_ms):
         """采样频率改变时更新间隔（内联下拉框触发）"""
@@ -564,8 +548,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.data_text.clear()
         self.velocity_stats_label.setText("速度统计: 暂无数据")
         self.current_data_label.setText("当前数据: 等待数据...")
-        self.figure.clear()
-        self.canvas.draw()
+        self.chart.clear_chart()
         self.save_btn.setEnabled(False)
 
     def apply_theme(self, theme):
@@ -573,7 +556,6 @@ class UltrasonicVelocityWidget(QWidget):
         apply_module_theme(self, theme)
         try:
             from qfluentwidgets import isDarkTheme
-            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
-            self.canvas.draw()
+            self.chart.apply_chart_theme(isDarkTheme())
         except Exception:
             pass

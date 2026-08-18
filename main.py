@@ -61,6 +61,7 @@ from core import (
     card_style, primary_btn_style, accent_btn_style,
     patch_combobox_arrow_flip, CollapsibleCard,
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
+    ChartPanel,
 )
 
 
@@ -893,6 +894,7 @@ class SettingsWidget(QWidget):
     """
 
     theme_change_requested = Signal(str)  # 'light' / 'dark'
+    engine_change_requested = Signal(str)  # 'matplotlib' / 'pyqtgraph'
 
     APP_VERSION = "1.3.1"
 
@@ -931,6 +933,7 @@ class SettingsWidget(QWidget):
         self._theme_card = self._build_theme_card(group_personal)
         group_personal.addSettingCard(self._theme_card)
         group_personal.addSettingCard(self._build_persistence_card())
+        group_personal.addSettingCard(self._build_engine_card())
         layout.addWidget(group_personal)
 
         # ===== 关于分组 =====
@@ -1044,6 +1047,37 @@ class SettingsWidget(QWidget):
         if not box.exec():
             # 拒绝：切回关闭（qconfig.set 会同步翻转开关 UI 并落盘）
             qconfig.set(app_cfg.configPersistenceEnabled, False)
+
+    def _build_engine_card(self):
+        """图表引擎切换卡片：matplotlib / pyqtgraph 运行时热切换。
+
+        - matplotlib：默认引擎，静态渲染美观
+        - pyqtgraph：高性能，内置缩放/平移交互
+        选择立即生效：所有已打开模块的图表原地换引擎并重放当前数据；
+        同时写入 app_config.json，下次启动沿用。
+        """
+        self._engine_values = ["matplotlib", "pyqtgraph"]
+        card = SettingCard(
+            FIF.TILES, "图表引擎",
+            "matplotlib 静态美观 / pyqtgraph 高性能可交互，切换立即生效", None)
+        combo = ComboBox(card)
+        combo.addItems(["matplotlib（默认）", "pyqtgraph（高性能）"])
+        combo.setMinimumWidth(180)
+        current = app_cfg.chartEngine.value
+        combo.setCurrentIndex(
+            self._engine_values.index(current) if current in self._engine_values else 0)
+        combo.currentIndexChanged.connect(self._on_engine_combo_changed)
+        card.hBoxLayout.addWidget(combo)
+        card.hBoxLayout.addSpacing(16)
+        self._engine_combo = combo
+        return card
+
+    def _on_engine_combo_changed(self, idx: int):
+        if not (0 <= idx < len(self._engine_values)):
+            return
+        engine = self._engine_values[idx]
+        qconfig.set(app_cfg.chartEngine, engine)   # 落盘 + 下次启动沿用
+        self.engine_change_requested.emit(engine)  # 通知主窗口热切换
 
     def _build_about_card(self, icon, title, value, content=None):
         """只读信息卡片：右侧显示 value 文本，content 为副标题（可选）"""
@@ -1263,6 +1297,7 @@ class MainWindow(FluentWindow):
         settings_widget = SettingsWidget()
         settings_widget.setObjectName("settings_page")
         settings_widget.theme_change_requested.connect(self.change_app_theme)
+        settings_widget.engine_change_requested.connect(self.change_chart_engine)
         self.addSubInterface(
             settings_widget, FIF.SETTING, "设置",
             position=NavigationItemPosition.BOTTOM
@@ -1346,6 +1381,24 @@ class MainWindow(FluentWindow):
             setTheme(Theme.DARK)
         else:
             setTheme(Theme.LIGHT)
+
+    def change_chart_engine(self, engine):
+        """热切换图表引擎：所有已加载模块的 ChartPanel 原地换引擎。
+
+        ChartPanel.set_engine 内部重建控件并重放最近一次绘制内容，
+        当前数据无需重新采集即可在另一引擎下显示。
+        """
+        count = 0
+        for name, widget in self.modules.items():
+            if name in ("主页", "设置"):
+                continue
+            for panel in widget.findChildren(ChartPanel):
+                try:
+                    panel.set_engine(engine)
+                    count += 1
+                except Exception as e:
+                    print(f"⚠️ [{name}] 图表引擎切换失败: {e}")
+        print(f"✓ 图表引擎已切换为 {engine}（{count} 个图表面板）")
 
     def apply_modern_style(self):
         self.current_theme = "light"

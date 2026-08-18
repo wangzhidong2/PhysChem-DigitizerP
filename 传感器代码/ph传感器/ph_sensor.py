@@ -25,15 +25,13 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 import numpy as np
 
 # 从公共模块导入共享代码
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    fluent_message_box,
+    fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, CalibrationDialog, SimulatorThread,
     load_sensor_config, save_sensor_config, _get_config_file_path,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
@@ -341,12 +339,9 @@ class PhSensorWidget(QWidget):
         self.data_text = ExpandableTextEdit()
         content_row.addWidget(self.data_text, stretch=0)
 
-        self.figure = Figure(figsize=(8, 5), dpi=100)
-        self.figure.set_facecolor('#fafafa')
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
-        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        content_row.addWidget(self.canvas, stretch=2)
+        # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
+        self.chart = ChartPanel()
+        content_row.addWidget(self.chart, stretch=2)
 
         chart_card_layout.addLayout(content_row, 1)
         card_chart = CollapsibleCard("pH-时间曲线", card_chart_content, expanded=True, fullscreen=True)
@@ -593,30 +588,21 @@ class PhSensorWidget(QWidget):
             self.stats_label.setText(stats_text)
 
     def update_chart(self):
-        """更新pH值图表"""
+        """更新pH值图表（双引擎统一 API）"""
         if len(self.ph_data) > 0:
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-
-            # 绘制pH值曲线
-            ax.plot(self.time_data, self.ph_data, '#0078d4', linewidth=2, label='pH值')
-
-            # 添加参考线（中性pH=7）
-            ax.axhline(y=7.0, color='r', linestyle='--', alpha=0.5, label='中性(pH=7)')
-
-            ax.set_xlabel('时间 (秒)')
-            ax.set_ylabel('pH值')
-            ax.set_title('pH传感器实时数据', fontsize=14, fontweight='bold')
-            ax.set_ylim(0, 14)
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc='upper right')
-
+            c = self.chart
+            c.begin()
+            c.plot(self.time_data, self.ph_data, color='#0078d4', width=2, label='pH值')
+            # 参考线（中性pH=7）
+            c.hline(7.0, color='r', style='dash', alpha=0.5, label='中性(pH=7)')
+            c.set_labels('时间 (秒)', 'pH值')
+            c.set_title('pH传感器实时数据')
+            c.set_ylim(0, 14)
+            c.legend()
             # 自动调整坐标轴范围
             if len(self.time_data) > 1:
-                ax.set_xlim(min(self.time_data), max(self.time_data))
-
-            self.figure.tight_layout()
-            self.canvas.draw()
+                c.set_xlim(min(self.time_data), max(self.time_data))
+            c.end()
 
     def save_data(self):
         """保存数据到文件"""
@@ -652,8 +638,7 @@ class PhSensorWidget(QWidget):
         self.stats_label.setText("统计信息：暂无数据")
         self.current_ph_label.setText("pH: --.-")
         self.current_adc_label.setText("ADC: ----")
-        self.figure.clear()
-        self.canvas.draw()
+        self.chart.clear_chart()
         self.save_btn.setEnabled(False)
 
     def edit_calibration(self):
@@ -686,7 +671,6 @@ class PhSensorWidget(QWidget):
         apply_module_theme(self, theme)
         try:
             from qfluentwidgets import isDarkTheme
-            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
-            self.canvas.draw()
+            self.chart.apply_chart_theme(isDarkTheme())
         except Exception:
             pass

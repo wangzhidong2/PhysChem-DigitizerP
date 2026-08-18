@@ -15,6 +15,7 @@
 - **开源透明**：GPL-3.0 协议，硬件设计和软件代码完全开源
 - **模块化设计**：新增传感器只需丢文件，无需修改主程序
 - **现代化界面**：PySide6 图形界面，侧边栏导航 + 实时数据可视化
+- **双绘图引擎**：matplotlib（静态美观）与 pyqtgraph（高性能交互）可在设置中一键热切换
 
 <p align="center">
   <img src="docs/images/home.png" alt="主界面" width="800"/>
@@ -28,11 +29,12 @@
 | **PySide6** | ≥6.4.0 | 图形界面框架 |
 | **PySide6-Fluent-Widgets** | — | WinUI3 风格组件库（主窗口基于 `FluentWindow`） |
 | **pyserial** | ≥3.5 | 串口通信 |
-| **matplotlib** | ≥3.5.0 | 数据可视化 |
+| **matplotlib** | ≥3.5.0 | 数据可视化（默认绘图引擎） |
+| **pyqtgraph** | ≥0.13.0 | 高性能交互式绘图（可选绘图引擎） |
 | **numpy** | ≥1.21.0 | 数值计算 |
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0
 # WinUI3 风格组件库（必需）
 pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
@@ -124,7 +126,7 @@ PhysChem-DigitizerP/
 ### 3. 安装 Python 软件
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0
 # WinUI3 风格组件库（必需）
 pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
@@ -148,6 +150,17 @@ python main.py
 5. 点击"停止采集"结束
 6. 点击"保存数据"导出为 CSV 文件
 
+### 切换绘图引擎
+
+进入 **设置 → 个性化 → 图表引擎**，可在两种引擎间即时切换（无需重启）：
+
+| 引擎 | 特点 |
+|------|------|
+| **matplotlib（默认）** | 静态渲染、出版级美观，适合报告截图 |
+| **pyqtgraph** | GPU 加速、支持缩放/平移拖拽，适合高频数据实时监视 |
+
+切换立即对所有传感器模块生效，已绘制的曲线自动重放到新引擎；选择会保存到配置，下次启动沿用。
+
 > 📖 各模块的具体接线、校准步骤和实验方法请参考对应的模块 README。
 
 ## 🔍 故障排除
@@ -165,7 +178,7 @@ python test_serial.py
 | 找不到串口 | 驱动未安装/USB 未连接 | 安装 CH340G/CP210x 驱动，重新插拔 USB |
 | 连接后无数据 | 波特率错误/固件未上传 | 确认波特率 115200，重新上传固件 |
 | 数据跳变异常 | 传感器干扰/接线松动 | 检查接线，远离干扰源 |
-| 图表不显示 | matplotlib 问题 | `pip install --upgrade matplotlib` |
+| 图表不显示 | 绘图引擎依赖缺失 | `pip install --upgrade matplotlib pyqtgraph` |
 
 ## 📚 技术文档
 
@@ -201,14 +214,14 @@ python test_serial.py
 <p align="center">
   <img src="docs/images/settings.png" alt="设置界面" width="800"/>
 </p>
-<p align="center">设置界面 — 功能正在开发中（占位页）</p>
+<p align="center">设置界面 — 主题与图表引擎切换</p>
 
 - **左侧侧边栏**：WinUI3 风格导航（FluentWindow），模块图标由识别区文字渲染
 - **串口控制**：选择端口、刷新、连接/断开
 - **实时数据**：当前值、统计信息、数据记录
-- **图表区域**：实时数据曲线
+- **图表区域**：实时数据曲线（matplotlib / pyqtgraph 双引擎，设置中切换）
 - **操作按钮**：开始/停止采集、保存数据、清除数据
-- **设置页**：当前为占位页（功能正在开发中），侧边栏图标保留以便未来接入
+- **设置页**：应用主题（亮/暗/跟随系统）、图表引擎切换（立即生效）、关于与源码链接
 
 ## 🤝 贡献指南
 
@@ -221,7 +234,7 @@ git clone https://gitee.com/wangzhidong2/PhysChem-DigitizerP.git
 git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
 
 cd PhysChem-DigitizerP
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 PySide6-Fluent-Widgets
+pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0 PySide6-Fluent-Widgets
 ```
 
 ## 📄 许可证
@@ -232,7 +245,7 @@ pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 PySide6
 
 - **硬件平台**：[ESP32](https://www.espressif.com/) / [ESP8266 Community](https://www.esp8266.com/)
 - **图形界面**：[PySide6](https://www.qt.io/qt-for-python)
-- **数据可视化**：[Matplotlib](https://matplotlib.org/)
+- **数据可视化**：[Matplotlib](https://matplotlib.org/) / [pyqtgraph](https://www.pyqtgraph.org/)
 - **串口通信**：[pyserial](https://github.com/pyserial/pyserial)
 
 ## 📧 联系方式

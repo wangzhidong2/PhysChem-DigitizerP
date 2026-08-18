@@ -38,18 +38,22 @@ from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
     LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
-    isDarkTheme, qconfig, QConfig, ConfigItem,
+    isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
 )
 
 import serial
 import serial.tools.list_ports
 
 # ============================================================
-# matplotlib 全局字体设置
+# matplotlib 全局字体设置（图表引擎为 matplotlib 时才需要；
+# 未安装 matplotlib 的环境跳过，pyqtgraph 引擎不受影响）
 # ============================================================
-import matplotlib.pyplot as plt
-plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
-plt.rcParams['axes.unicode_minus'] = False
+try:
+    import matplotlib.pyplot as plt
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+    plt.rcParams['axes.unicode_minus'] = False
+except ImportError:
+    plt = None
 
 # ============================================================
 # 统一配置管理 — 所有传感器校准配置保存在同一个 JSON 文件
@@ -64,6 +68,11 @@ class AppConfig(QConfig):
     # 传感器配置持久化开关：False 时不读取也不写入 sensor_config.json，
     # 所有更改仅本次会话有效（默认开启，保持原有行为）
     configPersistenceEnabled = ConfigItem("General", "ConfigPersistenceEnabled", True)
+    # 图表引擎：matplotlib（默认，静态美观）/ pyqtgraph（高性能交互）
+    chartEngine = OptionsConfigItem(
+        "Chart", "Engine", "matplotlib",
+        OptionsValidator(["matplotlib", "pyqtgraph"]),
+    )
 
 
 app_cfg = AppConfig()
@@ -165,6 +174,264 @@ def fluent_message_box(parent, title, text):
     box.cancelButton.hide()
     box.buttonLayout.insertStretch(0, 1)
     box.exec()
+
+
+# ============================================================
+# 双引擎图表面板：matplotlib / pyqtgraph 统一 API
+# ============================================================
+# matplotlib 单字母颜色 → 十六进制（pyqtgraph 不识别 'r' 这类缩写）
+_MPL_COLOR_ALIASES = {
+    'r': '#ff0000', 'b': '#0000ff', 'g': '#008000', 'k': '#000000',
+    'y': '#ffff00', 'm': '#ff00ff', 'c': '#00ffff', 'w': '#ffffff',
+}
+
+
+def _normalize_color(color):
+    """把 matplotlib 单字母颜色规范为 pyqtgraph 也能用的 '#rrggbb'。"""
+    if isinstance(color, str):
+        return _MPL_COLOR_ALIASES.get(color, color)
+    return color
+
+
+class ChartPanel(QWidget):
+    """双引擎图表面板：设置页可切换 matplotlib / pyqtgraph。
+
+    统一绘制 API（在 begin() 与 end() 之间调用，end() 时一次性提交）：
+
+        c = ChartPanel(n_plots=1)          # n_plots=2 时上下双子图
+        c.begin()
+        c.plot(x, y, color='#0078d4', width=2, label='曲线')
+        c.hline(7.0, color='r', style='dash', alpha=0.5, label='参考')
+        c.set_labels('时间 (秒)', 'pH值')   # 第 index 个子图
+        c.set_title('标题')
+        c.set_ylim(0, 14)                  # 不调用则自动范围
+        c.legend()                         # 有 label 的曲线进图例
+        c.end()
+
+    引擎差异由面板内部吸收：
+    - matplotlib：end() 时按既有「清空-重建-绘制-布局-重绘」流程全量绘制
+    - pyqtgraph：end() 时重建数据项并 setData，交互（缩放/平移）内置
+    切换引擎时自动重放最近一次绘制内容，无需各模块额外处理。
+    """
+
+    def __init__(self, n_plots=1, parent=None):
+        super().__init__(parent)
+        self._n_plots = max(1, int(n_plots))
+        self._engine = app_cfg.chartEngine.value
+        self._dark = isDarkTheme()
+        self._spec = None       # 当前事务（begin~end 之间累积）
+        self._last = None       # 最近一次已提交事务（引擎切换时重放）
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._lay = lay
+        self._widget = None     # 当前引擎实际控件
+        self._pg_plots = []     # pyqtgraph: PlotItem 列表
+        self._build_widget()
+
+    # ---------------- 引擎控件构建 ----------------
+    def _build_widget(self):
+        if self._engine == 'pyqtgraph':
+            self._build_pg_widget()
+        else:
+            self._build_mpl_widget()
+
+    def _build_mpl_widget(self):
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        self.figure = Figure(figsize=(8, 5), dpi=100)
+        self.figure.set_facecolor('#2d2d2d' if self._dark else '#fafafa')
+        self._widget = FigureCanvasQTAgg(self.figure)
+        self._widget.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
+        self._widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._lay.addWidget(self._widget)
+
+    def _build_pg_widget(self):
+        import pyqtgraph as pg
+        pg.setConfigOptions(antialias=True)
+        self._widget = pg.GraphicsLayoutWidget()
+        self._pg_plots = []
+        for i in range(self._n_plots):
+            pi = self._widget.addPlot(row=i, col=0)
+            pi.showGrid(x=True, y=True, alpha=0.3)
+            self._pg_plots.append(pi)
+        self._apply_pg_theme()
+        self._lay.addWidget(self._widget)
+
+    def _apply_pg_theme(self):
+        """pyqtgraph 亮/暗主题：背景、轴、刻度文字颜色全套适配。"""
+        from pyqtgraph import mkPen
+        bg = '#2d2d2d' if self._dark else '#fafafa'
+        fg = '#e0e0e0' if self._dark else '#1a1a1a'
+        self._widget.setBackground(bg)
+        for pi in self._pg_plots:
+            for loc in ('left', 'bottom'):
+                ax = pi.getAxis(loc)
+                ax.setPen(mkPen(fg, width=1))
+                ax.setTextPen(fg)
+
+    # ---------------- 统一绘制 API ----------------
+    def begin(self):
+        """开始一次绘制事务。"""
+        self._spec = [
+            {'plot': [], 'hline': [], 'xlabel': '', 'ylabel': '',
+             'title': '', 'xlim': None, 'ylim': None, 'legend': False}
+            for _ in range(self._n_plots)
+        ]
+
+    def plot(self, x, y, color='#0078d4', width=2, label=None, index=0):
+        """在第 index 个子图上绘制一条曲线。"""
+        self._spec[index]['plot'].append(
+            {'x': list(x), 'y': list(y), 'color': _normalize_color(color),
+             'width': width, 'label': label})
+
+    def hline(self, y, color='#aaaaaa', style='dash', width=1.5, alpha=1.0,
+              label=None, index=0):
+        """在第 index 个子图上添加水平参考线。
+
+        style: 'dash' 虚线 / 'dot' 点线 / 'solid' 实线
+        """
+        self._spec[index]['hline'].append(
+            {'y': y, 'color': _normalize_color(color), 'style': style,
+             'width': width, 'alpha': alpha, 'label': label})
+
+    def set_labels(self, xlabel, ylabel, index=0):
+        self._spec[index]['xlabel'] = xlabel
+        self._spec[index]['ylabel'] = ylabel
+
+    def set_title(self, title, index=0):
+        self._spec[index]['title'] = title
+
+    def set_xlim(self, a, b, index=0):
+        self._spec[index]['xlim'] = (a, b)
+
+    def set_ylim(self, a, b, index=0):
+        self._spec[index]['ylim'] = (a, b)
+
+    def legend(self, index=0):
+        """启用第 index 个子图的图例（有 label 的曲线/参考线才显示）。"""
+        self._spec[index]['legend'] = True
+
+    def end(self):
+        """提交事务并渲染。无 begin 直接调用 end 时忽略。"""
+        if self._spec is None:
+            return
+        self._commit(self._spec)
+        self._last = self._spec
+        self._spec = None
+
+    # ---------------- 渲染实现 ----------------
+    def _commit(self, spec):
+        if self._engine == 'pyqtgraph':
+            self._commit_pg(spec)
+        else:
+            self._commit_mpl(spec)
+
+    def _commit_mpl(self, spec):
+        n = self._n_plots
+        self.figure.clear()
+        if n == 1:
+            axes = [self.figure.add_subplot(111)]
+        else:
+            axes = [self.figure.add_subplot(n, 1, i + 1) for i in range(n)]
+        for ax, sp in zip(axes, spec):
+            for s in sp['plot']:
+                ax.plot(s['x'], s['y'], s['color'],
+                        linewidth=s['width'], label=s['label'])
+            for h in sp['hline']:
+                ls = {'dash': '--', 'dot': ':', 'solid': '-'}[h['style']]
+                kw = {'color': h['color'], 'linestyle': ls,
+                      'linewidth': h['width'], 'alpha': h['alpha']}
+                if h['label']:
+                    kw['label'] = h['label']
+                ax.axhline(h['y'], **kw)
+            if sp['xlabel']:
+                ax.set_xlabel(sp['xlabel'])
+            if sp['ylabel']:
+                ax.set_ylabel(sp['ylabel'])
+            if sp['title']:
+                ax.set_title(sp['title'], fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            if sp['legend'] and any(
+                    s['label'] for s in sp['plot'] + sp['hline']):
+                ax.legend(loc='upper right')
+            if sp['xlim']:
+                ax.set_xlim(*sp['xlim'])
+            if sp['ylim']:
+                ax.set_ylim(*sp['ylim'])
+        self.figure.tight_layout()
+        self._widget.draw()
+
+    def _commit_pg(self, spec):
+        import pyqtgraph as pg
+        from pyqtgraph import mkPen
+        pen_style = {'dash': Qt.PenStyle.DashLine,
+                     'dot': Qt.PenStyle.DotLine,
+                     'solid': Qt.PenStyle.SolidLine}
+        for pi, sp in zip(self._pg_plots, spec):
+            pi.clear()
+            if sp['legend'] and any(
+                    s['label'] for s in sp['plot'] + sp['hline']):
+                pi.addLegend()
+            for s in sp['plot']:
+                pen = mkPen(s['color'], width=s['width'])
+                pi.plot(s['x'], s['y'], pen=pen,
+                        name=s['label'] if sp['legend'] else None)
+            for h in sp['hline']:
+                c = QColor(h['color'])
+                c.setAlpha(int(h['alpha'] * 255))
+                pen = mkPen(c, width=h['width'], style=pen_style[h['style']])
+                ln = pg.InfiniteLine(pos=h['y'], angle=0, pen=pen)
+                pi.addItem(ln)
+                if sp['legend'] and h['label']:
+                    pi.legend.addItem(ln, h['label'])
+            pi.setLabel('bottom', sp['xlabel'])
+            pi.setLabel('left', sp['ylabel'])
+            pi.setTitle(sp['title'])
+            if sp['xlim']:
+                pi.setXRange(*sp['xlim'], padding=0)
+            else:
+                pi.enableAutoRange(x=True)
+            if sp['ylim']:
+                pi.setYRange(*sp['ylim'], padding=0)
+            else:
+                pi.enableAutoRange(y=True)
+
+    # ---------------- 引擎 / 主题 / 清空 ----------------
+    def set_engine(self, engine):
+        """运行时切换引擎：重建控件并重放最近一次绘制内容。"""
+        if engine not in ('matplotlib', 'pyqtgraph') or engine == self._engine:
+            return
+        self._engine = engine
+        old = self._widget
+        self._widget = None
+        self._pg_plots = []
+        if old is not None:
+            self._lay.removeWidget(old)
+            old.setParent(None)
+            old.deleteLater()
+        self._build_widget()
+        if self._last is not None:
+            self._commit(self._last)
+
+    def apply_chart_theme(self, dark):
+        """亮/暗主题切换（由各模块 apply_theme 调用）。"""
+        self._dark = dark
+        if self._engine == 'pyqtgraph':
+            self._apply_pg_theme()
+        else:
+            self.figure.set_facecolor('#2d2d2d' if dark else '#fafafa')
+            self._widget.draw()
+
+    def clear_chart(self):
+        """清空图表（各模块 clear_data 调用）。"""
+        self._last = None
+        self._spec = None
+        if self._engine == 'pyqtgraph':
+            for pi in self._pg_plots:
+                pi.clear()
+        else:
+            self.figure.clear()
+            self._widget.draw()
 
 
 # ============================================================

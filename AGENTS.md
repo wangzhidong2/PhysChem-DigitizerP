@@ -20,7 +20,7 @@
 ## 安装依赖
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0
 # WinUI3 风格组件库（必需，主窗口基于 FluentWindow）
 pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
@@ -34,7 +34,7 @@ pip install bleak
 - 串口波特率：**115200**（所有固件和 Python 代码中硬编码）
 - 固件输出格式：`timestamp,value`（CSV），Python 直接解析
 - `sensor_config.json` 存储校准参数（运行时自动创建/更新）
-- Matplotlib 字体：微软雅黑（在 `core.py` 中全局设置）
+- 双绘图引擎：matplotlib（默认）/ pyqtgraph，应用配置项 `app_cfg.chartEngine` 持久化，设置页可运行时热切换；matplotlib 字体（微软雅黑）在 `core.py` 中全局设置
 - 沙箱无显示环境运行验证：`QT_QPA_PLATFORM=offscreen python main.py`
 
 ## 目录结构
@@ -101,8 +101,8 @@ PhysChem-DigitizerP/
 
 - **`make_text_icon(text, size=128)`**：把识别区里的文字（如 `V`/`F`/`x`/`pH`/`v`/`A`）画成方形 `QIcon`。FluentIcon 枚举没有对应"电压/电流/pH/力/超声波"的图标，所以直接用文字渲染成图标，保留模块化设计。字号用 `QFontMetrics` 自适应测量（从 `size*0.9` 起步缩到刚好填满画布，留 8% 边距），支持 Normal/Active/Selected 三种状态颜色。
 - **`HomePageWidget`**：主页，现代化风格卡片布局，按 `physics`/`chemistry` 分组展示模块卡片。标题用 FluentWidgets `TitleLabel` / `SubtitleLabel`，自动适配亮/暗主题；`apply_theme()` 委托 `core.apply_module_theme()` 统一刷新页面背景、卡片、QLabel/QLineEdit 颜色。
-- **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含三组设置：①个性化（应用主题切换：亮色 / 暗色 / 跟随系统）②关于（应用名 / 版本 / 许可证）③源码 & 反馈（GitHub / Gitee / Issue 链接）。主题切换通过 `theme_change_requested` 信号与 `MainWindow.change_app_theme` 打通。
-- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换。`change_app_theme(theme)` 流程：先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色。
+- **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含多组设置：①个性化（应用主题切换：亮色 / 暗色 / 跟随系统；**图表引擎切换**：matplotlib / pyqtgraph）②关于（应用名 / 版本 / 许可证）③源码 & 反馈（GitHub / Gitee / Issue 链接）。主题切换通过 `theme_change_requested` 信号、引擎切换通过 `engine_change_requested` 信号分别与 `MainWindow.change_app_theme` / `MainWindow.change_chart_engine` 打通。
+- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换、绘图引擎切换。`change_app_theme(theme)` 流程：先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色。`change_chart_engine(engine)` 流程：遍历各传感器模块 `findChildren(ChartPanel)`，调用 `panel.set_engine(engine)` 重建引擎控件并重放最近一次绘制事务，曲线无缝衔接不丢数据。
 - **遗留代码**：`NavButton` / `SidebarWidget` 是迁移到 FluentWindow 前的手写侧边栏实现，**已不再被 `MainWindow` 使用**（FluentWindow 自带导航），仍保留在 `main.py` 中供对照参考，新功能不要基于它们开发。
 
 ### core.py 组成
@@ -117,13 +117,19 @@ PhysChem-DigitizerP/
 - `CollapsibleCard`：标题用 `SubtitleLabel`，`paintEvent` / `_apply_theme_style` 主题感知；`apply_theme(theme)` 刷新箭头、全屏按钮颜色。
 - `FloatingDataPanel`：绘制背景主题感知。
 
+**双绘图引擎 `ChartPanel`**（matplotlib / pyqtgraph 统一抽象）：
+- 所有传感器模块的图表一律通过 `ChartPanel` 绘制，**不要直接使用** `Figure`/`FigureCanvas` 或 `pg.PlotWidget`。
+- 事务式 API：`begin()` 开启一次绘制 → `plot(x, y, color, width, label, index)` 画曲线 → `hline(y, ...)` 画水平参考线 → `set_labels()` / `set_title()` / `set_xlim()` / `set_ylim()` / `legend()` 设置装饰 → `end()` 提交渲染。多子图用 `ChartPanel(n_plots=N)` + `index` 参数寻址。
+- 引擎选择：构造时读 `app_cfg.chartEngine`；`set_engine(engine)` 运行时重建底层控件并**重放最近一次提交的事务**（内部缓存 `_last`），切换引擎曲线不丢。
+- 主题适配：`apply_chart_theme(dark)` 同时处理 matplotlib（figure/axes 背景与轴色）和 pyqtgraph（`setBackground` / 轴文本颜色），各模块 `apply_theme()` 中调用即可。
+
 ### 模块能力要点
 
 - `VoltageSensorWidget` 支持：HX711 24 位 ADC 模式（通道 A/B、增益 128/32）、kV/V/mV 单位切换、去皮（Tare）功能。
 - `ForceSensorWidget` 支持：去皮（Tare）、两点校准、有线串口和 BLE 两种连接方式。
 - `PhSensorWidget` 支持：单点 / 两点 / 三点校准（Nernst 斜率 / 线性拟合 / 二次多项式拟合）。
 - `CurrentSensorWidget` 支持：ACS712 5A/20A/30A 量程切换、AC/DC 测量、零点校准。
-- **主题支持**：所有传感器模块均实现 `apply_theme(theme)` 方法，委托 `core.apply_module_theme()` 刷新页面/卡片/QLabel 颜色，并切换 matplotlib figure 背景。页面标题统一使用 FluentWidgets `TitleLabel`，滚动区/页面背景使用 `scroll_area_style()` / `page_bg_style()`。
+- **主题支持**：所有传感器模块均实现 `apply_theme(theme)` 方法，委托 `core.apply_module_theme()` 刷新页面/卡片/QLabel 颜色，并调用 `ChartPanel.apply_chart_theme()` 切换图表背景/轴色（双引擎均生效）。页面标题统一使用 FluentWidgets `TitleLabel`，滚动区/页面背景使用 `scroll_area_style()` / `page_bg_style()`。
 - 配置持久化：`load_sensor_config()` / `save_sensor_config()` 读写 `sensor_config.json`。
 - 无自动化测试——`test_serial.py` 仅为手动诊断工具。
 - 无 CI/CD、代码检查或类型检查配置。
@@ -156,9 +162,9 @@ PhysChem-DigitizerP/
 # -*- coding: utf-8 -*-
 """温度传感器模块"""
 
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel, isDarkTheme
 from core import (
-    SerialThread, load_sensor_config, save_sensor_config,
+    SerialThread, load_sensor_config, save_sensor_config, ChartPanel,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     scroll_area_style, page_bg_style, apply_module_theme,
 )
@@ -166,16 +172,22 @@ from core import (
 class TemperatureSensorWidget(QWidget):
     def __init__(self):
         ...
+        # 图表：ChartPanel 双引擎抽象（matplotlib / pyqtgraph 由设置决定）
+        self.chart = ChartPanel()
+
+    def update_chart(self):
+        """绘制曲线：事务式 API，两种引擎下行为一致"""
+        c = self.chart
+        c.begin()
+        c.plot(self.time_data, self.temp_data, color='#0078d4', width=2, label='温度')
+        c.set_labels('时间 (秒)', '温度 (°C)')
+        c.legend()
+        c.end()
 
     def apply_theme(self, theme):
-        """主题切换：委托通用刷新助手 + 切换 figure 背景"""
+        """主题切换：委托通用刷新助手 + 切换图表主题（双引擎均生效）"""
         apply_module_theme(self, theme)
-        try:
-            from qfluentwidgets import isDarkTheme
-            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
-            self.canvas.draw()
-        except Exception:
-            pass
+        self.chart.apply_chart_theme(isDarkTheme())
 ```
 
 重启 `main.py` 即自动出现在侧边栏（文字图标）+ 主页卡片 + 内容栈。
@@ -183,7 +195,12 @@ class TemperatureSensorWidget(QWidget):
 **主题支持要点**（新模块若想适配亮/暗主题）：
 1. 页面标题用 `TitleLabel`（自动适配主题），不要用 `QLabel` + 硬编码颜色。
 2. 滚动区用 `scroll.setStyleSheet(scroll_area_style())`，页面背景用 `content.setStyleSheet(page_bg_style())`。
-3. 实现 `apply_theme(self, theme)` 方法，委托 `apply_module_theme(self, theme)` 刷新页面/卡片/QLabel 颜色，再手动切换 matplotlib figure 背景。
+3. 实现 `apply_theme(self, theme)` 方法，委托 `apply_module_theme(self, theme)` 刷新页面/卡片/QLabel 颜色，再调用 `self.chart.apply_chart_theme(...)` 切换图表背景（双引擎均生效）。
+
+**图表开发要点**（新模块必须遵守）：
+1. 图表控件一律用 `core.ChartPanel`，**禁止**直接创建 matplotlib `Figure`/`FigureCanvas` 或 pyqtgraph `PlotWidget`——绕过抽象会导致设置页引擎切换对该模块失效。
+2. 绘制走 `begin()` → `plot()`/`hline()`/`set_labels()`/... → `end()` 事务流程，切换引擎时 `ChartPanel` 会自动重放最近一次事务。
+3. 多子图场景用 `ChartPanel(n_plots=N)`，各调用通过 `index` 参数指定子图。
 
 ### 识别区字段说明
 
@@ -201,8 +218,8 @@ class TemperatureSensorWidget(QWidget):
 - Arduino 代码目录使用中文命名
 - `main_legacy.py` 是迁移前单文件存档，**不再维护**，新功能请改 `main.py` + 模块文件
 - `NavButton` / `SidebarWidget` 是遗留代码，`MainWindow` 已改用 `FluentWindow` 自带导航，不要基于它们开发新功能
-- 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、关于信息、仓库链接（`SettingsWidget`）
-- 新增传感器模块时建议实现 `apply_theme()` 方法以适配亮/暗主题（委托 `core.apply_module_theme()`）
+- 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、图表引擎切换（matplotlib / pyqtgraph，热切换）、关于信息、仓库链接（`SettingsWidget`）
+- 新增传感器模块时建议实现 `apply_theme()` 方法以适配亮/暗主题（委托 `core.apply_module_theme()`）；图表一律用 `core.ChartPanel`，保证引擎热切换对模块生效
 - 模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
 - BLE 功能需要 `bleak`（可选依赖），未安装时会自动降级
 - 动态加载依赖识别区格式严格，字段名/冒号/空格写错会导致模块加载失败
@@ -227,7 +244,7 @@ PySide6 + FluentWidgets (WinUI3 style) GUI application + Arduino/ESP32 firmware 
 ## Install
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0
+pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0
 # WinUI3 style component library (required, main window is based on FluentWindow)
 pip install PySide6-Fluent-Widgets
 # Optional (for BLE wireless):
@@ -241,7 +258,7 @@ No `requirements.txt`, `setup.py`, or `pyproject.toml` exists.
 - Serial baud rate: **115200** (hardcoded across all firmware and Python)
 - All firmware output CSV: `timestamp,value` — Python parses this directly
 - `sensor_config.json` stores calibration params (auto-created/updated at runtime)
-- Matplotlib font: Microsoft YaHei (set globally in `core.py`)
+- Dual chart engines: matplotlib (default) / pyqtgraph, persisted via the `app_cfg.chartEngine` config item, hot-switchable at runtime from the settings page; matplotlib font (Microsoft YaHei) is set globally in `core.py`
 - Headless sandbox verification: `QT_QPA_PLATFORM=offscreen python main.py`
 
 ## Directory structure
@@ -308,8 +325,8 @@ Flash via Arduino IDE. Board packages:
 
 - **`make_text_icon(text, size=128)`**: renders the meta-header text (e.g. `V`/`F`/`x`/`pH`/`v`/`A`) into a square `QIcon`. FluentIcon enum has no icons for "voltage/current/pH/force/ultrasonic", so text is rendered directly into an icon to preserve the modular design. Font size is auto-measured with `QFontMetrics` (starts at `size*0.9` and shrinks to just fill the canvas, leaving 8% margin), supporting Normal/Active/Selected state colors.
 - **`HomePageWidget`**: home page, modern-style card layout, groups module cards by `physics`/`chemistry`. Titles use FluentWidgets `TitleLabel` / `SubtitleLabel` for automatic light/dark theme adaptation; `apply_theme()` delegates to `core.apply_module_theme()` to refresh page background, cards, and QLabel/QLineEdit colors.
-- **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Three groups: ① Personalization (app theme: light / dark / follow system) ② About (app name / version / license) ③ Source & feedback (GitHub / Gitee / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via the `theme_change_requested` signal.
-- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, and theme switching. `change_app_theme(theme)` flow: first `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors.
+- **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Groups: ① Personalization (app theme: light / dark / follow system; **chart engine: matplotlib / pyqtgraph**) ② About (app name / version / license) ③ Source & feedback (GitHub / Gitee / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via `theme_change_requested`; engine switching is wired to `MainWindow.change_chart_engine` via `engine_change_requested`.
+- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, theme switching, and chart engine switching. `change_app_theme(theme)` flow: first `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors. `change_chart_engine(engine)` flow: iterates each sensor module via `findChildren(ChartPanel)` and calls `panel.set_engine(engine)` to rebuild the engine widget and replay the last committed draw transaction — curves carry over seamlessly without data loss.
 - **Legacy code**: `NavButton` / `SidebarWidget` are the hand-written sidebar implementation from before the FluentWindow migration, **no longer used by `MainWindow`** (FluentWindow has its own navigation). They are still kept in `main.py` for reference — do not build new features on them.
 
 ### core.py composition
@@ -324,13 +341,19 @@ Centralized shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices
 - `CollapsibleCard`: title uses `SubtitleLabel`; `paintEvent` / `_apply_theme_style` are theme-aware; `apply_theme(theme)` refreshes arrow and fullscreen button colors.
 - `FloatingDataPanel`: theme-aware background painting.
 
+**Dual chart engine `ChartPanel`** (unified abstraction over matplotlib / pyqtgraph):
+- All sensor module charts are drawn exclusively through `ChartPanel` — do **not** use `Figure`/`FigureCanvas` or `pg.PlotWidget` directly.
+- Transactional API: `begin()` opens a draw → `plot(x, y, color, width, label, index)` draws curves → `hline(y, ...)` draws horizontal reference lines → `set_labels()` / `set_title()` / `set_xlim()` / `set_ylim()` / `legend()` add decorations → `end()` commits and renders. Multi-plot layouts use `ChartPanel(n_plots=N)` with the `index` parameter.
+- Engine selection: reads `app_cfg.chartEngine` at construction; `set_engine(engine)` rebuilds the underlying widget at runtime and **replays the last committed transaction** (cached in `_last`), so no curve data is lost on engine switch.
+- Theme adaptation: `apply_chart_theme(dark)` handles both matplotlib (figure/axes background & axis colors) and pyqtgraph (`setBackground` / axis text colors); call it from each module's `apply_theme()`.
+
 ### Module capability notes
 
 - `VoltageSensorWidget` supports: HX711 24-bit ADC mode (channel A/B, gain 128/32), kV/V/mV unit switching, Tare function.
 - `ForceSensorWidget` supports: Tare, two-point calibration, wired serial and BLE connections.
 - `PhSensorWidget` supports: single-point / two-point / three-point calibration (Nernst slope / linear fit / quadratic polynomial fit).
 - `CurrentSensorWidget` supports: ACS712 5A/20A/30A range switching, AC/DC measurement, zero calibration.
-- **Theme support**: all sensor modules implement `apply_theme(theme)`, delegating to `core.apply_module_theme()` to refresh page/card/QLabel colors and switching the matplotlib figure background. Page titles uniformly use FluentWidgets `TitleLabel`; scroll area / page background use `scroll_area_style()` / `page_bg_style()`.
+- **Theme support**: all sensor modules implement `apply_theme(theme)`, delegating to `core.apply_module_theme()` to refresh page/card/QLabel colors and calling `ChartPanel.apply_chart_theme()` to switch chart background/axis colors (works on both engines). Page titles uniformly use FluentWidgets `TitleLabel`; scroll area / page background use `scroll_area_style()` / `page_bg_style()`.
 - Config persistence: `load_sensor_config()` / `save_sensor_config()` write to `sensor_config.json`.
 - No automated tests — `test_serial.py` is a manual diagnostic tool.
 - No CI/CD, linting, or type-checking configured.
@@ -363,9 +386,9 @@ Create a subfolder under `传感器代码/`, drop in firmware `.ino` and host `.
 # -*- coding: utf-8 -*-
 """Temperature sensor module"""
 
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
+from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel, isDarkTheme
 from core import (
-    SerialThread, load_sensor_config, save_sensor_config,
+    SerialThread, load_sensor_config, save_sensor_config, ChartPanel,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     scroll_area_style, page_bg_style, apply_module_theme,
 )
@@ -373,16 +396,22 @@ from core import (
 class TemperatureSensorWidget(QWidget):
     def __init__(self):
         ...
+        # Chart: ChartPanel dual-engine abstraction (matplotlib / pyqtgraph, per settings)
+        self.chart = ChartPanel()
+
+    def update_chart(self):
+        """Draw curves via the transactional API — identical behavior on both engines"""
+        c = self.chart
+        c.begin()
+        c.plot(self.time_data, self.temp_data, color='#0078d4', width=2, label='Temperature')
+        c.set_labels('Time (s)', 'Temperature (°C)')
+        c.legend()
+        c.end()
 
     def apply_theme(self, theme):
-        """Theme switch: delegate to generic helper + switch figure background"""
+        """Theme switch: delegate to generic helper + switch chart theme (both engines)"""
         apply_module_theme(self, theme)
-        try:
-            from qfluentwidgets import isDarkTheme
-            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
-            self.canvas.draw()
-        except Exception:
-            pass
+        self.chart.apply_chart_theme(isDarkTheme())
 ```
 
 Restart `main.py` — the module auto-appears in sidebar (text icon) + home cards + content stack.
@@ -390,7 +419,12 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 **Theme support tips** (for new modules to adapt to light/dark themes):
 1. Use `TitleLabel` for the page title (auto-adapts to theme) — avoid `QLabel` with hardcoded colors.
 2. Use `scroll.setStyleSheet(scroll_area_style())` for the scroll area and `content.setStyleSheet(page_bg_style())` for the page background.
-3. Implement `apply_theme(self, theme)` that delegates to `apply_module_theme(self, theme)` to refresh page/card/QLabel colors, then manually switch the matplotlib figure background.
+3. Implement `apply_theme(self, theme)` that delegates to `apply_module_theme(self, theme)` to refresh page/card/QLabel colors, then call `self.chart.apply_chart_theme(...)` to switch the chart theme (works on both engines).
+
+**Chart development rules** (mandatory for new modules):
+1. Always use `core.ChartPanel` for charts — **never** create matplotlib `Figure`/`FigureCanvas` or pyqtgraph `PlotWidget` directly; bypassing the abstraction makes the settings-page engine switch ineffective for that module.
+2. Draw via the `begin()` → `plot()`/`hline()`/`set_labels()`/... → `end()` transaction flow; on engine switch `ChartPanel` automatically replays the last transaction.
+3. For multi-plot layouts use `ChartPanel(n_plots=N)` and target sub-plots via the `index` parameter.
 
 ### Meta header fields
 
@@ -408,8 +442,8 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - Chinese directory/file names throughout the firmware folder
 - `main_legacy.py` is the pre-refactor single-file archive, **no longer maintained** — edit `main.py` + module files for new features
 - `NavButton` / `SidebarWidget` are legacy code; `MainWindow` now uses `FluentWindow`'s built-in navigation — do not build new features on them
-- The settings page now implements theme switching (light / dark / follow system), about info, and repo links (`SettingsWidget`)
-- When adding a new sensor module, implement `apply_theme()` to support light/dark themes (delegate to `core.apply_module_theme()`)
+- The settings page now implements theme switching (light / dark / follow system), chart engine switching (matplotlib / pyqtgraph, hot-switch), about info, and repo links (`SettingsWidget`)
+- When adding a new sensor module, implement `apply_theme()` to support light/dark themes (delegate to `core.apply_module_theme()`); always draw charts via `core.ChartPanel` so the engine hot-switch works for the module
 - Module filenames use English snake_case (e.g. `voltage_sensor.py`), per PEP 8
 - BLE requires `bleak` (optional dependency) — graceful fallback if missing
 - Dynamic loading depends on strict meta header format — typos in field names/colons/spaces will cause load failures

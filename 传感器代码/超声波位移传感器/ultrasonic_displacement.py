@@ -25,15 +25,13 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
 import serial
 import serial.tools.list_ports
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 import numpy as np
 
 # 从公共模块导入共享代码
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    fluent_message_box,
+    fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, SimulatorThread,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style,
@@ -178,12 +176,9 @@ class UltrasonicWidget(QWidget):
         content_row.addWidget(self.data_text, stretch=0)
 
         # 右侧：图表
-        self.figure = Figure(figsize=(8, 6), dpi=100)
-        self.figure.set_facecolor('#fafafa')
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setStyleSheet("border: 1px solid #e5e5e5; border-radius: 6px;")
-        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        content_row.addWidget(self.canvas, stretch=2)
+        # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
+        self.chart = ChartPanel()
+        content_row.addWidget(self.chart, stretch=2)
 
         chart_card_layout.addLayout(content_row, 1)
         card_chart = CollapsibleCard("距离-时间曲线", card_chart_content, expanded=True, fullscreen=True)
@@ -416,14 +411,11 @@ class UltrasonicWidget(QWidget):
     def update_chart(self):
         """更新图表"""
         if len(self.data_points) > 0:
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-
-            ax.plot(self.timestamps, self.data_points, 'b-', linewidth=2)
-            ax.set_xlabel('时间 (秒)')
-            ax.set_ylabel('距离 (厘米)')
-            ax.set_title('距离传感器的距离 - 实时数据')
-            ax.grid(True, alpha=0.3)
+            c = self.chart
+            c.begin()
+            c.plot(self.timestamps, self.data_points, color='b', width=2)
+            c.set_labels('时间 (秒)', '距离 (厘米)')
+            c.set_title('距离传感器的距离 - 实时数据')
 
             # 自动调整坐标轴范围
             if len(self.timestamps) > 1:
@@ -431,12 +423,11 @@ class UltrasonicWidget(QWidget):
                 distance_range = max(self.data_points) - min(self.data_points)
 
                 if time_range > 0:
-                    ax.set_xlim(min(self.timestamps), max(self.timestamps))
+                    c.set_xlim(min(self.timestamps), max(self.timestamps))
                 if distance_range > 0:
-                    ax.set_ylim(min(self.data_points) - 0.1 * distance_range,
+                    c.set_ylim(min(self.data_points) - 0.1 * distance_range,
                                max(self.data_points) + 0.1 * distance_range)
-
-            self.canvas.draw()
+            c.end()
 
     def on_sample_interval_changed(self, interval_ms):
         """采样频率改变时更新间隔（内联下拉框触发）"""
@@ -466,8 +457,7 @@ class UltrasonicWidget(QWidget):
         self.data_text.clear()
         self.stats_label.setText("暂无数据")
         self.current_data_label.setText("等待数据...")
-        self.figure.clear()
-        self.canvas.draw()
+        self.chart.clear_chart()
         self.save_btn.setEnabled(False)
 
     def apply_theme(self, theme):
@@ -475,7 +465,6 @@ class UltrasonicWidget(QWidget):
         apply_module_theme(self, theme)
         try:
             from qfluentwidgets import isDarkTheme
-            self.figure.set_facecolor('#2d2d2d' if isDarkTheme() else '#fafafa')
-            self.canvas.draw()
+            self.chart.apply_chart_theme(isDarkTheme())
         except Exception:
             pass
