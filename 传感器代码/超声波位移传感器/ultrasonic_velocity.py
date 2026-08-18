@@ -186,12 +186,12 @@ class UltrasonicVelocityWidget(QWidget):
         data_card_layout.setSpacing(12)
 
         self.current_data_label = QLabel("当前数据: 等待连接...")
-        self.current_data_label.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
+        self.current_data_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
         self.current_data_label.setStyleSheet("color: #1a1a1a;")
         data_card_layout.addWidget(self.current_data_label)
 
         self.velocity_stats_label = QLabel("速度统计: 暂无数据")
-        self.velocity_stats_label.setFont(QFont("Microsoft YaHei", 10))
+        self.velocity_stats_label.setFont(QFont("Segoe UI", 10))
         self.velocity_stats_label.setStyleSheet("color: #888888;")
         data_card_layout.addWidget(self.velocity_stats_label)
 

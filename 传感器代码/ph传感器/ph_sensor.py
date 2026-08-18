@@ -299,21 +299,21 @@ class PhSensorWidget(QWidget):
         data_card_layout.setSpacing(12)
 
         self.current_ph_label = QLabel("pH: --.-")
-        self.current_ph_label.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
+        self.current_ph_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
         self.current_ph_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_ph_label)
 
         raw_row = QHBoxLayout()
         raw_row.setSpacing(20)
         self.current_adc_label = QLabel("ADC: ----")
-        self.current_adc_label.setFont(QFont("Microsoft YaHei", 11))
+        self.current_adc_label.setFont(QFont("Segoe UI", 11))
         self.current_adc_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_adc_label)
         raw_row.addStretch()
         data_card_layout.addLayout(raw_row)
 
         self.stats_label = QLabel("统计信息：暂无数据")
-        self.stats_label.setFont(QFont("Microsoft YaHei", 10))
+        self.stats_label.setFont(QFont("Segoe UI", 10))
         self.stats_label.setStyleSheet("color: #888888;")
         data_card_layout.addWidget(self.stats_label)
 

@@ -356,7 +356,7 @@ class CurrentSensorWidget(QWidget):
 
         # 量程显示
         self.range_label = QLabel()
-        self.range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+        self.range_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.range_label)
 
@@ -415,7 +415,7 @@ class CurrentSensorWidget(QWidget):
 
         # 可测范围显示
         self.actual_range_label = QLabel()
-        self.actual_range_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+        self.actual_range_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.actual_range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.actual_range_label)
 
@@ -465,31 +465,31 @@ class CurrentSensorWidget(QWidget):
         data_card_layout.setSpacing(12)
 
         self.current_value_label = QLabel("--.- A")
-        self.current_value_label.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
+        self.current_value_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
         self.current_value_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_value_label)
 
         raw_row = QHBoxLayout()
         raw_row.setSpacing(20)
         self.current_raw_label = QLabel("原始ADC: ------")
-        self.current_raw_label.setFont(QFont("Microsoft YaHei", 11))
+        self.current_raw_label.setFont(QFont("Segoe UI", 11))
         self.current_raw_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_raw_label)
 
         self.current_vadc_label = QLabel("ADC端电压: --.- V")
-        self.current_vadc_label.setFont(QFont("Microsoft YaHei", 11))
+        self.current_vadc_label.setFont(QFont("Segoe UI", 11))
         self.current_vadc_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_vadc_label)
 
         self.current_vsensor_label = QLabel("传感器输出: --.- V")
-        self.current_vsensor_label.setFont(QFont("Microsoft YaHei", 11))
+        self.current_vsensor_label.setFont(QFont("Segoe UI", 11))
         self.current_vsensor_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_vsensor_label)
         raw_row.addStretch()
         data_card_layout.addLayout(raw_row)
 
         self.stats_label = QLabel("暂无数据")
-        self.stats_label.setFont(QFont("Microsoft YaHei", 10))
+        self.stats_label.setFont(QFont("Segoe UI", 10))
         self.stats_label.setStyleSheet("color: #888888;")
         data_card_layout.addWidget(self.stats_label)
 

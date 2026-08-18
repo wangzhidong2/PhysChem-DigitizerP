@@ -91,7 +91,7 @@ def make_text_icon(text: str, size: int = 128) -> QIcon:
     # 字号自适应：从大字号起用 QFontMetrics 测量，缩到刚好填满画布（留 8% 边距）。
     # 这样 "V"、"pH"、"x" 都能最大化显示，不会因固定比例而偏小。
     # 之前用 0.55/0.40 固定比例，单字符偏小、多字符更小，实测不够大。
-    font = QFont("Microsoft YaHei", int(size * 0.9))
+    font = QFont("Segoe UI", int(size * 0.9))
     font.setBold(True)
     margin = int(size * 0.08)  # 上下左右各留 8% 边距
     target = QSize(size - margin * 2, size - margin * 2)
@@ -398,7 +398,7 @@ class HomePageWidget(QWidget):
             ("模块化架构", "#e3f2fd", "#1565c0"),
         ):
             tag = QLabel(text)
-            tag.setFont(QFont("Microsoft YaHei", 9))
+            tag.setFont(QFont("Segoe UI", 9))
             tag.setStyleSheet(f"""
                 background-color: {bg};
                 color: {fg};
@@ -706,7 +706,7 @@ class NavButton(QPushButton):
         # 展开时绘制文字
         if not self._is_collapsed:
             painter.setPen(text_color)
-            label_font = QFont("Microsoft YaHei", 10)
+            label_font = QFont("Segoe UI", 10)
             painter.setFont(label_font)
             text_x = 42
             text_rect = QRect(text_x, 0, rect.width() - text_x - 8, rect.height())
@@ -894,7 +894,7 @@ class SettingsWidget(QWidget):
 
     theme_change_requested = Signal(str)  # 'light' / 'dark'
 
-    APP_VERSION = "1.3"
+    APP_VERSION = "1.3.1"
 
     def __init__(self):
         super().__init__()
@@ -1203,7 +1203,7 @@ class MainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
 
-        font = QFont("Microsoft YaHei", 9)
+        font = QFont("Segoe UI", 9)
         self.setFont(font)
 
         self.current_theme = "light"

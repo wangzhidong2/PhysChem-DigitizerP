@@ -446,7 +446,7 @@ class ExpandableTextEdit(QWidget):
         # 文本区：小字号 + 不自动换行，宽度按最长一行数据动态预留
         self.text_edit = TextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont("Microsoft YaHei", 9))
+        self.text_edit.setFont(QFont("Segoe UI", 9))
         opt = QTextOption()
         opt.setWrapMode(QTextOption.WrapMode.NoWrap)
         self.text_edit.document().setDefaultTextOption(opt)
@@ -559,7 +559,7 @@ class FloatingDataPanel(QWidget):
         header_layout.addWidget(self.title_label)
 
         self.summary_label = QLabel("")
-        self.summary_label.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        self.summary_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         self.summary_label.setStyleSheet("color: #0078d4; background: transparent; border: none;")
         self.summary_label.hide()
         header_layout.addWidget(self.summary_label)
@@ -782,7 +782,7 @@ class CollapsibleCard(QWidget):
         if self._fullscreen_enabled:
             # 醒目文字提示：点击与按钮一样触发全屏
             self.fullscreen_hint = QLabel("全屏查看图表")
-            self.fullscreen_hint.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+            self.fullscreen_hint.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
             self.fullscreen_hint.setCursor(Qt.CursorShape.PointingHandCursor)
             self.fullscreen_hint.setObjectName("card_accent_text")
             self.fullscreen_hint.mouseReleaseEvent = lambda e: (
@@ -799,7 +799,7 @@ class CollapsibleCard(QWidget):
             header_layout.addWidget(self.fullscreen_btn)
 
         self.arrow_label = QLabel("▲" if expanded else "▼")
-        self.arrow_label.setFont(QFont("Microsoft YaHei", 12))
+        self.arrow_label.setFont(QFont("Segoe UI", 12))
         self.arrow_label.setObjectName("card_arrow")
         header_layout.addWidget(self.arrow_label)
 
