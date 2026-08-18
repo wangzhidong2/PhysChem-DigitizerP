@@ -18,7 +18,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
+    QCheckBox, QInputDialog, QStyle, QScrollArea, 
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
@@ -34,6 +34,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
+    fluent_message_box,
     SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
     SampleRateComboBox, CalibrationDialog,
     load_sensor_config, save_sensor_config,
@@ -482,7 +483,7 @@ class ForceSensorWidget(QWidget):
 
     def scan_ble(self):
         if not BLE_AVAILABLE:
-            QMessageBox.warning(self, "提示", "请先安装 bleak 库：pip install bleak")
+            fluent_message_box(self, "提示", "请先安装 bleak 库：pip install bleak")
             return
 
         self.ble_scan_btn.setEnabled(False)
@@ -532,12 +533,12 @@ class ForceSensorWidget(QWidget):
             self.current_force_label.setText("力/质量: 模拟器等待数据...")
             self.current_raw_label.setText("原始ADC: 模拟器连接中...")
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
+            fluent_message_box(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         port = self.port_combo.currentText()
         if not port:
-            QMessageBox.warning(self, "错误", "请选择串口")
+            fluent_message_box(self, "错误", "请选择串口")
             return
         try:
             self.serial_thread = SerialThread(port)
@@ -551,22 +552,22 @@ class ForceSensorWidget(QWidget):
             self.current_force_label.setText("力/质量: 等待数据...")
             self.current_raw_label.setText("原始ADC: 连接中...")
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
+            fluent_message_box(self, "连接错误", f"无法连接串口: {e}")
 
     def connect_ble(self):
         if not BLE_AVAILABLE:
-            QMessageBox.warning(self, "提示", "请先安装 bleak 库：pip install bleak")
+            fluent_message_box(self, "提示", "请先安装 bleak 库：pip install bleak")
             return
 
         device_text = self.ble_device_combo.currentText()
         if not device_text or "未找到" in device_text:
-            QMessageBox.warning(self, "提示", "请先扫描并选择 BLE 设备")
+            fluent_message_box(self, "提示", "请先扫描并选择 BLE 设备")
             return
 
         try:
             address = device_text.split("(")[-1].rstrip(")")
         except:
-            QMessageBox.warning(self, "提示", "无法解析设备地址")
+            fluent_message_box(self, "提示", "无法解析设备地址")
             return
 
         try:
@@ -582,7 +583,7 @@ class ForceSensorWidget(QWidget):
             self.current_force_label.setText("力/质量: BLE连接中...")
             self.current_raw_label.setText("原始ADC: BLE连接中...")
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"BLE 连接失败: {e}")
+            fluent_message_box(self, "连接错误", f"BLE 连接失败: {e}")
 
     def on_ble_status(self, status):
         if status == "connected":
@@ -611,7 +612,7 @@ class ForceSensorWidget(QWidget):
     def send_tare(self):
         """发送去皮命令"""
         if not self.serial_thread and not self.ble_thread:
-            QMessageBox.warning(self, "警告", "请先连接设备")
+            fluent_message_box(self, "警告", "请先连接设备")
             return
 
         try:
@@ -629,7 +630,7 @@ class ForceSensorWidget(QWidget):
                     else:
                         QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 等待数据..."))
                 else:
-                    QMessageBox.warning(self, "错误", "串口未打开，无法发送去皮命令")
+                    fluent_message_box(self, "错误", "串口未打开，无法发送去皮命令")
 
             elif self.ble_thread and self.ble_thread.isRunning():
                 if hasattr(self.ble_thread, 'send_command'):
@@ -645,10 +646,10 @@ class ForceSensorWidget(QWidget):
                     else:
                         QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 等待数据..."))
                 else:
-                    QMessageBox.information(self, "提示", "BLE连接不支持去皮命令，请使用空载校准功能")
+                    fluent_message_box(self, "提示", "BLE连接不支持去皮命令，请使用空载校准功能")
 
         except Exception as e:
-            QMessageBox.critical(self, "去皮失败", f"发送去皮命令时出错：{e}")
+            fluent_message_box(self, "去皮失败", f"发送去皮命令时出错：{e}")
             self.current_force_label.setText("力/质量: 去皮失败")
 
     def start_calibration(self):
@@ -684,7 +685,7 @@ class ForceSensorWidget(QWidget):
                     self.cal_status_label.setText(f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
                     self.cal_status_label.setStyleSheet("color: green; font-weight: bold;")
                     self.current_unit_label.setText(f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}（校准比例={self.scale:.6f}）")
-                    QMessageBox.information(self, "校准成功",
+                    fluent_message_box(self, "校准成功",
                         f"校准完成！\n"
                         f"空载ADC: {self.cal_raw_before}\n"
                         f"加载ADC: {self.cal_raw_after}\n"
@@ -692,7 +693,7 @@ class ForceSensorWidget(QWidget):
                         f"校准比例: {self.scale:.6f}\n"
                         f"砝码质量: {self.cal_known_weight}g")
                 else:
-                    QMessageBox.warning(self, "校准失败", "ADC差值为0，请检查传感器是否正常工作")
+                    fluent_message_box(self, "校准失败", "ADC差值为0，请检查传感器是否正常工作")
 
             self.cal_step = 0
             self.calibrate_btn.setText("校准（CALIBRATE）")
@@ -724,7 +725,7 @@ class ForceSensorWidget(QWidget):
 
     def handle_data(self, data):
         if data.startswith("ERROR:"):
-            QMessageBox.critical(self, "连接错误", data[6:])
+            fluent_message_box(self, "连接错误", data[6:])
             self.disconnect_all()
             return
 
@@ -874,7 +875,7 @@ class ForceSensorWidget(QWidget):
 
     def save_data(self):
         if len(self.force_data) == 0:
-            QMessageBox.warning(self, "警告", "没有数据可保存")
+            fluent_message_box(self, "警告", "没有数据可保存")
             return
 
         try:
@@ -893,12 +894,12 @@ class ForceSensorWidget(QWidget):
                         zip(self.time_data, self.force_data, self.raw_data[-len(self.time_data):])):
                         f.write(f"{time_val:.3f},{raw_val},{force_val:.4f}\n")
 
-            QMessageBox.information(self, "成功",
+            fluent_message_box(self, "成功",
                                    f"数据已保存到：{filename}\n"
                                    f"共 {len(self.force_data)} 个数据点\n"
                                    f"单位：{self.UNIT_LABELS.get(self.current_unit, 'g')}")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败：{e}")
+            fluent_message_box(self, "错误", f"保存失败：{e}")
 
     def clear_data(self):
         self.force_data.clear()

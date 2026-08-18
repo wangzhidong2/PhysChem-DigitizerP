@@ -150,6 +150,23 @@ def save_sensor_config(module_name, config_dict):
         return False
 
 
+def fluent_message_box(parent, title, text):
+    """WinUI3 风格提示弹窗，替代原生 QMessageBox 的 warning/critical/information。
+
+    单「确定」按钮模态对话框，标题与按钮均为中文，样式随 Fluent 主题。
+
+    Args:
+        parent: 父窗口（各传感器模块传 self）
+        title: 弹窗标题（如 "连接错误"）
+        text: 提示内容
+    """
+    box = MessageBox(title, text, parent)
+    box.yesButton.setText("确定")
+    box.cancelButton.hide()
+    box.buttonLayout.insertStretch(0, 1)
+    box.exec()
+
+
 # ============================================================
 # 串口通信线程
 # ============================================================

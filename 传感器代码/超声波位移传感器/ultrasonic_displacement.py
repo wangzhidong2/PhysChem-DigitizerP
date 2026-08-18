@@ -17,7 +17,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QGridLayout, QStyle, QScrollArea, QMessageBox,
+    QCheckBox, QInputDialog, QGridLayout, QStyle, QScrollArea, 
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
@@ -33,6 +33,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
+    fluent_message_box,
     SerialThread, SampleRateComboBox, SimulatorThread,
     load_sensor_config, save_sensor_config,
     card_style, primary_btn_style, accent_btn_style,
@@ -276,13 +277,13 @@ class UltrasonicWidget(QWidget):
             self.current_data_label.setText("模拟器已连接，等待数据...")
 
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
+            fluent_message_box(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         """连接串口"""
         port = self.port_combo.currentText()
         if not port:
-            QMessageBox.warning(self, "错误", "请选择串口")
+            fluent_message_box(self, "错误", "请选择串口")
             return
 
         try:
@@ -295,7 +296,7 @@ class UltrasonicWidget(QWidget):
             self.current_data_label.setText("已连接，等待数据...")
 
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
+            fluent_message_box(self, "连接错误", f"无法连接串口: {e}")
 
     def disconnect_serial(self):
         """断开串口连接"""
@@ -335,7 +336,7 @@ class UltrasonicWidget(QWidget):
         """处理接收到的数据"""
         # 检查是否是错误信息
         if data.startswith("ERROR:"):
-            QMessageBox.critical(self, "串口错误", data[6:])
+            fluent_message_box(self, "串口错误", data[6:])
             self.disconnect_serial()
             return
 
@@ -444,7 +445,7 @@ class UltrasonicWidget(QWidget):
     def save_data(self):
         """保存数据到文件"""
         if len(self.data_points) == 0:
-            QMessageBox.warning(self, "警告", "没有数据可保存")
+            fluent_message_box(self, "警告", "没有数据可保存")
             return
 
         try:
@@ -454,9 +455,9 @@ class UltrasonicWidget(QWidget):
                 for i, (timestamp, distance) in enumerate(zip(self.timestamps, self.data_points)):
                     f.write(f"{timestamp*1000:.0f},{distance:.3f}\n")
 
-            QMessageBox.information(self, "成功", f"数据已保存到: {filename}")
+            fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+            fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
         """清除数据"""

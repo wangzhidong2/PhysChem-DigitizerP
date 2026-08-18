@@ -17,7 +17,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
+    QCheckBox, QInputDialog, QStyle, QScrollArea, 
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
@@ -33,6 +33,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
+    fluent_message_box,
     SerialThread, SampleRateComboBox, CalibrationDialog, SimulatorThread,
     load_sensor_config, save_sensor_config, _get_config_file_path,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
@@ -434,13 +435,13 @@ class PhSensorWidget(QWidget):
             self.current_ph_label.setText("pH: --.-")
             self.current_adc_label.setText("ADC: 模拟器连接中...")
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
+            fluent_message_box(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         """连接串口"""
         port = self.port_combo.currentText()
         if not port:
-            QMessageBox.warning(self, "错误", "请选择串口")
+            fluent_message_box(self, "错误", "请选择串口")
             return
 
         try:
@@ -455,7 +456,7 @@ class PhSensorWidget(QWidget):
             self.current_adc_label.setText("ADC: 连接中...")
 
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
+            fluent_message_box(self, "连接错误", f"无法连接串口: {e}")
 
     def disconnect_serial(self):
         """断开串口连接"""
@@ -499,7 +500,7 @@ class PhSensorWidget(QWidget):
     def handle_data(self, data):
         """处理接收到的数据"""
         if data.startswith("ERROR:"):
-            QMessageBox.critical(self, "串口错误", data[6:])
+            fluent_message_box(self, "串口错误", data[6:])
             self.disconnect_serial()
             return
 
@@ -620,7 +621,7 @@ class PhSensorWidget(QWidget):
     def save_data(self):
         """保存数据到文件"""
         if len(self.ph_data) == 0:
-            QMessageBox.warning(self, "警告", "没有数据可保存")
+            fluent_message_box(self, "警告", "没有数据可保存")
             return
 
         try:
@@ -631,11 +632,11 @@ class PhSensorWidget(QWidget):
                     zip(self.time_data, self.ph_data, self.adc_data)):
                     f.write(f"{time_val:.3f},{adc_val},{ph_val:.3f}\n")
 
-            QMessageBox.information(self, "成功",
+            fluent_message_box(self, "成功",
                                    f"数据已保存到：{filename}\n"
                                    f"共 {len(self.ph_data)} 个数据点")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败：{e}")
+            fluent_message_box(self, "错误", f"保存失败：{e}")
 
     def on_sample_interval_changed(self, interval_ms):
         """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
@@ -677,7 +678,7 @@ class PhSensorWidget(QWidget):
             # 保存配置到文件
             self.save_config()
 
-            QMessageBox.information(self, "成功",
+            fluent_message_box(self, "成功",
                                    "校准参数已更新并保存！\n新的校准曲线将立即生效。\n下次启动程序时会自动加载此配置。")
 
     def apply_theme(self, theme):

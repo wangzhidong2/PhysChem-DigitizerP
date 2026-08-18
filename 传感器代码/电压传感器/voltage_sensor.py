@@ -18,7 +18,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
+    QCheckBox, QInputDialog, QStyle, QScrollArea, 
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
@@ -34,6 +34,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
+    fluent_message_box,
     SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
     SampleRateComboBox,
     load_sensor_config, save_sensor_config,
@@ -762,7 +763,7 @@ class VoltageSensorWidget(QWidget):
         else:
             # 执行去皮：要求有数据
             if not self.voltage_data:
-                QMessageBox.warning(self, "提示", "请先开始采集数据后再去皮")
+                fluent_message_box(self, "提示", "请先开始采集数据后再去皮")
                 return
             # 取最近 10 个数据点平均值作为空载偏移
             recent = self.voltage_data[-10:] if len(self.voltage_data) >= 10 else self.voltage_data
@@ -810,7 +811,7 @@ class VoltageSensorWidget(QWidget):
 
     def scan_ble(self):
         if not BLE_AVAILABLE:
-            QMessageBox.warning(self, "提示", "请先安装 bleak 库：pip install bleak")
+            fluent_message_box(self, "提示", "请先安装 bleak 库：pip install bleak")
             return
         self.ble_scan_btn.setEnabled(False)
         self.ble_scan_btn.setText("扫描中...")
@@ -857,12 +858,12 @@ class VoltageSensorWidget(QWidget):
             self.current_raw_label.setText("原始ADC: 模拟器连接中...")
             self.current_vadc_label.setText("ADC端电压: --.- V")
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
+            fluent_message_box(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         port = self.port_combo.currentText()
         if not port:
-            QMessageBox.warning(self, "错误", "请选择串口")
+            fluent_message_box(self, "错误", "请选择串口")
             return
         try:
             self.serial_thread = SerialThread(port)
@@ -875,20 +876,20 @@ class VoltageSensorWidget(QWidget):
             self.current_raw_label.setText("原始ADC: 连接中...")
             self.current_vadc_label.setText("ADC端电压: --.- V")
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
+            fluent_message_box(self, "连接错误", f"无法连接串口: {e}")
 
     def connect_ble(self):
         if not BLE_AVAILABLE:
-            QMessageBox.warning(self, "提示", "请先安装 bleak 库：pip install bleak")
+            fluent_message_box(self, "提示", "请先安装 bleak 库：pip install bleak")
             return
         device_text = self.ble_device_combo.currentText()
         if not device_text or "未找到" in device_text:
-            QMessageBox.warning(self, "提示", "请先扫描并选择 BLE 设备")
+            fluent_message_box(self, "提示", "请先扫描并选择 BLE 设备")
             return
         try:
             address = device_text.split("(")[-1].rstrip(")")
         except:
-            QMessageBox.warning(self, "提示", "无法解析设备地址")
+            fluent_message_box(self, "提示", "无法解析设备地址")
             return
         try:
             self.ble_thread = BLESerialThread(address)
@@ -901,7 +902,7 @@ class VoltageSensorWidget(QWidget):
             self.current_voltage_label.setText("BLE连接中...")
             self.current_raw_label.setText("ADC: BLE连接中...")
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"BLE 连接失败: {e}")
+            fluent_message_box(self, "连接错误", f"BLE 连接失败: {e}")
 
     def on_ble_status(self, status):
         if status == "connected":
@@ -949,7 +950,7 @@ class VoltageSensorWidget(QWidget):
 
     def handle_data(self, data):
         if data.startswith("ERROR:"):
-            QMessageBox.critical(self, "连接错误", data[6:])
+            fluent_message_box(self, "连接错误", data[6:])
             self.disconnect_all()
             return
 
@@ -1062,7 +1063,7 @@ class VoltageSensorWidget(QWidget):
 
     def save_data(self):
         if len(self.voltage_data) == 0:
-            QMessageBox.warning(self, "警告", "没有数据可保存")
+            fluent_message_box(self, "警告", "没有数据可保存")
             return
         try:
             filename = f"voltage_sensor_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -1072,9 +1073,9 @@ class VoltageSensorWidget(QWidget):
                 for i, (timestamp, voltage) in enumerate(zip(self.time_data, self.voltage_data)):
                     raw = self.raw_data[i] if i < len(self.raw_data) else 0
                     f.write(f"{timestamp:.3f},{raw},{self.to_current_unit(voltage):.6f}\n")
-            QMessageBox.information(self, "成功", f"数据已保存到: {filename}")
+            fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+            fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
         self.voltage_data.clear()

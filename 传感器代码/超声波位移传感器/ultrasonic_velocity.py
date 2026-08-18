@@ -17,7 +17,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QScrollArea, QMessageBox,
+    QCheckBox, QInputDialog, QStyle, QScrollArea, 
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
@@ -33,6 +33,7 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
+    fluent_message_box,
     SerialThread, SampleRateComboBox, SimulatorThread,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, ExpandableTextEdit,
@@ -309,13 +310,13 @@ class UltrasonicVelocityWidget(QWidget):
             self.current_data_label.setText("当前数据: 模拟器已连接，等待数据...")
 
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"模拟器启动失败: {e}")
+            fluent_message_box(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
         """连接串口"""
         port = self.port_combo.currentText()
         if not port:
-            QMessageBox.warning(self, "错误", "请选择串口")
+            fluent_message_box(self, "错误", "请选择串口")
             return
 
         try:
@@ -328,7 +329,7 @@ class UltrasonicVelocityWidget(QWidget):
             self.current_data_label.setText("当前数据: 已连接，等待数据...")
 
         except Exception as e:
-            QMessageBox.critical(self, "连接错误", f"无法连接串口: {e}")
+            fluent_message_box(self, "连接错误", f"无法连接串口: {e}")
 
     def disconnect_serial(self):
         """断开串口连接"""
@@ -369,7 +370,7 @@ class UltrasonicVelocityWidget(QWidget):
         """处理接收到的数据 - 回声定位法计算速度"""
         # 检查是否是错误信息
         if data.startswith("ERROR:"):
-            QMessageBox.critical(self, "串口错误", data[6:])
+            fluent_message_box(self, "串口错误", data[6:])
             self.disconnect_serial()
             return
 
@@ -536,7 +537,7 @@ class UltrasonicVelocityWidget(QWidget):
     def save_data(self):
         """保存数据到文件 - 超声波速度"""
         if len(self.distance_data) == 0:
-            QMessageBox.warning(self, "警告", "没有数据可保存")
+            fluent_message_box(self, "警告", "没有数据可保存")
             return
 
         try:
@@ -550,9 +551,9 @@ class UltrasonicVelocityWidget(QWidget):
                     velocity_str = f"{velocity:.3f}" if velocity is not None else ""
                     f.write(f"{time_val:.3f},{distance:.3f},{velocity_str}\n")
 
-            QMessageBox.information(self, "成功", f"数据已保存到: {filename}")
+            fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+            fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
         """清除数据"""
