@@ -38,8 +38,23 @@ from qfluentwidgets import (
     ComboBox, InfoBar, InfoBarPosition, BodyLabel,
     TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
     SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
-    SwitchSettingCard, MessageBox, qconfig,
+    SwitchSettingCard, MessageBox, qconfig, IndicatorPosition,
 )
+
+
+class ZhSwitchSettingCard(SwitchSettingCard):
+    """中文开关设置卡片。
+
+    SwitchSettingCard.setValue 用 self.tr('On'/'Off') 设置开关文字，
+    无中文翻译器时回退英文。此处覆写为硬编码中文。
+    """
+
+    def setValue(self, isChecked: bool):
+        if self.configItem:
+            qconfig.set(self.configItem, isChecked)
+        self.switchButton.setChecked(isChecked)
+        self.switchButton.setText("开" if isChecked else "关")
+
 
 # 公共模块（与各传感器模块共享）
 from core import (
@@ -995,12 +1010,12 @@ class SettingsWidget(QWidget):
         返回空），不写入新配置（save_sensor_config 静默丢弃），
         本次运行的所有更改退出后销毁。
         """
-        card = SwitchSettingCard(
+        card = ZhSwitchSettingCard(
             FIF.SAVE, "保存配置",
             "关闭后不读取已保存的校准配置，本次所有更改退出程序时销毁",
             configItem=app_cfg.configPersistenceEnabled,
         )
-        # 开关按钮显示中文
+        # setChecked 内部 _updateText 读 onText/offText，同步设中文避免闪烁
         card.switchButton.setOnText("开")
         card.switchButton.setOffText("关")
         self._persistence_card = card
