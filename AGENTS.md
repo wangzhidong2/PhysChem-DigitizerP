@@ -20,7 +20,9 @@
 ## 安装依赖
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 numpy>=1.21.0
+pip install PySide6>=6.4.0 numpy>=1.21.0
+# 串口通信（连接真实下位机需要；未安装时串口功能优雅降级，可用模拟器模式）
+pip install pyserial>=3.5
 # 绘图引擎（matplotlib / pyqtgraph 至少安装其一，推荐都装）
 pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
 # WinUI3 风格组件库（必需，主窗口基于 FluentWindow）
@@ -38,6 +40,8 @@ pip install bleak
 - `sensor_config.json` 存储校准参数（运行时自动创建/更新）
 - 双绘图引擎：matplotlib（默认）/ pyqtgraph，应用配置项 `app_cfg.chartEngine` 持久化，设置页可运行时热切换；matplotlib 字体（微软雅黑）在 `core.py` 中全局设置
 - 引擎缺失时优雅降级：未安装的引擎选项在设置页灰显不可选；配置的引擎被卸载时自动降级到另一可用引擎；两个都缺时 `ChartPanel` 显示"未检测到图表引擎"占位提示，绘图 API 变为空操作，其余功能不受影响
+- pyserial 缺失时优雅降级：`core.SERIAL_AVAILABLE` 检测可用性；`core.list_serial_ports()` 统一枚举（未装返回空列表）；未装时各模块自动切"模拟器"模式、串口下拉框显示占位、连接弹安装指引（`core.serial_unavailable_hint()`）
+- 启动控制台会打印可选依赖状态：pyserial / bleak 缺失提示与图表引擎安装状态（含双引擎均缺失的幽默提示）
 - 沙箱无显示环境运行验证：`QT_QPA_PLATFORM=offscreen python main.py`
 
 ## 目录结构
@@ -230,6 +234,7 @@ class TemperatureSensorWidget(QWidget):
 - `NavButton` / `SidebarWidget` 是遗留代码，`MainWindow` 已改用 `FluentWindow` 自带导航，不要基于它们开发新功能
 - 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、图表引擎切换（matplotlib / pyqtgraph，热切换，未安装的引擎灰显不可选）、关于信息、仓库链接（`SettingsWidget`）
 - 图表引擎是**可选依赖**：matplotlib / pyqtgraph 至少安装其一；两个都缺时程序照常启动，图表区域显示"未检测到图表引擎"占位提示
+- **pyserial 是可选依赖**：未安装时程序照常启动，各传感器模块自动切"模拟器"模式，串口连接弹安装指引；模块代码**禁止**直接 `import serial`，一律走 `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`
 - 新增传感器模块时建议实现 `apply_theme()` 方法以适配亮/暗主题（委托 `core.apply_module_theme()`）；图表一律用 `core.ChartPanel`，保证引擎热切换与占位降级对模块生效
 - 模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
 - BLE 功能需要 `bleak`（可选依赖），未安装时会自动降级
@@ -255,7 +260,9 @@ PySide6 + FluentWidgets (WinUI3 style) GUI application + Arduino/ESP32 firmware 
 ## Install
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 numpy>=1.21.0
+pip install PySide6>=6.4.0 numpy>=1.21.0
+# Serial communication (needed for real hardware; without it serial features degrade gracefully and the simulator still works)
+pip install pyserial>=3.5
 # Chart engines (install at least one of matplotlib / pyqtgraph; both recommended)
 pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
 # WinUI3 style component library (required, main window is based on FluentWindow)
@@ -273,6 +280,8 @@ No `requirements.txt`, `setup.py`, or `pyproject.toml` exists.
 - `sensor_config.json` stores calibration params (auto-created/updated at runtime)
 - Dual chart engines: matplotlib (default) / pyqtgraph, persisted via the `app_cfg.chartEngine` config item, hot-switchable at runtime from the settings page; matplotlib font (Microsoft YaHei) is set globally in `core.py`
 - Graceful degradation when an engine is missing: unavailable engine options are grayed out (disabled) in the settings combo box; if the configured engine is uninstalled, the app falls back to the other available engine at startup; when both are missing, `ChartPanel` shows a "no chart engine detected" placeholder and drawing APIs become no-ops — all other features keep working
+- Graceful degradation when pyserial is missing: `core.SERIAL_AVAILABLE` detects availability; `core.list_serial_ports()` is the single port-enumeration entry (returns an empty list when missing); without it every sensor module auto-switches to simulator mode, the port combo shows a placeholder, and connecting pops an install hint (`core.serial_unavailable_hint()`)
+- The startup console prints optional-dependency status: pyserial / bleak missing hints and chart engine installation status (including a humorous line when both chart engines are missing)
 - Headless sandbox verification: `QT_QPA_PLATFORM=offscreen python main.py`
 
 ## Directory structure
@@ -465,6 +474,7 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - `NavButton` / `SidebarWidget` are legacy code; `MainWindow` now uses `FluentWindow`'s built-in navigation — do not build new features on them
 - The settings page now implements theme switching (light / dark / follow system), chart engine switching (matplotlib / pyqtgraph, hot-switch; uninstalled engines grayed out and unselectable), about info, and repo links (`SettingsWidget`)
 - Chart engines are **optional dependencies**: install at least one of matplotlib / pyqtgraph; when both are missing the app still starts and chart areas show a "no chart engine detected" placeholder
+- **pyserial is an optional dependency**: without it the app still starts, every sensor module auto-switches to simulator mode, and serial connection pops an install hint; module code must **never** `import serial` directly — always go through `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`
 - When adding a new sensor module, implement `apply_theme()` to support light/dark themes (delegate to `core.apply_module_theme()`); always draw charts via `core.ChartPanel` so engine hot-switching and placeholder degradation work for the module
 - Module filenames use English snake_case (e.g. `voltage_sensor.py`), per PEP 8
 - BLE requires `bleak` (optional dependency) — graceful fallback if missing

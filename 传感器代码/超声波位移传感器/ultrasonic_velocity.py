@@ -23,8 +23,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
-import serial
-import serial.tools.list_ports
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -33,6 +31,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, SimulatorThread,
+    SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
@@ -79,6 +78,9 @@ class UltrasonicVelocityWidget(QWidget):
         self.last_sample_time_ms = 0   # 上次采样时间
 
         self.init_ui()
+        # pyserial 未安装：自动切换到模拟器模式（串口连接优雅降级）
+        if not SERIAL_AVAILABLE:
+            self.mode_combo.setCurrentIndex(self.mode_combo.findText("模拟器"))
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -267,11 +269,13 @@ class UltrasonicVelocityWidget(QWidget):
         self.timer.start(100)  # 每100ms更新一次图表
 
     def refresh_ports(self):
-        """刷新可用串口列表"""
+        """刷新可用串口列表（pyserial 未安装时显示占位提示）"""
         self.port_combo.clear()
-        ports = serial.tools.list_ports.comports()
-        for port in ports:
-            self.port_combo.addItem(port.device)
+        ports = list_serial_ports()
+        for device, _desc in ports:
+            self.port_combo.addItem(device)
+        if not ports:
+            self.port_combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
 
     def on_mode_changed(self, index):
         if index == 0:
@@ -309,6 +313,9 @@ class UltrasonicVelocityWidget(QWidget):
 
     def connect_serial(self):
         """连接串口"""
+        if not SERIAL_AVAILABLE:
+            fluent_message_box(self, "提示", serial_unavailable_hint())
+            return
         port = self.port_combo.currentText()
         if not port:
             fluent_message_box(self, "错误", "请选择串口")

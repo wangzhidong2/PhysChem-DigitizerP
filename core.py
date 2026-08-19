@@ -44,8 +44,17 @@ from qfluentwidgets import (
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
 )
 
-import serial
-import serial.tools.list_ports
+# pyserial 为可选依赖：未安装时程序仍可运行（模拟器模式不受影响），
+# 串口连接相关功能优雅降级（列表为空 + 连接时弹提示装库）
+try:
+    import serial
+    import serial.tools.list_ports
+    SERIAL_AVAILABLE = True
+except ImportError:
+    serial = None
+    SERIAL_AVAILABLE = False
+    # 启动控制台提示（用户指定文案）：未装库不致命，模拟器照常可用
+    print("未安装pyserial，何意味？你想不连接下位机吗（狗头）？")
 
 # ============================================================
 # matplotlib 全局字体设置（图表引擎为 matplotlib 时才需要；
@@ -78,6 +87,12 @@ def _detect_chart_engine(name):
 #: 各引擎可用性（导入 core 时检测一次）。任一可用即可绘图；
 #: 都不可用时 ChartPanel 显示「请安装图表引擎」占位，程序其余功能不受影响
 CHART_ENGINE_AVAILABLE = {name: _detect_chart_engine(name) for name in CHART_ENGINES}
+
+# 启动控制台提示（用户指定文案）：打印图表引擎安装状态
+for _engine in CHART_ENGINES:
+    print(f"图表引擎 {_engine}: {'✓ 已安装' if CHART_ENGINE_AVAILABLE[_engine] else '✗ 未安装'}")
+if not any(CHART_ENGINE_AVAILABLE.values()):
+    print("？？？你为什么不安装图表引擎？行，那你别想看实时图表了（狗头）")
 
 
 def chart_engine_available(engine):
@@ -744,6 +759,10 @@ class SerialThread(QThread):
         self.running = False
 
     def run(self):
+        # pyserial 未安装：不发 ERROR 文本（各模块按连接失败弹窗处理）
+        if not SERIAL_AVAILABLE:
+            print("⚠️ pyserial 未安装，串口连接不可用")
+            return
         try:
             self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
             self.running = True
@@ -766,6 +785,26 @@ class SerialThread(QThread):
         self.running = False
         if self.serial:
             self.serial.close()
+
+
+def list_serial_ports():
+    """枚举可用串口，返回 [(device, description), ...]。
+
+    pyserial 未安装时返回空列表（调用方据此提示安装），
+    其余情况任何异常都吞掉返回空列表，避免刷新按钮崩溃。
+    """
+    if not SERIAL_AVAILABLE:
+        return []
+    try:
+        return [(p.device, p.description or "") for p in serial.tools.list_ports.comports()]
+    except Exception as e:
+        print(f"⚠️ 枚举串口失败: {e}")
+        return []
+
+
+def serial_unavailable_hint():
+    """pyserial 未安装时的用户提示文案（供各模块弹窗使用）。"""
+    return "未安装 pyserial，串口连接不可用。\n\n请安装后重启程序：\npip install pyserial\n\n提示：当前仍可使用「模拟器」模式体验全部功能。"
 
 
 class SimulatorThread(QThread):
@@ -845,6 +884,8 @@ try:
     BLE_AVAILABLE = True
 except ImportError:
     BLE_AVAILABLE = False
+    # 启动控制台提示（用户指定文案）：蓝牙功能优雅降级，其余不受影响
+    print("未安装bleak，蓝牙连接不可用。")
 
 
 class BLESerialThread(QThread):

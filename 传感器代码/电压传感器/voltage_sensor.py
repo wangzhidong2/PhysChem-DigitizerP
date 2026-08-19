@@ -24,8 +24,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
-import serial
-import serial.tools.list_ports
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -36,6 +34,7 @@ from core import (
     SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
     SampleRateComboBox,
     load_sensor_config, save_sensor_config,
+    SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     BLE_AVAILABLE, CollapsibleCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
@@ -130,6 +129,9 @@ class VoltageSensorWidget(QWidget):
         self.tare_active = self.config.get('tare_active', False)
 
         self.init_ui()
+        # pyserial 未安装：自动切换到模拟器模式（串口连接优雅降级）
+        if not SERIAL_AVAILABLE:
+            self.mode_combo.setCurrentIndex(self.mode_combo.findText("模拟器"))
 
     def load_config(self):
         config = load_sensor_config('voltage_sensor')
@@ -799,10 +801,13 @@ class VoltageSensorWidget(QWidget):
             self.actual_range_label.setText(f"实际量程: -{actual_full:.2f}V~+{actual_full:.2f}V")
 
     def refresh_ports(self):
+        """刷新可用串口列表（pyserial 未安装时显示占位提示）"""
         self.port_combo.clear()
-        ports = serial.tools.list_ports.comports()
-        for port in ports:
-            self.port_combo.addItem(port.device)
+        ports = list_serial_ports()
+        for device, _desc in ports:
+            self.port_combo.addItem(device)
+        if not ports:
+            self.port_combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
 
     def scan_ble(self):
         if not BLE_AVAILABLE:
@@ -856,6 +861,9 @@ class VoltageSensorWidget(QWidget):
             fluent_message_box(self, "连接错误", f"模拟器启动失败: {e}")
 
     def connect_serial(self):
+        if not SERIAL_AVAILABLE:
+            fluent_message_box(self, "提示", serial_unavailable_hint())
+            return
         port = self.port_combo.currentText()
         if not port:
             fluent_message_box(self, "错误", "请选择串口")
