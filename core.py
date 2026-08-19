@@ -22,6 +22,7 @@ import json
 import time
 import random
 import asyncio
+import bisect
 import threading
 import importlib
 import importlib.util
@@ -197,7 +198,29 @@ def save_sensor_config(module_name, config_dict):
         print(f"✓ [{module_name}] 配置已保存到 {config_path}")
         return True
     except Exception as e:
-        print(f"⚠️ 保存 [{module_name}] 配置失败：{e}")
+        print(f"⚠️ 保存 [{module_name}] 配置失败: {e}")
+        return False
+
+
+def clear_sensor_config():
+    """删除统一配置文件 sensor_config.json，所有校准配置恢复默认值。
+
+    由设置页「清除用户设置」调用（确认框后）。
+    已加载模块内存中的配置不受影响，重启程序后全部使用默认值。
+
+    Returns:
+        bool: 是否成功（文件本就不存在也视为成功）
+    """
+    config_path = _get_config_file_path()
+    try:
+        if os.path.exists(config_path):
+            os.remove(config_path)
+            print(f"✓ 已清除用户配置文件：{config_path}")
+        else:
+            print("ℹ️ 配置文件不存在，无需清除")
+        return True
+    except Exception as e:
+        print(f"⚠️ 清除配置文件失败: {e}")
         return False
 
 
@@ -269,6 +292,8 @@ class ChartPanel(QWidget):
         self._dark = isDarkTheme()
         self._spec = None       # 当前事务（begin~end 之间累积）
         self._last = None       # 最近一次已提交事务（引擎切换时重放）
+        self._pg_hover_vline = None   # pyqtgraph 悬停指示线（懒创建）
+        self._pg_hover_label = None   # pyqtgraph 悬停数据标签（懒创建）
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -305,11 +330,15 @@ class ChartPanel(QWidget):
             pi.showGrid(x=True, y=True, alpha=0.3)
             self._pg_plots.append(pi)
         self._apply_pg_theme()
+        # 悬停交互：鼠标移动时在最近数据点上弹出标签（时间 + 数值）
+        self._widget.scene().sigMouseMoved.connect(self._on_pg_mouse_moved)
         self._lay.addWidget(self._widget)
 
     def _apply_pg_theme(self):
         """pyqtgraph 亮/暗主题：背景、轴、刻度文字颜色全套适配。"""
         from pyqtgraph import mkPen
+        # 丢弃旧主题配色的悬停元素，下次悬停时按新主题重建
+        self._discard_pg_hover()
         bg = '#2d2d2d' if self._dark else '#fafafa'
         fg = '#e0e0e0' if self._dark else '#1a1a1a'
         self._widget.setBackground(bg)
@@ -318,6 +347,114 @@ class ChartPanel(QWidget):
                 ax = pi.getAxis(loc)
                 ax.setPen(mkPen(fg, width=1))
                 ax.setTextPen(fg)
+
+    # ---------------- pyqtgraph 悬停交互 ----------------
+    @staticmethod
+    def _nearest_point(xs, ys, x):
+        """返回 (|dx|, x, y) 横坐标最接近 x 的数据点；空序列返回 None。
+
+        时间序列（横坐标递增）用二分定位，长序列下鼠标移动不掉帧；
+        横坐标非递增时退回线性扫描保证结果正确。
+        """
+        if not xs:
+            return None
+        if len(xs) > 64 and xs[0] <= xs[-1]:
+            k = bisect.bisect_left(xs, x)
+            best = None
+            for j in (k - 1, k):
+                if 0 <= j < len(xs):
+                    d = abs(xs[j] - x)
+                    if best is None or d < best[0]:
+                        best = (d, xs[j], ys[j])
+            return best
+        return min(((abs(px - x), px, py) for px, py in zip(xs, ys)),
+                   default=None)
+
+    @staticmethod
+    def _fmt_num(v):
+        """紧凑数字格式：最多 4 位有效数字，去掉多余尾零。"""
+        return f"{v:.4g}"
+
+    def _discard_pg_hover(self):
+        """从各子图移除悬停辅助元素并丢弃引用（重绘/主题切换时调用）。"""
+        for pi in self._pg_plots:
+            if self._pg_hover_vline is not None and self._pg_hover_vline in pi.items:
+                pi.removeItem(self._pg_hover_vline)
+            if self._pg_hover_label is not None and self._pg_hover_label in pi.items:
+                pi.removeItem(self._pg_hover_label)
+        self._pg_hover_vline = None
+        self._pg_hover_label = None
+
+    def _ensure_pg_hover_items(self, pi):
+        """懒创建悬停指示线与标签，并迁移到鼠标所在的子图。"""
+        import pyqtgraph as pg
+        fg = '#e0e0e0' if self._dark else '#1a1a1a'
+        if self._pg_hover_vline is None:
+            self._pg_hover_vline = pg.InfiniteLine(
+                angle=90, movable=False,
+                pen=pg.mkPen(fg, width=1, style=Qt.PenStyle.DashLine))
+        if self._pg_hover_label is None:
+            fill = QColor('#2d2d2d' if self._dark else '#fafafa')
+            fill.setAlpha(220)
+            self._pg_hover_label = pg.TextItem(
+                anchor=(0.5, 1), color=fg,
+                border=pg.mkPen(fg, width=1), fill=fill)
+            self._pg_hover_label.setZValue(100)   # 置顶，不被曲线遮挡
+        # 多子图场景：鼠标切换子图时先从原子图移除
+        for other in self._pg_plots:
+            if other is pi:
+                continue
+            if self._pg_hover_vline in other.items:
+                other.removeItem(self._pg_hover_vline)
+            if self._pg_hover_label in other.items:
+                other.removeItem(self._pg_hover_label)
+        # ignoreBounds：指示线/标签不参与自动量程计算
+        if self._pg_hover_vline not in pi.items:
+            pi.addItem(self._pg_hover_vline, ignoreBounds=True)
+        if self._pg_hover_label not in pi.items:
+            pi.addItem(self._pg_hover_label, ignoreBounds=True)
+
+    def _on_pg_mouse_moved(self, pos):
+        """pyqtgraph 悬停：定位最近数据点，显示指示线 + 时间/数值标签。"""
+        if self._engine != 'pyqtgraph' or self._last is None:
+            return
+        for i, pi in enumerate(self._pg_plots):
+            if not pi.sceneBoundingRect().contains(pos):
+                continue
+            sp = self._last[i]
+            mouse_x = pi.vb.mapSceneToView(pos).x()
+            # 每条曲线取横坐标最接近鼠标的数据点；nearest 为全图最近点
+            rows, nearest = [], None
+            for s in sp['plot']:
+                best = self._nearest_point(s['x'], s['y'], mouse_x)
+                if best is None:
+                    continue
+                rows.append((s['label'] or '数值', best[2]))
+                if nearest is None or best[0] < nearest[0]:
+                    nearest = best
+            if nearest is None:
+                return
+            self._ensure_pg_hover_items(pi)
+            self._pg_hover_vline.setPos(nearest[1])
+            # 标签内容：横轴（时间）+ 各曲线数值
+            lines = [f"{sp['xlabel'] or 'X'}: {self._fmt_num(nearest[1])}"]
+            for label, y in rows:
+                lines.append(f"{label}: {self._fmt_num(y)}")
+            self._pg_hover_label.setText('\n'.join(lines))
+            # 标签默认在数据点上方；点位于视图上沿附近时翻到下方，避免出界
+            (ymin, ymax) = pi.vb.viewRange()[1]
+            span = (ymax - ymin) or 1.0
+            above = (nearest[2] - ymin) / span < 0.7
+            self._pg_hover_label.setAnchor((0.5, 1) if above else (0.5, 0))
+            self._pg_hover_label.setPos(nearest[1], nearest[2])
+            self._pg_hover_vline.setVisible(True)
+            self._pg_hover_label.setVisible(True)
+            return
+        # 鼠标不在任何子图数据区：隐藏悬停元素
+        if self._pg_hover_vline is not None:
+            self._pg_hover_vline.setVisible(False)
+        if self._pg_hover_label is not None:
+            self._pg_hover_label.setVisible(False)
 
     def _build_placeholder_widget(self):
         """无可用引擎时的占位控件：提示安装图表引擎，其余功能不受影响。"""
@@ -450,14 +587,21 @@ class ChartPanel(QWidget):
     def _commit_pg(self, spec):
         import pyqtgraph as pg
         from pyqtgraph import mkPen
+        # 重绘前丢弃悬停元素（pi.clear() 会把它移出场景），下次悬停重建
+        self._discard_pg_hover()
         pen_style = {'dash': Qt.PenStyle.DashLine,
                      'dot': Qt.PenStyle.DotLine,
                      'solid': Qt.PenStyle.SolidLine}
         for pi, sp in zip(self._pg_plots, spec):
             pi.clear()
+            # 显式清空上一轮图例条目：旧版 pyqtgraph 的 pi.clear() 不清图例，
+            # 每次重绘（含实时数据更新）都会累积条目直至撑爆图表
+            if pi.legend is not None:
+                pi.legend.clear()
+            legend = None
             if sp['legend'] and any(
                     s['label'] for s in sp['plot'] + sp['hline']):
-                pi.addLegend()
+                legend = pi.addLegend()
             for s in sp['plot']:
                 pen = mkPen(s['color'], width=s['width'])
                 pi.plot(s['x'], s['y'], pen=pen,
@@ -468,8 +612,11 @@ class ChartPanel(QWidget):
                 pen = mkPen(c, width=h['width'], style=pen_style[h['style']])
                 ln = pg.InfiniteLine(pos=h['y'], angle=0, pen=pen)
                 pi.addItem(ln)
-                if sp['legend'] and h['label']:
-                    pi.legend.addItem(ln, h['label'])
+                if legend is not None and h['label']:
+                    # InfiniteLine 无 opts 属性，旧版 pyqtgraph 的图例
+                    # 绘制（ItemSample.paint）会直接崩溃并拖垮整棵控件树
+                    # 的 paint 链；改用同款画笔的空曲线作图例样本
+                    legend.addItem(pg.PlotDataItem(pen=pen), h['label'])
             pi.setLabel('bottom', sp['xlabel'])
             pi.setLabel('left', sp['ylabel'])
             pi.setTitle(sp['title'])

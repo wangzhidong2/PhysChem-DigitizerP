@@ -62,6 +62,7 @@ from core import (
     patch_combobox_arrow_flip, CollapsibleCard,
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
     ChartPanel, chart_engine_available, resolve_chart_engine,
+    clear_sensor_config,
 )
 
 
@@ -904,6 +905,8 @@ class SettingsWidget(QWidget):
         # 后两项仅占位，灰显不可点击并标注「（开发中）」。
         self._theme_combo_items = ["浅色模式", "深色模式", "跟随系统"]
         self._theme_combo_values = ["light", "dark", "auto"]
+        # 「清除用户设置」程序内开启保存开关时，跳过开启确认框（用户已确认过）
+        self._suppress_persistence_confirm = False
         self.init_ui()
         # 仅支持浅色：固定选中亮色
         self._theme_combo.setCurrentIndex(0)
@@ -933,6 +936,7 @@ class SettingsWidget(QWidget):
         self._theme_card = self._build_theme_card(group_personal)
         group_personal.addSettingCard(self._theme_card)
         group_personal.addSettingCard(self._build_persistence_card())
+        group_personal.addSettingCard(self._build_clear_config_card())
         group_personal.addSettingCard(self._build_engine_card())
         layout.addWidget(group_personal)
 
@@ -1032,8 +1036,12 @@ class SettingsWidget(QWidget):
         关 → 开：当前会话是「默认值 + 本次随手修改」的状态，恢复写入后
         下一次任何模块 save_config() 会把这套状态写进磁盘，可能覆盖
         之前校准好的数据，因此先弹确认框；拒绝则切回关闭。
+        （「清除用户设置」程序内开启时跳过确认：磁盘配置已删，无覆盖风险）
         """
         if not checked:
+            return
+        if self._suppress_persistence_confirm:
+            self._suppress_persistence_confirm = False
             return
         # 确认是否覆盖：从关闭切到开启
         box = MessageBox(
@@ -1047,6 +1055,55 @@ class SettingsWidget(QWidget):
         if not box.exec():
             # 拒绝：切回关闭（qconfig.set 会同步翻转开关 UI 并落盘）
             qconfig.set(app_cfg.configPersistenceEnabled, False)
+
+    def _build_clear_config_card(self):
+        """清除用户设置卡片：确认后删除 sensor_config.json 并开启配置保存。"""
+        card = SettingCard(
+            FIF.DELETE, "清除用户设置",
+            "删除已保存的所有传感器校准配置（sensor_config.json），恢复默认值", None)
+        btn = PushButton("清除", card)
+        btn.setFixedHeight(34)
+        btn.clicked.connect(self._on_clear_config_clicked)
+        card.hBoxLayout.addWidget(btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _on_clear_config_clicked(self):
+        """清除用户设置：确认后清空 sensor_config.json，保存开关置为开。"""
+        box = MessageBox(
+            "清除用户设置",
+            "将删除已保存的所有传感器校准配置，恢复默认值。\n是否继续？",
+            self,
+        )
+        box.yesButton.setText("确定")
+        box.cancelButton.setText("取消")
+        if not box.exec():
+            return
+        ok = clear_sensor_config()
+        if ok:
+            # 保存开关置为开：跳过开启确认框（磁盘配置已删，无覆盖风险）
+            self._suppress_persistence_confirm = True
+            qconfig.set(app_cfg.configPersistenceEnabled, True)
+            self._suppress_persistence_confirm = False
+            InfoBar.success(
+                title="已清除",
+                content="用户配置已删除，重启程序后全部恢复默认值",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self,
+            )
+        else:
+            InfoBar.error(
+                title="清除失败",
+                content="配置文件删除失败，请查看控制台输出",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self,
+            )
 
     def _build_engine_card(self):
         """图表引擎切换卡片：matplotlib / pyqtgraph 运行时热切换。
