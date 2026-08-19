@@ -29,12 +29,14 @@
 | **PySide6** | ≥6.4.0 | 图形界面框架 |
 | **PySide6-Fluent-Widgets** | — | WinUI3 风格组件库（主窗口基于 `FluentWindow`） |
 | **pyserial** | ≥3.5 | 串口通信 |
-| **matplotlib** | ≥3.5.0 | 数据可视化（默认绘图引擎） |
-| **pyqtgraph** | ≥0.13.0 | 高性能交互式绘图（可选绘图引擎） |
+| **matplotlib** | ≥3.5.0 | 数据可视化（默认绘图引擎，与 pyqtgraph 至少安装其一） |
+| **pyqtgraph** | ≥0.13.0 | 高性能交互式绘图（与 matplotlib 至少安装其一） |
 | **numpy** | ≥1.21.0 | 数值计算 |
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0
+pip install PySide6>=6.4.0 pyserial>=3.5 numpy>=1.21.0
+# 绘图引擎（matplotlib / pyqtgraph 至少安装其一，推荐都装）
+pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
 # WinUI3 风格组件库（必需）
 pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
@@ -126,7 +128,9 @@ PhysChem-DigitizerP/
 ### 3. 安装 Python 软件
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0
+pip install PySide6>=6.4.0 pyserial>=3.5 numpy>=1.21.0
+# 绘图引擎（matplotlib / pyqtgraph 至少安装其一，推荐都装）
+pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
 # WinUI3 风格组件库（必需）
 pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
@@ -161,6 +165,11 @@ python main.py
 
 切换立即对所有传感器模块生效，已绘制的曲线自动重放到新引擎；选择会保存到配置，下次启动沿用。
 
+**引擎缺失时的表现**（程序不会崩溃，数据采集/保存不受影响）：
+- 未安装的引擎在设置页下拉框中**灰显不可点击**（标注"未安装"）
+- 配置的引擎被卸载时，启动自动降级到另一个可用引擎
+- 两个引擎都未安装时，图表区域显示"未检测到图表引擎"占位提示，安装后重启即可恢复绘图
+
 > 📖 各模块的具体接线、校准步骤和实验方法请参考对应的模块 README。
 
 ## 🔍 故障排除
@@ -178,7 +187,7 @@ python test_serial.py
 | 找不到串口 | 驱动未安装/USB 未连接 | 安装 CH340G/CP210x 驱动，重新插拔 USB |
 | 连接后无数据 | 波特率错误/固件未上传 | 确认波特率 115200，重新上传固件 |
 | 数据跳变异常 | 传感器干扰/接线松动 | 检查接线，远离干扰源 |
-| 图表不显示 | 绘图引擎依赖缺失 | `pip install --upgrade matplotlib pyqtgraph` |
+| 图表不显示 / 显示"未检测到图表引擎" | 绘图引擎未安装 | `pip install matplotlib pyqtgraph`（至少其一）后重启 |
 
 ## 📚 技术文档
 
@@ -234,7 +243,7 @@ git clone https://gitee.com/wangzhidong2/PhysChem-DigitizerP.git
 git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
 
 cd PhysChem-DigitizerP
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0 PySide6-Fluent-Widgets
+pip install PySide6>=6.4.0 pyserial>=3.5 numpy>=1.21.0 matplotlib>=3.5.0 pyqtgraph>=0.13.0 PySide6-Fluent-Widgets
 ```
 
 ## 📄 许可证

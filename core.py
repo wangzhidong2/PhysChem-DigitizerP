@@ -23,6 +23,8 @@ import time
 import random
 import asyncio
 import threading
+import importlib
+import importlib.util
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
@@ -54,6 +56,46 @@ try:
     plt.rcParams['axes.unicode_minus'] = False
 except ImportError:
     plt = None
+
+# ============================================================
+# 图表引擎可用性检测（引擎缺失时优雅降级，程序仍可运行）
+# ============================================================
+CHART_ENGINES = ('matplotlib', 'pyqtgraph')
+
+
+def _detect_chart_engine(name):
+    """检测引擎是否已安装且可正常导入（损坏的安装同样视为不可用）。"""
+    try:
+        if importlib.util.find_spec(name) is None:
+            return False
+        importlib.import_module(name)
+        return True
+    except Exception:
+        return False
+
+
+#: 各引擎可用性（导入 core 时检测一次）。任一可用即可绘图；
+#: 都不可用时 ChartPanel 显示「请安装图表引擎」占位，程序其余功能不受影响
+CHART_ENGINE_AVAILABLE = {name: _detect_chart_engine(name) for name in CHART_ENGINES}
+
+
+def chart_engine_available(engine):
+    """返回指定图表引擎在当前环境是否可用。"""
+    return CHART_ENGINE_AVAILABLE.get(engine, False)
+
+
+def resolve_chart_engine(engine):
+    """把期望引擎解析为实际可用引擎；两个引擎都不可用时返回 None（占位模式）。
+
+    配置里保存的引擎被卸载时，自动降级到另一个可用引擎，
+    避免启动即崩溃。
+    """
+    if chart_engine_available(engine):
+        return engine
+    for name in CHART_ENGINES:
+        if CHART_ENGINE_AVAILABLE[name]:
+            return name
+    return None
 
 # ============================================================
 # 统一配置管理 — 所有传感器校准配置保存在同一个 JSON 文件
@@ -212,12 +254,18 @@ class ChartPanel(QWidget):
     - matplotlib：end() 时按既有「清空-重建-绘制-布局-重绘」流程全量绘制
     - pyqtgraph：end() 时重建数据项并 setData，交互（缩放/平移）内置
     切换引擎时自动重放最近一次绘制内容，无需各模块额外处理。
+
+    引擎缺失时的优雅降级：
+    - 配置的引擎未安装 → 自动降级到另一个可用引擎
+    - 两个引擎都未安装 → 显示「请安装图表引擎」占位提示，
+      绘制 API 变为空操作（数据采集/保存等其余功能不受影响）
     """
 
     def __init__(self, n_plots=1, parent=None):
         super().__init__(parent)
         self._n_plots = max(1, int(n_plots))
-        self._engine = app_cfg.chartEngine.value
+        # 期望引擎经可用性解析：未安装则降级到另一引擎，都缺则为 None（占位模式）
+        self._engine = resolve_chart_engine(app_cfg.chartEngine.value)
         self._dark = isDarkTheme()
         self._spec = None       # 当前事务（begin~end 之间累积）
         self._last = None       # 最近一次已提交事务（引擎切换时重放）
@@ -230,7 +278,9 @@ class ChartPanel(QWidget):
 
     # ---------------- 引擎控件构建 ----------------
     def _build_widget(self):
-        if self._engine == 'pyqtgraph':
+        if self._engine is None:
+            self._build_placeholder_widget()
+        elif self._engine == 'pyqtgraph':
             self._build_pg_widget()
         else:
             self._build_mpl_widget()
@@ -268,6 +318,40 @@ class ChartPanel(QWidget):
                 ax = pi.getAxis(loc)
                 ax.setPen(mkPen(fg, width=1))
                 ax.setTextPen(fg)
+
+    def _build_placeholder_widget(self):
+        """无可用引擎时的占位控件：提示安装图表引擎，其余功能不受影响。"""
+        bg = '#333333' if self._dark else '#fafafa'
+        fg = '#9a9a9a' if self._dark else '#666666'
+        border = '#555555' if self._dark else '#c8c8c8'
+        frame = QFrame()
+        frame.setStyleSheet(
+            f"QFrame {{ border: 1px dashed {border}; border-radius: 6px;"
+            f" background-color: {bg}; }}"
+        )
+        frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        lay = QVBoxLayout(frame)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl = QLabel("未检测到图表引擎")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setStyleSheet(
+            f"color: {fg}; font-size: 16px; font-weight: bold;"
+            " background: transparent; border: none;"
+        )
+        hint = QLabel("请安装 matplotlib 或 pyqtgraph 后重启程序：\n"
+                      "pip install matplotlib pyqtgraph")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setStyleSheet(
+            f"color: {fg}; font-size: 13px;"
+            " background: transparent; border: none;"
+        )
+        lay.addStretch(1)
+        lay.addWidget(lbl)
+        lay.addSpacing(8)
+        lay.addWidget(hint)
+        lay.addStretch(1)
+        self._widget = frame
+        self._lay.addWidget(self._widget)
 
     # ---------------- 统一绘制 API ----------------
     def begin(self):
@@ -321,6 +405,8 @@ class ChartPanel(QWidget):
 
     # ---------------- 渲染实现 ----------------
     def _commit(self, spec):
+        if self._engine is None:      # 占位模式：仅记录事务，不渲染
+            return
         if self._engine == 'pyqtgraph':
             self._commit_pg(spec)
         else:
@@ -397,11 +483,8 @@ class ChartPanel(QWidget):
                 pi.enableAutoRange(y=True)
 
     # ---------------- 引擎 / 主题 / 清空 ----------------
-    def set_engine(self, engine):
-        """运行时切换引擎：重建控件并重放最近一次绘制内容。"""
-        if engine not in ('matplotlib', 'pyqtgraph') or engine == self._engine:
-            return
-        self._engine = engine
+    def _rebuild_widget(self):
+        """销毁当前控件并按 self._engine 重建，随后重放最近一次绘制内容。"""
         old = self._widget
         self._widget = None
         self._pg_plots = []
@@ -410,13 +493,25 @@ class ChartPanel(QWidget):
             old.setParent(None)
             old.deleteLater()
         self._build_widget()
-        if self._last is not None:
+        if self._engine is not None and self._last is not None:
             self._commit(self._last)
+
+    def set_engine(self, engine):
+        """运行时切换引擎：重建控件并重放最近一次绘制内容。
+
+        未安装的引擎请求会被拒绝（设置页已将其灰显，此处为双保险）。
+        """
+        if not chart_engine_available(engine) or engine == self._engine:
+            return
+        self._engine = engine
+        self._rebuild_widget()
 
     def apply_chart_theme(self, dark):
         """亮/暗主题切换（由各模块 apply_theme 调用）。"""
         self._dark = dark
-        if self._engine == 'pyqtgraph':
+        if self._engine is None:
+            self._rebuild_widget()   # 占位控件按新主题重建配色
+        elif self._engine == 'pyqtgraph':
             self._apply_pg_theme()
         else:
             self.figure.set_facecolor('#2d2d2d' if dark else '#fafafa')
@@ -426,6 +521,8 @@ class ChartPanel(QWidget):
         """清空图表（各模块 clear_data 调用）。"""
         self._last = None
         self._spec = None
+        if self._engine is None:
+            return
         if self._engine == 'pyqtgraph':
             for pi in self._pg_plots:
                 pi.clear()

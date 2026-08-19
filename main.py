@@ -61,7 +61,7 @@ from core import (
     card_style, primary_btn_style, accent_btn_style,
     patch_combobox_arrow_flip, CollapsibleCard,
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
-    ChartPanel,
+    ChartPanel, chart_engine_available, resolve_chart_engine,
 )
 
 
@@ -1055,17 +1055,40 @@ class SettingsWidget(QWidget):
         - pyqtgraph：高性能，内置缩放/平移交互
         选择立即生效：所有已打开模块的图表原地换引擎并重放当前数据；
         同时写入 app_config.json，下次启动沿用。
+
+        引擎缺失时优雅降级：
+        - 未安装的引擎选项灰显不可点击（副标题标注缺失情况）
+        - 配置的引擎被卸载时显示实际生效引擎（已自动降级）
         """
         self._engine_values = ["matplotlib", "pyqtgraph"]
-        card = SettingCard(
-            FIF.TILES, "图表引擎",
-            "matplotlib 静态美观 / pyqtgraph 高性能可交互，切换立即生效", None)
+        labels = ["matplotlib（默认）", "pyqtgraph（高性能）"]
+        available = []
+        for i, engine in enumerate(self._engine_values):
+            if chart_engine_available(engine):
+                available.append(engine)
+            else:
+                labels[i] += "（未安装）"
+        # 副标题按安装情况给出提示
+        if len(available) == len(self._engine_values):
+            content = "matplotlib 静态美观 / pyqtgraph 高性能可交互，切换立即生效"
+        elif len(available) == 1:
+            missing = "pyqtgraph" if available[0] == "matplotlib" else "matplotlib"
+            content = f"当前仅 {available[0]} 可用（{missing} 未安装）"
+        else:
+            content = "未检测到图表引擎，图表区域将显示占位提示"
+
+        card = SettingCard(FIF.TILES, "图表引擎", content, None)
         combo = ComboBox(card)
-        combo.addItems(["matplotlib（默认）", "pyqtgraph（高性能）"])
+        combo.addItems(labels)
+        for i, engine in enumerate(self._engine_values):
+            if not chart_engine_available(engine):
+                combo.setItemEnabled(i, False)   # 灰显 + 不可点击
         combo.setMinimumWidth(180)
-        current = app_cfg.chartEngine.value
+        # 显示实际生效引擎：配置引擎被卸载时 resolve 已自动降级
+        current = resolve_chart_engine(app_cfg.chartEngine.value)
         combo.setCurrentIndex(
-            self._engine_values.index(current) if current in self._engine_values else 0)
+            self._engine_values.index(current)
+            if current in self._engine_values else 0)
         combo.currentIndexChanged.connect(self._on_engine_combo_changed)
         card.hBoxLayout.addWidget(combo)
         card.hBoxLayout.addSpacing(16)
@@ -1076,6 +1099,8 @@ class SettingsWidget(QWidget):
         if not (0 <= idx < len(self._engine_values)):
             return
         engine = self._engine_values[idx]
+        if not chart_engine_available(engine):
+            return   # 未安装引擎的选项已禁用，此处为双保险
         qconfig.set(app_cfg.chartEngine, engine)   # 落盘 + 下次启动沿用
         self.engine_change_requested.emit(engine)  # 通知主窗口热切换
 
@@ -1387,7 +1412,11 @@ class MainWindow(FluentWindow):
 
         ChartPanel.set_engine 内部重建控件并重放最近一次绘制内容，
         当前数据无需重新采集即可在另一引擎下显示。
+        未安装的引擎请求在此拦截（设置页已灰显，此处为双保险）。
         """
+        if not chart_engine_available(engine):
+            print(f"⚠️ 图表引擎 {engine} 未安装，忽略切换请求")
+            return
         count = 0
         for name, widget in self.modules.items():
             if name in ("主页", "设置"):

@@ -20,7 +20,9 @@
 ## 安装依赖
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0
+pip install PySide6>=6.4.0 pyserial>=3.5 numpy>=1.21.0
+# 绘图引擎（matplotlib / pyqtgraph 至少安装其一，推荐都装）
+pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
 # WinUI3 风格组件库（必需，主窗口基于 FluentWindow）
 pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
@@ -35,6 +37,7 @@ pip install bleak
 - 固件输出格式：`timestamp,value`（CSV），Python 直接解析
 - `sensor_config.json` 存储校准参数（运行时自动创建/更新）
 - 双绘图引擎：matplotlib（默认）/ pyqtgraph，应用配置项 `app_cfg.chartEngine` 持久化，设置页可运行时热切换；matplotlib 字体（微软雅黑）在 `core.py` 中全局设置
+- 引擎缺失时优雅降级：未安装的引擎选项在设置页灰显不可选；配置的引擎被卸载时自动降级到另一可用引擎；两个都缺时 `ChartPanel` 显示"未检测到图表引擎"占位提示，绘图 API 变为空操作，其余功能不受影响
 - 沙箱无显示环境运行验证：`QT_QPA_PLATFORM=offscreen python main.py`
 
 ## 目录结构
@@ -101,8 +104,8 @@ PhysChem-DigitizerP/
 
 - **`make_text_icon(text, size=128)`**：把识别区里的文字（如 `V`/`F`/`x`/`pH`/`v`/`A`）画成方形 `QIcon`。FluentIcon 枚举没有对应"电压/电流/pH/力/超声波"的图标，所以直接用文字渲染成图标，保留模块化设计。字号用 `QFontMetrics` 自适应测量（从 `size*0.9` 起步缩到刚好填满画布，留 8% 边距），支持 Normal/Active/Selected 三种状态颜色。
 - **`HomePageWidget`**：主页，现代化风格卡片布局，按 `physics`/`chemistry` 分组展示模块卡片。标题用 FluentWidgets `TitleLabel` / `SubtitleLabel`，自动适配亮/暗主题；`apply_theme()` 委托 `core.apply_module_theme()` 统一刷新页面背景、卡片、QLabel/QLineEdit 颜色。
-- **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含多组设置：①个性化（应用主题切换：亮色 / 暗色 / 跟随系统；**图表引擎切换**：matplotlib / pyqtgraph）②关于（应用名 / 版本 / 许可证）③源码 & 反馈（GitHub / Gitee / Issue 链接）。主题切换通过 `theme_change_requested` 信号、引擎切换通过 `engine_change_requested` 信号分别与 `MainWindow.change_app_theme` / `MainWindow.change_chart_engine` 打通。
-- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换、绘图引擎切换。`change_app_theme(theme)` 流程：先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色。`change_chart_engine(engine)` 流程：遍历各传感器模块 `findChildren(ChartPanel)`，调用 `panel.set_engine(engine)` 重建引擎控件并重放最近一次绘制事务，曲线无缝衔接不丢数据。
+- **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含多组设置：①个性化（应用主题切换：亮色 / 暗色 / 跟随系统；**图表引擎切换**：matplotlib / pyqtgraph，未安装的引擎选项通过 `ComboBox.setItemEnabled` 灰显不可点击并在文案中标注"未安装"）②关于（应用名 / 版本 / 许可证）③源码 & 反馈（GitHub / Gitee / Issue 链接）。主题切换通过 `theme_change_requested` 信号、引擎切换通过 `engine_change_requested` 信号分别与 `MainWindow.change_app_theme` / `MainWindow.change_chart_engine` 打通。
+- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换、绘图引擎切换。`change_app_theme(theme)` 流程：先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色。`change_chart_engine(engine)` 流程：先用 `chart_engine_available()` 拦截未安装引擎的请求，再遍历各传感器模块 `findChildren(ChartPanel)`，调用 `panel.set_engine(engine)` 重建引擎控件并重放最近一次绘制事务，曲线无缝衔接不丢数据。
 - **遗留代码**：`NavButton` / `SidebarWidget` 是迁移到 FluentWindow 前的手写侧边栏实现，**已不再被 `MainWindow` 使用**（FluentWindow 自带导航），仍保留在 `main.py` 中供对照参考，新功能不要基于它们开发。
 
 ### core.py 组成
@@ -120,8 +123,13 @@ PhysChem-DigitizerP/
 **双绘图引擎 `ChartPanel`**（matplotlib / pyqtgraph 统一抽象）：
 - 所有传感器模块的图表一律通过 `ChartPanel` 绘制，**不要直接使用** `Figure`/`FigureCanvas` 或 `pg.PlotWidget`。
 - 事务式 API：`begin()` 开启一次绘制 → `plot(x, y, color, width, label, index)` 画曲线 → `hline(y, ...)` 画水平参考线 → `set_labels()` / `set_title()` / `set_xlim()` / `set_ylim()` / `legend()` 设置装饰 → `end()` 提交渲染。多子图用 `ChartPanel(n_plots=N)` + `index` 参数寻址。
-- 引擎选择：构造时读 `app_cfg.chartEngine`；`set_engine(engine)` 运行时重建底层控件并**重放最近一次提交的事务**（内部缓存 `_last`），切换引擎曲线不丢。
+- 引擎选择：构造时读 `app_cfg.chartEngine` 并经 `resolve_chart_engine()` 按可用性解析；`set_engine(engine)` 运行时重建底层控件并**重放最近一次提交的事务**（内部缓存 `_last`），切换引擎曲线不丢。
 - 主题适配：`apply_chart_theme(dark)` 同时处理 matplotlib（figure/axes 背景与轴色）和 pyqtgraph（`setBackground` / 轴文本颜色），各模块 `apply_theme()` 中调用即可。
+
+**引擎可用性与优雅降级**：
+- `CHART_ENGINE_AVAILABLE`：导入 core 时用 `importlib` 探测一次的引擎可用性字典；`chart_engine_available(engine)` 为查询接口，`resolve_chart_engine(engine)` 把期望引擎解析为实际可用引擎（配置引擎被卸载时自动降级到另一个，都缺返回 `None`）。
+- 占位模式（`_engine is None`）：`_build_placeholder_widget()` 显示"未检测到图表引擎"提示（含安装命令），绘制 API 变为空操作（事务仍记录到 `_last`），`clear_chart()` / `apply_chart_theme()` / `set_engine()` 全部安全。
+- 设置页与 `MainWindow.change_chart_engine` 都以 `chart_engine_available()` 守卫，未安装引擎的切换请求会被拒绝。
 
 ### 模块能力要点
 
@@ -218,8 +226,9 @@ class TemperatureSensorWidget(QWidget):
 - Arduino 代码目录使用中文命名
 - `main_legacy.py` 是迁移前单文件存档，**不再维护**，新功能请改 `main.py` + 模块文件
 - `NavButton` / `SidebarWidget` 是遗留代码，`MainWindow` 已改用 `FluentWindow` 自带导航，不要基于它们开发新功能
-- 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、图表引擎切换（matplotlib / pyqtgraph，热切换）、关于信息、仓库链接（`SettingsWidget`）
-- 新增传感器模块时建议实现 `apply_theme()` 方法以适配亮/暗主题（委托 `core.apply_module_theme()`）；图表一律用 `core.ChartPanel`，保证引擎热切换对模块生效
+- 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、图表引擎切换（matplotlib / pyqtgraph，热切换，未安装的引擎灰显不可选）、关于信息、仓库链接（`SettingsWidget`）
+- 图表引擎是**可选依赖**：matplotlib / pyqtgraph 至少安装其一；两个都缺时程序照常启动，图表区域显示"未检测到图表引擎"占位提示
+- 新增传感器模块时建议实现 `apply_theme()` 方法以适配亮/暗主题（委托 `core.apply_module_theme()`）；图表一律用 `core.ChartPanel`，保证引擎热切换与占位降级对模块生效
 - 模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
 - BLE 功能需要 `bleak`（可选依赖），未安装时会自动降级
 - 动态加载依赖识别区格式严格，字段名/冒号/空格写错会导致模块加载失败
@@ -244,7 +253,9 @@ PySide6 + FluentWidgets (WinUI3 style) GUI application + Arduino/ESP32 firmware 
 ## Install
 
 ```bash
-pip install PySide6>=6.4.0 pyserial>=3.5 matplotlib>=3.5.0 numpy>=1.21.0 pyqtgraph>=0.13.0
+pip install PySide6>=6.4.0 pyserial>=3.5 numpy>=1.21.0
+# Chart engines (install at least one of matplotlib / pyqtgraph; both recommended)
+pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
 # WinUI3 style component library (required, main window is based on FluentWindow)
 pip install PySide6-Fluent-Widgets
 # Optional (for BLE wireless):
@@ -259,6 +270,7 @@ No `requirements.txt`, `setup.py`, or `pyproject.toml` exists.
 - All firmware output CSV: `timestamp,value` — Python parses this directly
 - `sensor_config.json` stores calibration params (auto-created/updated at runtime)
 - Dual chart engines: matplotlib (default) / pyqtgraph, persisted via the `app_cfg.chartEngine` config item, hot-switchable at runtime from the settings page; matplotlib font (Microsoft YaHei) is set globally in `core.py`
+- Graceful degradation when an engine is missing: unavailable engine options are grayed out (disabled) in the settings combo box; if the configured engine is uninstalled, the app falls back to the other available engine at startup; when both are missing, `ChartPanel` shows a "no chart engine detected" placeholder and drawing APIs become no-ops — all other features keep working
 - Headless sandbox verification: `QT_QPA_PLATFORM=offscreen python main.py`
 
 ## Directory structure
@@ -325,8 +337,8 @@ Flash via Arduino IDE. Board packages:
 
 - **`make_text_icon(text, size=128)`**: renders the meta-header text (e.g. `V`/`F`/`x`/`pH`/`v`/`A`) into a square `QIcon`. FluentIcon enum has no icons for "voltage/current/pH/force/ultrasonic", so text is rendered directly into an icon to preserve the modular design. Font size is auto-measured with `QFontMetrics` (starts at `size*0.9` and shrinks to just fill the canvas, leaving 8% margin), supporting Normal/Active/Selected state colors.
 - **`HomePageWidget`**: home page, modern-style card layout, groups module cards by `physics`/`chemistry`. Titles use FluentWidgets `TitleLabel` / `SubtitleLabel` for automatic light/dark theme adaptation; `apply_theme()` delegates to `core.apply_module_theme()` to refresh page background, cards, and QLabel/QLineEdit colors.
-- **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Groups: ① Personalization (app theme: light / dark / follow system; **chart engine: matplotlib / pyqtgraph**) ② About (app name / version / license) ③ Source & feedback (GitHub / Gitee / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via `theme_change_requested`; engine switching is wired to `MainWindow.change_chart_engine` via `engine_change_requested`.
-- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, theme switching, and chart engine switching. `change_app_theme(theme)` flow: first `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors. `change_chart_engine(engine)` flow: iterates each sensor module via `findChildren(ChartPanel)` and calls `panel.set_engine(engine)` to rebuild the engine widget and replay the last committed draw transaction — curves carry over seamlessly without data loss.
+- **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Groups: ① Personalization (app theme: light / dark / follow system; **chart engine: matplotlib / pyqtgraph** — unavailable engines are grayed out via `ComboBox.setItemEnabled` and labeled "未安装/not installed") ② About (app name / version / license) ③ Source & feedback (GitHub / Gitee / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via `theme_change_requested`; engine switching is wired to `MainWindow.change_chart_engine` via `engine_change_requested`.
+- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, theme switching, and chart engine switching. `change_app_theme(theme)` flow: first `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors. `change_chart_engine(engine)` flow: first rejects requests for uninstalled engines via `chart_engine_available()`, then iterates each sensor module via `findChildren(ChartPanel)` and calls `panel.set_engine(engine)` to rebuild the engine widget and replay the last committed draw transaction — curves carry over seamlessly without data loss.
 - **Legacy code**: `NavButton` / `SidebarWidget` are the hand-written sidebar implementation from before the FluentWindow migration, **no longer used by `MainWindow`** (FluentWindow has its own navigation). They are still kept in `main.py` for reference — do not build new features on them.
 
 ### core.py composition
@@ -344,8 +356,13 @@ Centralized shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices
 **Dual chart engine `ChartPanel`** (unified abstraction over matplotlib / pyqtgraph):
 - All sensor module charts are drawn exclusively through `ChartPanel` — do **not** use `Figure`/`FigureCanvas` or `pg.PlotWidget` directly.
 - Transactional API: `begin()` opens a draw → `plot(x, y, color, width, label, index)` draws curves → `hline(y, ...)` draws horizontal reference lines → `set_labels()` / `set_title()` / `set_xlim()` / `set_ylim()` / `legend()` add decorations → `end()` commits and renders. Multi-plot layouts use `ChartPanel(n_plots=N)` with the `index` parameter.
-- Engine selection: reads `app_cfg.chartEngine` at construction; `set_engine(engine)` rebuilds the underlying widget at runtime and **replays the last committed transaction** (cached in `_last`), so no curve data is lost on engine switch.
+- Engine selection: reads `app_cfg.chartEngine` at construction and resolves it against availability via `resolve_chart_engine()`; `set_engine(engine)` rebuilds the underlying widget at runtime and **replays the last committed transaction** (cached in `_last`), so no curve data is lost on engine switch.
 - Theme adaptation: `apply_chart_theme(dark)` handles both matplotlib (figure/axes background & axis colors) and pyqtgraph (`setBackground` / axis text colors); call it from each module's `apply_theme()`.
+
+**Engine availability & graceful degradation**:
+- `CHART_ENGINE_AVAILABLE`: dict probed once via `importlib` at core import; `chart_engine_available(engine)` is the query API, `resolve_chart_engine(engine)` maps the desired engine to an actually available one (falls back to the other engine when the configured one is uninstalled; returns `None` when both are missing).
+- Placeholder mode (`_engine is None`): `_build_placeholder_widget()` shows a "no chart engine detected" hint (with install commands); drawing APIs become no-ops (transactions are still recorded into `_last`); `clear_chart()` / `apply_chart_theme()` / `set_engine()` are all safe.
+- Both the settings page and `MainWindow.change_chart_engine` guard with `chart_engine_available()` — switch requests for uninstalled engines are rejected.
 
 ### Module capability notes
 
@@ -442,8 +459,9 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - Chinese directory/file names throughout the firmware folder
 - `main_legacy.py` is the pre-refactor single-file archive, **no longer maintained** — edit `main.py` + module files for new features
 - `NavButton` / `SidebarWidget` are legacy code; `MainWindow` now uses `FluentWindow`'s built-in navigation — do not build new features on them
-- The settings page now implements theme switching (light / dark / follow system), chart engine switching (matplotlib / pyqtgraph, hot-switch), about info, and repo links (`SettingsWidget`)
-- When adding a new sensor module, implement `apply_theme()` to support light/dark themes (delegate to `core.apply_module_theme()`); always draw charts via `core.ChartPanel` so the engine hot-switch works for the module
+- The settings page now implements theme switching (light / dark / follow system), chart engine switching (matplotlib / pyqtgraph, hot-switch; uninstalled engines grayed out and unselectable), about info, and repo links (`SettingsWidget`)
+- Chart engines are **optional dependencies**: install at least one of matplotlib / pyqtgraph; when both are missing the app still starts and chart areas show a "no chart engine detected" placeholder
+- When adding a new sensor module, implement `apply_theme()` to support light/dark themes (delegate to `core.apply_module_theme()`); always draw charts via `core.ChartPanel` so engine hot-switching and placeholder degradation work for the module
 - Module filenames use English snake_case (e.g. `voltage_sensor.py`), per PEP 8
 - BLE requires `bleak` (optional dependency) — graceful fallback if missing
 - Dynamic loading depends on strict meta header format — typos in field names/colons/spaces will cause load failures
