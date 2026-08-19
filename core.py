@@ -294,6 +294,7 @@ class ChartPanel(QWidget):
         self._last = None       # 最近一次已提交事务（引擎切换时重放）
         self._pg_hover_vline = None   # pyqtgraph 悬停指示线（懒创建）
         self._pg_hover_label = None   # pyqtgraph 悬停数据标签（懒创建）
+        self._pg_hover_view = None    # 最近悬停位置 (子图索引, 视图x)，重绘后据此恢复
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -323,6 +324,10 @@ class ChartPanel(QWidget):
     def _build_pg_widget(self):
         import pyqtgraph as pg
         pg.setConfigOptions(antialias=True)
+        # 旧 widget 的悬停元素已随旧场景销毁，重置引用防止悬挂
+        # （_pg_hover_view 保留：坐标语义一致，数据重放后据此恢复悬停）
+        self._pg_hover_vline = None
+        self._pg_hover_label = None
         self._widget = pg.GraphicsLayoutWidget()
         self._pg_plots = []
         for i in range(self._n_plots):
@@ -337,7 +342,7 @@ class ChartPanel(QWidget):
     def _apply_pg_theme(self):
         """pyqtgraph 亮/暗主题：背景、轴、刻度文字颜色全套适配。"""
         from pyqtgraph import mkPen
-        # 丢弃旧主题配色的悬停元素，下次悬停时按新主题重建
+        # 丢弃旧主题配色的悬停元素，按新配色重建（若鼠标仍在图表上）
         self._discard_pg_hover()
         bg = '#2d2d2d' if self._dark else '#fafafa'
         fg = '#e0e0e0' if self._dark else '#1a1a1a'
@@ -347,6 +352,7 @@ class ChartPanel(QWidget):
                 ax = pi.getAxis(loc)
                 ax.setPen(mkPen(fg, width=1))
                 ax.setTextPen(fg)
+        self._restore_pg_hover()
 
     # ---------------- pyqtgraph 悬停交互 ----------------
     @staticmethod
@@ -416,45 +422,84 @@ class ChartPanel(QWidget):
 
     def _on_pg_mouse_moved(self, pos):
         """pyqtgraph 悬停：定位最近数据点，显示指示线 + 时间/数值标签。"""
-        if self._engine != 'pyqtgraph' or self._last is None:
+        if self._engine != 'pyqtgraph':
+            return
+        if self._last is None:
+            self._pg_hover_view = None
+            self._hide_pg_hover()
             return
         for i, pi in enumerate(self._pg_plots):
             if not pi.sceneBoundingRect().contains(pos):
                 continue
-            sp = self._last[i]
             mouse_x = pi.vb.mapSceneToView(pos).x()
-            # 每条曲线取横坐标最接近鼠标的数据点；nearest 为全图最近点
-            rows, nearest = [], None
-            for s in sp['plot']:
-                best = self._nearest_point(s['x'], s['y'], mouse_x)
-                if best is None:
-                    continue
-                rows.append((s['label'] or '数值', best[2]))
-                if nearest is None or best[0] < nearest[0]:
-                    nearest = best
-            if nearest is None:
-                return
-            self._ensure_pg_hover_items(pi)
-            self._pg_hover_vline.setPos(nearest[1])
-            # 标签内容：横轴（时间）+ 各曲线数值
-            lines = [f"{sp['xlabel'] or 'X'}: {self._fmt_num(nearest[1])}"]
-            for label, y in rows:
-                lines.append(f"{label}: {self._fmt_num(y)}")
-            self._pg_hover_label.setText('\n'.join(lines))
-            # 标签默认在数据点上方；点位于视图上沿附近时翻到下方，避免出界
-            (ymin, ymax) = pi.vb.viewRange()[1]
-            span = (ymax - ymin) or 1.0
-            above = (nearest[2] - ymin) / span < 0.7
-            self._pg_hover_label.setAnchor((0.5, 1) if above else (0.5, 0))
-            self._pg_hover_label.setPos(nearest[1], nearest[2])
-            self._pg_hover_vline.setVisible(True)
-            self._pg_hover_label.setVisible(True)
+            # 记录悬停位置：数据高频重绘后据此恢复，标签不随重绘闪烁消失
+            self._pg_hover_view = (i, mouse_x)
+            self._update_pg_hover(i, mouse_x)
             return
-        # 鼠标不在任何子图数据区：隐藏悬停元素
+        # 鼠标不在任何子图数据区：清除记录并隐藏
+        self._pg_hover_view = None
+        self._hide_pg_hover()
+
+    def _update_pg_hover(self, index, mouse_x):
+        """在 index 子图上按视图横坐标 mouse_x 定位最近数据点并更新悬停元素。
+
+        鼠标移动与数据重绘后的恢复共用本方法。
+        """
+        pi = self._pg_plots[index]
+        sp = self._last[index]
+        # 每条曲线取横坐标最接近鼠标的数据点；nearest 为全图最近点
+        rows, nearest = [], None
+        for s in sp['plot']:
+            best = self._nearest_point(s['x'], s['y'], mouse_x)
+            if best is None:
+                continue
+            rows.append((s['label'] or '数值', best[2]))
+            if nearest is None or best[0] < nearest[0]:
+                nearest = best
+        if nearest is None:
+            self._hide_pg_hover()
+            return
+        self._ensure_pg_hover_items(pi)
+        self._pg_hover_vline.setPos(nearest[1])
+        # 标签内容：横轴（时间）+ 各曲线数值
+        lines = [f"{sp['xlabel'] or 'X'}: {self._fmt_num(nearest[1])}"]
+        for label, y in rows:
+            lines.append(f"{label}: {self._fmt_num(y)}")
+        self._pg_hover_label.setText('\n'.join(lines))
+        # 标签默认在数据点上方；点位于视图上沿附近时翻到下方，避免出界
+        (ymin, ymax) = pi.vb.viewRange()[1]
+        span = (ymax - ymin) or 1.0
+        above = (nearest[2] - ymin) / span < 0.7
+        self._pg_hover_label.setAnchor((0.5, 1) if above else (0.5, 0))
+        self._pg_hover_label.setPos(nearest[1], nearest[2])
+        self._pg_hover_vline.setVisible(True)
+        self._pg_hover_label.setVisible(True)
+
+    def _hide_pg_hover(self):
+        """隐藏悬停元素（不销毁，重绘后可恢复）。"""
         if self._pg_hover_vline is not None:
             self._pg_hover_vline.setVisible(False)
         if self._pg_hover_label is not None:
             self._pg_hover_label.setVisible(False)
+
+    def _restore_pg_hover(self):
+        """按最近悬停位置恢复悬停元素（数据重绘/主题切换后调用）。
+
+        数据更新后最近数据点可能变化，本方法按记录的视图横坐标在新数据
+        上重新定位，保证实时采集时鼠标不动也能持续显示最新数值。
+        """
+        if (self._engine != 'pyqtgraph' or self._pg_hover_view is None
+                or self._last is None):
+            return
+        index, mouse_x = self._pg_hover_view
+        if not (0 <= index < len(self._pg_plots)):
+            self._pg_hover_view = None
+            return
+        try:
+            self._update_pg_hover(index, mouse_x)
+        except Exception:
+            # 恢复失败（元素失效等）：丢弃引用，下次鼠标移动时重建
+            self._discard_pg_hover()
 
     def _build_placeholder_widget(self):
         """无可用引擎时的占位控件：提示安装图表引擎，其余功能不受影响。"""
@@ -587,8 +632,9 @@ class ChartPanel(QWidget):
     def _commit_pg(self, spec):
         import pyqtgraph as pg
         from pyqtgraph import mkPen
-        # 重绘前丢弃悬停元素（pi.clear() 会把它移出场景），下次悬停重建
-        self._discard_pg_hover()
+        # 注意：pi.clear() 会把悬停元素移出场景，但不销毁——重绘完成后由
+        # _restore_pg_hover() 按记录位置重新加回并定位。高频实时更新下
+        # 悬停标签持续显示且数值跟随最新数据，不会随重绘闪烁消失。
         pen_style = {'dash': Qt.PenStyle.DashLine,
                      'dot': Qt.PenStyle.DotLine,
                      'solid': Qt.PenStyle.SolidLine}
@@ -628,6 +674,8 @@ class ChartPanel(QWidget):
                 pi.setYRange(*sp['ylim'], padding=0)
             else:
                 pi.enableAutoRange(y=True)
+        # 重绘完成：若鼠标正悬停在图表上，按记录位置恢复悬停（数值已更新）
+        self._restore_pg_hover()
 
     # ---------------- 引擎 / 主题 / 清空 ----------------
     def _rebuild_widget(self):
@@ -671,6 +719,9 @@ class ChartPanel(QWidget):
         if self._engine is None:
             return
         if self._engine == 'pyqtgraph':
+            # 清数据同时清除悬停记录，避免恢复逻辑定位到已清空的图
+            self._pg_hover_view = None
+            self._hide_pg_hover()
             for pi in self._pg_plots:
                 pi.clear()
         else:
