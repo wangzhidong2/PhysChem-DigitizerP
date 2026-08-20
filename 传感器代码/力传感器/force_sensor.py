@@ -16,14 +16,15 @@ import os
 import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QScrollArea, 
-    QSizePolicy,
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QInputDialog, QScrollArea, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
+from qfluentwidgets import (
+    PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
+    BodyLabel, CaptionLabel,
+)
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -193,7 +194,7 @@ class ForceSensorWidget(QWidget):
         row1 = QHBoxLayout()
         row1.setSpacing(10)
 
-        row1.addWidget(QLabel("连接方式:"))
+        row1.addWidget(BodyLabel("连接方式:"))
         self.mode_combo = ComboBox()
         self.mode_combo.addItems(["有线串口", "BLE蓝牙", "模拟器"])
         if not BLE_AVAILABLE:
@@ -207,7 +208,7 @@ class ForceSensorWidget(QWidget):
         serial_layout = QHBoxLayout(self.serial_panel)
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setSpacing(8)
-        serial_layout.addWidget(QLabel("串口:"))
+        serial_layout.addWidget(BodyLabel("串口:"))
         self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(140)
@@ -242,8 +243,7 @@ class ForceSensorWidget(QWidget):
         sim_layout = QHBoxLayout(self.sim_panel)
         sim_layout.setContentsMargins(0, 0, 0, 0)
         sim_layout.setSpacing(8)
-        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
-        sim_hint.setStyleSheet("color: #888;")
+        sim_hint = CaptionLabel("无需硬件，生成随机数据用于调试")
         sim_layout.addWidget(sim_hint)
         sim_layout.addStretch()
         row1.addWidget(self.sim_panel)
@@ -264,7 +264,7 @@ class ForceSensorWidget(QWidget):
         row1.addWidget(self.disconnect_btn)
 
         row1.addSpacing(16)
-        row1.addWidget(QLabel("采样频率:"))
+        row1.addWidget(BodyLabel("采样频率:"))
         self.sample_rate_combo = SampleRateComboBox()
         self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
         self.sample_rate_combo.setMaximumWidth(120)
@@ -280,12 +280,12 @@ class ForceSensorWidget(QWidget):
         # ========== 卡片2：校准与去皮（可折叠） ==========
         card_cal_content = QWidget()
         card_cal_content.setObjectName("card")
-        card_cal_content.setStyleSheet(card_style() + " QWidget#card QLabel { color: #1a1a1a; }")
+        card_cal_content.setStyleSheet(card_style())
         cal_card_layout = QVBoxLayout(card_cal_content)
         cal_card_layout.setContentsMargins(20, 4, 20, 16)
         cal_card_layout.setSpacing(12)
 
-        self.cal_status_label = QLabel(
+        self.cal_status_label = BodyLabel(
             "校准状态: 未校准" if not self.calibrated
             else f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})"
         )
@@ -317,15 +317,14 @@ class ForceSensorWidget(QWidget):
 
         unit_row = QHBoxLayout()
         unit_row.setSpacing(8)
-        unit_row.addWidget(QLabel("显示单位:"))
+        unit_row.addWidget(BodyLabel("显示单位:"))
         self.unit_combo = ComboBox()
         self.unit_combo.addItems(["克 (g)", "千克 (kg)", "牛顿 (N)"])
         unit_map = {"g": 0, "kg": 1, "N": 2}
         self.unit_combo.setCurrentIndex(unit_map.get(self.current_unit, 0))
         self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
         unit_row.addWidget(self.unit_combo)
-        unit_hint = QLabel("g = 9.8 m/s²")
-        unit_hint.setStyleSheet("color: #888; font-size: 12px;")
+        unit_hint = CaptionLabel("g = 9.8 m/s²")
         unit_row.addWidget(unit_hint)
         unit_row.addStretch()
         cal_card_layout.addLayout(unit_row)
@@ -340,29 +339,26 @@ class ForceSensorWidget(QWidget):
         data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        self.current_force_label = QLabel("力/质量: --.-")
+        self.current_force_label = BodyLabel("力/质量: --.-")
         self.current_force_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
         self.current_force_label.setStyleSheet("color: #1a1a1a;")
         data_card_layout.addWidget(self.current_force_label)
 
         raw_row = QHBoxLayout()
         raw_row.setSpacing(20)
-        self.current_raw_label = QLabel("原始ADC: ------")
+        self.current_raw_label = BodyLabel("原始ADC: ------")
         self.current_raw_label.setFont(QFont("Segoe UI", 11))
         self.current_raw_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_raw_label)
         raw_row.addStretch()
         data_card_layout.addLayout(raw_row)
 
-        self.current_unit_label = QLabel(
+        self.current_unit_label = CaptionLabel(
             f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}（未校准则显示原始值）"
         )
-        self.current_unit_label.setStyleSheet("color: #666; font-size: 12px;")
         data_card_layout.addWidget(self.current_unit_label)
 
-        self.stats_label = QLabel("统计信息：暂无数据")
-        self.stats_label.setFont(QFont("Segoe UI", 10))
-        self.stats_label.setStyleSheet("color: #888888;")
+        self.stats_label = CaptionLabel("统计信息：暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
         card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)

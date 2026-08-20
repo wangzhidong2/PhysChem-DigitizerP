@@ -15,14 +15,15 @@ import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QScrollArea, 
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
+from qfluentwidgets import (
+    PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
+    BodyLabel, CaptionLabel, SpinBox,
+)
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -113,7 +114,7 @@ class UltrasonicVelocityWidget(QWidget):
         row1 = QHBoxLayout()
         row1.setSpacing(10)
 
-        row1.addWidget(QLabel("连接方式:"))
+        row1.addWidget(BodyLabel("连接方式:"))
         self.mode_combo = ComboBox()
         self.mode_combo.addItems(["有线串口", "模拟器"])
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
@@ -124,7 +125,7 @@ class UltrasonicVelocityWidget(QWidget):
         serial_layout = QHBoxLayout(self.serial_panel)
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setSpacing(8)
-        serial_layout.addWidget(QLabel("串口:"))
+        serial_layout.addWidget(BodyLabel("串口:"))
         self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(140)
@@ -141,8 +142,7 @@ class UltrasonicVelocityWidget(QWidget):
         sim_layout = QHBoxLayout(self.sim_panel)
         sim_layout.setContentsMargins(0, 0, 0, 0)
         sim_layout.setSpacing(8)
-        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
-        sim_hint.setStyleSheet("color: #888;")
+        sim_hint = CaptionLabel("无需硬件，生成随机数据用于调试")
         sim_layout.addWidget(sim_hint)
         sim_layout.addStretch()
         row1.addWidget(self.sim_panel)
@@ -156,7 +156,7 @@ class UltrasonicVelocityWidget(QWidget):
         row1.addWidget(self.connect_btn)
 
         row1.addSpacing(16)
-        row1.addWidget(QLabel("采样频率:"))
+        row1.addWidget(BodyLabel("采样频率:"))
         self.sample_rate_combo = SampleRateComboBox()
         self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
         self.sample_rate_combo.setMaximumWidth(120)
@@ -164,8 +164,8 @@ class UltrasonicVelocityWidget(QWidget):
         row1.addWidget(self.sample_rate_combo)
 
         row1.addSpacing(16)
-        row1.addWidget(QLabel("采样窗口:"))
-        self.window_size_spin = QSpinBox()
+        row1.addWidget(BodyLabel("采样窗口:"))
+        self.window_size_spin = SpinBox()
         self.window_size_spin.setRange(5, 100)
         self.window_size_spin.setValue(10)
         self.window_size_spin.setSuffix(" 点")
@@ -185,14 +185,12 @@ class UltrasonicVelocityWidget(QWidget):
         data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        self.current_data_label = QLabel("当前数据: 等待连接...")
+        self.current_data_label = BodyLabel("当前数据: 等待连接...")
         self.current_data_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
         self.current_data_label.setStyleSheet("color: #1a1a1a;")
         data_card_layout.addWidget(self.current_data_label)
 
-        self.velocity_stats_label = QLabel("速度统计: 暂无数据")
-        self.velocity_stats_label.setFont(QFont("Segoe UI", 10))
-        self.velocity_stats_label.setStyleSheet("color: #888888;")
+        self.velocity_stats_label = CaptionLabel("速度统计: 暂无数据")
         data_card_layout.addWidget(self.velocity_stats_label)
 
         card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)

@@ -16,14 +16,15 @@ import os
 import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QScrollArea, 
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
+from qfluentwidgets import (
+    PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
+    BodyLabel, CaptionLabel, SpinBox, DoubleSpinBox,
+)
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -227,7 +228,7 @@ class CurrentSensorWidget(QWidget):
         row1 = QHBoxLayout()
         row1.setSpacing(10)
 
-        row1.addWidget(QLabel("连接方式:"))
+        row1.addWidget(BodyLabel("连接方式:"))
         self.mode_combo = ComboBox()
         self.mode_combo.addItems(["有线串口", "BLE蓝牙", "模拟器"])
         if not BLE_AVAILABLE:
@@ -240,7 +241,7 @@ class CurrentSensorWidget(QWidget):
         serial_layout = QHBoxLayout(self.serial_panel)
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setSpacing(8)
-        serial_layout.addWidget(QLabel("串口:"))
+        serial_layout.addWidget(BodyLabel("串口:"))
         self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(140)
@@ -274,8 +275,7 @@ class CurrentSensorWidget(QWidget):
         sim_layout = QHBoxLayout(self.sim_panel)
         sim_layout.setContentsMargins(0, 0, 0, 0)
         sim_layout.setSpacing(8)
-        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
-        sim_hint.setStyleSheet("color: #888;")
+        sim_hint = CaptionLabel("无需硬件，生成随机数据用于调试")
         sim_layout.addWidget(sim_hint)
         sim_layout.addStretch()
         row1.addWidget(self.sim_panel)
@@ -298,7 +298,7 @@ class CurrentSensorWidget(QWidget):
         row1.addWidget(self.disconnect_btn)
 
         row1.addSpacing(16)
-        row1.addWidget(QLabel("采样频率:"))
+        row1.addWidget(BodyLabel("采样频率:"))
         self.sample_rate_combo = SampleRateComboBox()
         self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
         self.sample_rate_combo.setMaximumWidth(120)
@@ -322,7 +322,7 @@ class CurrentSensorWidget(QWidget):
         # 量程选择
         range_row = QHBoxLayout()
         range_row.setSpacing(10)
-        range_row.addWidget(QLabel("量程:"))
+        range_row.addWidget(BodyLabel("量程:"))
         self.range_combo = ComboBox()
         for key in ['5A', '20A', '30A']:
             self.range_combo.addItem(self.ACS712_RANGES[key]['desc'])
@@ -331,14 +331,14 @@ class CurrentSensorWidget(QWidget):
         self.range_combo.currentIndexChanged.connect(self.on_range_changed)
         range_row.addWidget(self.range_combo)
 
-        range_row.addWidget(QLabel("测量类型:"))
+        range_row.addWidget(BodyLabel("测量类型:"))
         self.mode_type_combo = ComboBox()
         self.mode_type_combo.addItems(["直流 DC", "交流 AC"])
         self.mode_type_combo.setCurrentIndex(0 if self.current_mode == 'DC' else 1)
         self.mode_type_combo.currentIndexChanged.connect(self.on_current_mode_changed)
         range_row.addWidget(self.mode_type_combo)
 
-        range_row.addWidget(QLabel("ADC 位数:"))
+        range_row.addWidget(BodyLabel("ADC 位数:"))
         self.adc_bits_combo = ComboBox()
         self.adc_bits_combo.addItems([
             "8 位 (0-255)",
@@ -355,7 +355,7 @@ class CurrentSensorWidget(QWidget):
         acs_card_layout.addLayout(range_row)
 
         # 量程显示
-        self.range_label = QLabel()
+        self.range_label = BodyLabel()
         self.range_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.range_label)
@@ -368,10 +368,10 @@ class CurrentSensorWidget(QWidget):
         params_hint_text = ("ACS712 输出最高约 4.5V，超出 ESP32 ADC 的 3.3V 量程，需在输出与 ADC 之间加分压电路\n"
                             "分压比 ≈ 5/3.3 ≈ 1.515（将 5V 映射到 3.3V）；电流 = (Vout − 零点电压) / 灵敏度")
 
-        vcc_label = QLabel("供电 VCC:")
+        vcc_label = BodyLabel("供电 VCC:")
         vcc_label.setToolTip(params_hint_text)
         params_row.addWidget(vcc_label)
-        self.vcc_spin = QDoubleSpinBox()
+        self.vcc_spin = DoubleSpinBox()
         self.vcc_spin.setRange(4.5, 5.5)
         self.vcc_spin.setDecimals(2)
         self.vcc_spin.setSingleStep(0.1)
@@ -383,10 +383,10 @@ class CurrentSensorWidget(QWidget):
         self.vcc_spin.valueChanged.connect(self.on_vcc_changed)
         params_row.addWidget(self.vcc_spin)
 
-        vquies_label = QLabel("零点电压:")
+        vquies_label = BodyLabel("零点电压:")
         vquies_label.setToolTip(params_hint_text)
         params_row.addWidget(vquies_label)
-        self.vquies_spin = QDoubleSpinBox()
+        self.vquies_spin = DoubleSpinBox()
         self.vquies_spin.setRange(0.0, 5.5)
         self.vquies_spin.setDecimals(3)
         self.vquies_spin.setSingleStep(0.01)
@@ -400,8 +400,8 @@ class CurrentSensorWidget(QWidget):
         self.vquies_spin.valueChanged.connect(self.on_vquiescent_changed)
         params_row.addWidget(self.vquies_spin)
 
-        params_row.addWidget(QLabel("分压比 (R1+R2)/R2:"))
-        self.divider_spin = QDoubleSpinBox()
+        params_row.addWidget(BodyLabel("分压比 (R1+R2)/R2:"))
+        self.divider_spin = DoubleSpinBox()
         self.divider_spin.setRange(1.0, 10.0)
         self.divider_spin.setDecimals(3)
         self.divider_spin.setSingleStep(0.01)
@@ -414,7 +414,7 @@ class CurrentSensorWidget(QWidget):
         acs_card_layout.addLayout(params_row)
 
         # 可测范围显示
-        self.actual_range_label = QLabel()
+        self.actual_range_label = BodyLabel()
         self.actual_range_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.actual_range_label.setStyleSheet("color: #1a1a1a;")
         acs_card_layout.addWidget(self.actual_range_label)
@@ -422,15 +422,15 @@ class CurrentSensorWidget(QWidget):
         # 显示单位 + 零点校准状态
         unit_row = QHBoxLayout()
         unit_row.setSpacing(10)
-        unit_row.addWidget(QLabel("显示单位:"))
+        unit_row.addWidget(BodyLabel("显示单位:"))
         self.unit_combo = ComboBox()
         self.unit_combo.addItems(["安培 (A)", "毫安 (mA)"])
         self.unit_combo.setCurrentIndex(0 if self.current_unit == 'A' else 1)
         self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
         unit_row.addWidget(self.unit_combo)
 
-        unit_row.addWidget(QLabel("零点校准:"))
-        self.zero_status_label = QLabel("未校准（零点=VCC/2）" if not self.zero_cal_active
+        unit_row.addWidget(BodyLabel("零点校准:"))
+        self.zero_status_label = BodyLabel("未校准（零点=VCC/2）" if not self.zero_cal_active
                                         else f"已校准 (零点 {self.v_quiescent:.3f}V)")
         self.zero_status_label.setStyleSheet("color: #888; font-weight: bold;" if not self.zero_cal_active
                                              else "color: green; font-weight: bold;")
@@ -441,8 +441,8 @@ class CurrentSensorWidget(QWidget):
         # AC 模式 RMS 窗口设置（仅 AC 模式可用）
         ac_row = QHBoxLayout()
         ac_row.setSpacing(10)
-        ac_row.addWidget(QLabel("AC RMS 窗口:"))
-        self.ac_window_spin = QSpinBox()
+        ac_row.addWidget(BodyLabel("AC RMS 窗口:"))
+        self.ac_window_spin = SpinBox()
         self.ac_window_spin.setRange(5, 500)
         self.ac_window_spin.setValue(self.ac_rms_window)
         self.ac_window_spin.setSuffix(" 点")
@@ -464,33 +464,31 @@ class CurrentSensorWidget(QWidget):
         data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        self.current_value_label = QLabel("--.- A")
+        self.current_value_label = BodyLabel("--.- A")
         self.current_value_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
         self.current_value_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_value_label)
 
         raw_row = QHBoxLayout()
         raw_row.setSpacing(20)
-        self.current_raw_label = QLabel("原始ADC: ------")
+        self.current_raw_label = BodyLabel("原始ADC: ------")
         self.current_raw_label.setFont(QFont("Segoe UI", 11))
         self.current_raw_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_raw_label)
 
-        self.current_vadc_label = QLabel("ADC端电压: --.- V")
+        self.current_vadc_label = BodyLabel("ADC端电压: --.- V")
         self.current_vadc_label.setFont(QFont("Segoe UI", 11))
         self.current_vadc_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_vadc_label)
 
-        self.current_vsensor_label = QLabel("传感器输出: --.- V")
+        self.current_vsensor_label = BodyLabel("传感器输出: --.- V")
         self.current_vsensor_label.setFont(QFont("Segoe UI", 11))
         self.current_vsensor_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_vsensor_label)
         raw_row.addStretch()
         data_card_layout.addLayout(raw_row)
 
-        self.stats_label = QLabel("暂无数据")
-        self.stats_label.setFont(QFont("Segoe UI", 10))
-        self.stats_label.setStyleSheet("color: #888888;")
+        self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
         card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)

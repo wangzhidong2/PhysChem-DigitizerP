@@ -15,14 +15,15 @@ import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QGridLayout, QStyle, QScrollArea, 
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
+from qfluentwidgets import (
+    PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
+    BodyLabel, CaptionLabel,
+)
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -90,7 +91,7 @@ class UltrasonicWidget(QWidget):
         conn_row = QHBoxLayout()
         conn_row.setSpacing(10)
 
-        conn_row.addWidget(QLabel("连接方式:"))
+        conn_row.addWidget(BodyLabel("连接方式:"))
         self.mode_combo = ComboBox()
         self.mode_combo.addItems(["有线串口", "模拟器"])
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
@@ -100,7 +101,7 @@ class UltrasonicWidget(QWidget):
         serial_row = QHBoxLayout(self.serial_panel)
         serial_row.setContentsMargins(0, 0, 0, 0)
         serial_row.setSpacing(8)
-        serial_row.addWidget(QLabel("串口:"))
+        serial_row.addWidget(BodyLabel("串口:"))
         self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(160)
@@ -116,8 +117,7 @@ class UltrasonicWidget(QWidget):
         self.sim_panel = QWidget()
         sim_row = QHBoxLayout(self.sim_panel)
         sim_row.setContentsMargins(0, 0, 0, 0)
-        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
-        sim_hint.setStyleSheet("color: #888;")
+        sim_hint = CaptionLabel("无需硬件，生成随机数据用于调试")
         sim_row.addWidget(sim_hint)
         sim_row.addStretch()
         conn_row.addWidget(self.sim_panel)
@@ -130,7 +130,7 @@ class UltrasonicWidget(QWidget):
 
         conn_row.addSpacing(20)
 
-        conn_row.addWidget(QLabel("采样:"))
+        conn_row.addWidget(BodyLabel("采样:"))
         self.sample_rate_combo = SampleRateComboBox()
         self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
         self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
@@ -149,14 +149,12 @@ class UltrasonicWidget(QWidget):
         data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        self.current_data_label = QLabel("等待连接...")
+        self.current_data_label = BodyLabel("等待连接...")
         self.current_data_label.setFont(QFont("Segoe UI", 11))
         self.current_data_label.setStyleSheet("color: #444444;")
         data_card_layout.addWidget(self.current_data_label)
 
-        self.stats_label = QLabel("暂无数据")
-        self.stats_label.setFont(QFont("Segoe UI", 10))
-        self.stats_label.setStyleSheet("color: #888888;")
+        self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
         card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)

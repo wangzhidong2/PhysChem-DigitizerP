@@ -15,14 +15,15 @@ import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QGroupBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QInputDialog, QStyle, QScrollArea, 
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel
+from qfluentwidgets import (
+    PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
+    BodyLabel, CaptionLabel,
+)
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -194,7 +195,7 @@ class PhSensorWidget(QWidget):
         row1 = QHBoxLayout()
         row1.setSpacing(10)
 
-        row1.addWidget(QLabel("连接方式:"))
+        row1.addWidget(BodyLabel("连接方式:"))
         self.mode_combo = ComboBox()
         self.mode_combo.addItems(["有线串口", "模拟器"])
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
@@ -204,7 +205,7 @@ class PhSensorWidget(QWidget):
         serial_layout = QHBoxLayout(self.serial_panel)
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setSpacing(8)
-        serial_layout.addWidget(QLabel("串口:"))
+        serial_layout.addWidget(BodyLabel("串口:"))
         self.port_combo = ComboBox()
         self.refresh_ports()
         self.port_combo.setMinimumWidth(140)
@@ -221,8 +222,7 @@ class PhSensorWidget(QWidget):
         sim_layout = QHBoxLayout(self.sim_panel)
         sim_layout.setContentsMargins(0, 0, 0, 0)
         sim_layout.setSpacing(8)
-        sim_hint = QLabel("无需硬件，生成随机数据用于调试")
-        sim_hint.setStyleSheet("color: #888;")
+        sim_hint = CaptionLabel("无需硬件，生成随机数据用于调试")
         sim_layout.addWidget(sim_hint)
         sim_layout.addStretch()
         row1.addWidget(self.sim_panel)
@@ -243,7 +243,7 @@ class PhSensorWidget(QWidget):
         row1.addWidget(self.disconnect_btn)
 
         row1.addSpacing(16)
-        row1.addWidget(QLabel("采样频率:"))
+        row1.addWidget(BodyLabel("采样频率:"))
         self.sample_rate_combo = SampleRateComboBox()
         self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
         self.sample_rate_combo.setMaximumWidth(120)
@@ -251,10 +251,10 @@ class PhSensorWidget(QWidget):
         row1.addWidget(self.sample_rate_combo)
 
         row1.addSpacing(16)
-        row1.addWidget(QLabel("校准状态:"))
+        row1.addWidget(BodyLabel("校准状态:"))
         mode_names = {1: "单点校准", 2: "两点校准", 3: "三点校准"}
         mode_name = mode_names.get(self.calibration_mode, f"{self.calibration_mode}点校准")
-        self.calibration_label = QLabel(f"✓ {mode_name}")
+        self.calibration_label = BodyLabel(f"✓ {mode_name}")
         self.calibration_label.setStyleSheet("color: green; font-weight: bold;")
         row1.addWidget(self.calibration_label)
 
@@ -267,7 +267,7 @@ class PhSensorWidget(QWidget):
         # ========== 卡片2：校准参数（可折叠） ==========
         card_cal_content = QWidget()
         card_cal_content.setObjectName("card")
-        card_cal_content.setStyleSheet(card_style() + " QWidget#card QLabel { color: #1a1a1a; }")
+        card_cal_content.setStyleSheet(card_style())
         cal_card_layout = QVBoxLayout(card_cal_content)
         cal_card_layout.setContentsMargins(20, 4, 20, 16)
         cal_card_layout.setSpacing(12)
@@ -275,8 +275,7 @@ class PhSensorWidget(QWidget):
         cal_lines = []
         for ph_val, adc_val in self.calibration_points:
             cal_lines.append(f"• pH {ph_val:.2f} → ADC {adc_val}")
-        self.cal_text = QLabel("\n".join(cal_lines) if cal_lines else "未设置校准参数")
-        self.cal_text.setStyleSheet("font-size: 12px; color: #666;")
+        self.cal_text = CaptionLabel("\n".join(cal_lines) if cal_lines else "未设置校准参数")
         cal_card_layout.addWidget(self.cal_text)
 
         self.edit_cal_btn = PushButton("✏️ 编辑校准参数")
@@ -298,23 +297,21 @@ class PhSensorWidget(QWidget):
         data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(12)
 
-        self.current_ph_label = QLabel("pH: --.-")
+        self.current_ph_label = BodyLabel("pH: --.-")
         self.current_ph_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
         self.current_ph_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_ph_label)
 
         raw_row = QHBoxLayout()
         raw_row.setSpacing(20)
-        self.current_adc_label = QLabel("ADC: ----")
+        self.current_adc_label = BodyLabel("ADC: ----")
         self.current_adc_label.setFont(QFont("Segoe UI", 11))
         self.current_adc_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_adc_label)
         raw_row.addStretch()
         data_card_layout.addLayout(raw_row)
 
-        self.stats_label = QLabel("统计信息：暂无数据")
-        self.stats_label.setFont(QFont("Segoe UI", 10))
-        self.stats_label.setStyleSheet("color: #888888;")
+        self.stats_label = CaptionLabel("统计信息：暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
         card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)

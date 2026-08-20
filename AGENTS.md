@@ -211,6 +211,13 @@ class TemperatureSensorWidget(QWidget):
 2. 滚动区用 `scroll.setStyleSheet(scroll_area_style())`，页面背景用 `content.setStyleSheet(page_bg_style())`。
 3. 实现 `apply_theme(self, theme)` 方法，委托 `apply_module_theme(self, theme)` 刷新页面/卡片/QLabel 颜色，再调用 `self.chart.apply_chart_theme(...)` 切换图表背景（双引擎均生效）。
 
+**UI 组件规约**（贴合 WinUI3 风格，2026-08 统一打磨）：
+1. 一律使用 FluentWidgets 组件，**禁止**构造原生 `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`。
+2. 标签语义化映射：静态表单标签（"连接方式:""串口:"等）用 `BodyLabel`；次要说明/统计信息（原硬编码 `#666/#888` 灰色小字）用 `CaptionLabel`（不设硬编码色，主题自适应）；实时大数值与状态强调保留 `setFont` + 强调色（主题切换由 `apply_module_theme` 自动 remap）。
+3. 数字输入用 `SpinBox` / `DoubleSpinBox`（Fluent 样式，API 与 Qt 原生兼容）。
+4. 模式开关用 `SwitchButton`（WinUI3 开关）替代复选框，信号为 `checkedChanged`（**不是** `toggled`）。
+5. 卡片容器用 `CollapsibleCard`（core 提供），内容区 `objectName='card'` + `card_style()`，**不要**再拼接 `QWidget#card QLabel { color: ... }` 硬编码（FluentLabel 已随主题变色）。
+
 **图表开发要点**（新模块必须遵守）：
 1. 图表控件一律用 `core.ChartPanel`，**禁止**直接创建 matplotlib `Figure`/`FigureCanvas` 或 pyqtgraph `PlotWidget`——绕过抽象会导致设置页引擎切换对该模块失效。
 2. 绘制走 `begin()` → `plot()`/`hline()`/`set_labels()`/... → `end()` 事务流程，切换引擎时 `ChartPanel` 会自动重放最近一次事务。
@@ -450,6 +457,13 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 1. Use `TitleLabel` for the page title (auto-adapts to theme) — avoid `QLabel` with hardcoded colors.
 2. Use `scroll.setStyleSheet(scroll_area_style())` for the scroll area and `content.setStyleSheet(page_bg_style())` for the page background.
 3. Implement `apply_theme(self, theme)` that delegates to `apply_module_theme(self, theme)` to refresh page/card/QLabel colors, then call `self.chart.apply_chart_theme(...)` to switch the chart theme (works on both engines).
+
+**UI component conventions** (WinUI3-style polish, standardized 2026-08):
+1. Always use FluentWidgets components — **never** construct native `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`.
+2. Semantic label mapping: static form labels (e.g. "连接方式:", "串口:") use `BodyLabel`; secondary hints/statistics (previously hardcoded `#666/#888` gray small text) use `CaptionLabel` (no hardcoded colors — theme-adaptive); large live values and emphasized status keep `setFont` + accent color (theme switching is auto-remapped by `apply_module_theme`).
+3. Numeric input uses `SpinBox` / `DoubleSpinBox` (Fluent-styled, API-compatible with the Qt natives).
+4. Mode toggles use `SwitchButton` (WinUI3 switch) instead of checkboxes; its signal is `checkedChanged` (not `toggled`).
+5. Card containers use `CollapsibleCard` (from core) with `objectName='card'` + `card_style()`; do **not** append `QWidget#card QLabel { color: ... }` hardcodes — Fluent labels already adapt to the theme.
 
 **Chart development rules** (mandatory for new modules):
 1. Always use `core.ChartPanel` for charts — **never** create matplotlib `Figure`/`FigureCanvas` or pyqtgraph `PlotWidget` directly; bypassing the abstraction makes the settings-page engine switch ineffective for that module.
