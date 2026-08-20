@@ -37,7 +37,7 @@ from core import (
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    CollapsibleCard, ExpandableTextEdit,
+    CollapsibleCard, FluentCard, ExpandableTextEdit,
     BLE_AVAILABLE, _get_config_file_path,
     scroll_area_style, page_bg_style, apply_module_theme,
 )
@@ -274,7 +274,7 @@ class ForceSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：校准与去皮（可折叠） ==========
@@ -329,7 +329,7 @@ class ForceSensorWidget(QWidget):
         unit_row.addStretch()
         cal_card_layout.addLayout(unit_row)
 
-        card_cal = CollapsibleCard("校准与去皮", card_cal_content, expanded=True)
+        card_cal = FluentCard("校准与去皮", card_cal_content, expanded=True)
 
         # ========== 卡片3：实时数据（可折叠） ==========
         card_data_content = QWidget()
@@ -361,7 +361,7 @@ class ForceSensorWidget(QWidget):
         self.stats_label = CaptionLabel("统计信息：暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True)
 
         # 校准与去皮 + 实时数据 并排同一行
         cards_row = QHBoxLayout()
@@ -428,7 +428,7 @@ class ForceSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
         layout.addWidget(card_actions)
 
         layout.addStretch()

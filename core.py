@@ -30,6 +30,7 @@ import importlib.util
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
     QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
+    QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QThread, QPoint, QTimer
 from PySide6.QtGui import (
@@ -42,6 +43,7 @@ from qfluentwidgets import (
     LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
+    ExpandGroupSettingCard, FluentIcon,
 )
 
 # pyserial 为可选依赖：未安装时程序仍可运行（模拟器模式不受影响），
@@ -1780,6 +1782,105 @@ class CollapsibleCard(QWidget):
         return super().eventFilter(obj, e)
 
 
+class FluentCard(ExpandGroupSettingCard):
+    """基于 FluentWidgets 原生 ExpandGroupSettingCard 的紧凑卡片适配层。
+
+    用于替换模块内的普通自绘 CollapsibleCard（连接控制/参数/实时数据/
+    操作按钮等），让卡片视觉贴合 WinUI3 原生风格：
+
+    - 继承原生 ExpandGroupSettingCard：自带主题自适应背景/分隔线/展开
+      箭头（带旋转动画），亮暗主题切换无需手动刷 QSS。
+    - 内容用紧凑 QVBoxLayout（20px 内边距 / 10px 行距），替代原生分组
+      行的稀疏 60px 行高布局；模块经 add_row(...) 或 body() 填充。
+    - header 右侧可追加按钮（add_header_widget），供图表卡放全屏等操作。
+    - 修正原生卡的滚动冲突：wheelEvent 透传给父级，避免它在模块外层
+      QScrollArea 内吞掉滚轮。
+    - apply_theme() 兼容 apply_module_theme 的递归调用约定。
+
+    图表卡片（需要全屏/浮动面板能力）仍用 CollapsibleCard，不替换。
+    """
+    ICON = None  # 子类可替换 header 图标（FluentIcon）
+
+    def __init__(self, title, content_widget=None, expanded=True):
+        super().__init__(self.__class__.ICON or FluentIcon.FOLDER, title, None, None)
+
+        # 内容容器：紧凑布局
+        self.content = QWidget()
+        self.body = QVBoxLayout(self.content)
+        self.body.setContentsMargins(20, 8, 20, 16)
+        self.body.setSpacing(10)
+
+        # 兼容 CollapsibleCard 旧调用：直接传入已构建好的内容控件。
+        # 剥离其旧的 objectName='card' + card_style()（原生卡自带背景，
+        # 避免双层边框/背景），并填满内容区。
+        if content_widget is not None:
+            if content_widget.objectName() == 'card':
+                content_widget.setObjectName('')
+                content_widget.setStyleSheet('')
+            self.body.addWidget(content_widget, 1)
+        else:
+            self.body.addStretch(0)
+
+        self.viewLayout.setContentsMargins(0, 0, 0, 0)
+        self.viewLayout.setSpacing(0)
+        self.viewLayout.addWidget(self.content)
+
+        self.setExpand(expanded)
+
+    # ---------- 内容填充 ----------
+    def add_row(self, label, widget):
+        """添加一行「标签 + 控件」的紧凑行。"""
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        if label:
+            row.addWidget(BodyLabel(label))
+        row.addWidget(widget)
+        row.addStretch()
+        self.body.insertLayout(self.body.count() - 1, row)
+        return row
+
+    def add_widget(self, widget):
+        """直接向内容区追加一个控件。"""
+        self.body.insertWidget(self.body.count() - 1, widget)
+        return widget
+
+    def add_layout(self, layout):
+        """直接向内容区追加一个布局。"""
+        self.body.insertLayout(self.body.count() - 1, layout)
+
+    def add_header_widget(self, widget):
+        """在 header 右侧（展开箭头左侧）追加控件，如全屏按钮。"""
+        self.card.addWidget(widget)
+        return widget
+
+    # ---------- 折叠 ----------
+    def toggle(self):
+        self.toggleExpand()
+
+    def is_expanded(self):
+        return self.isExpand
+
+    # ---------- 尺寸 ----------
+    def _adjustViewSize(self):
+        """用自定义内容高度重算卡片高度（替代原生基于 group 行数的算法）。"""
+        h = self.body.sizeHint().height()
+        self.spaceWidget.setFixedHeight(h)
+        if self.isExpand:
+            self.setFixedHeight(self.card.height() + h)
+
+    # ---------- 滚动透传 ----------
+    def wheelEvent(self, e):
+        p = self.parentWidget()
+        if p is not None:
+            QApplication.sendEvent(p, e)
+        else:
+            e.ignore()
+
+    # ---------- 主题 ----------
+    def apply_theme(self, theme=None):
+        """原生卡自动适配主题，无需手动刷新样式（兼容 apply_module_theme 契约）。"""
+
+
 # ============================================================
 # 共享样式 — 现代化风格
 # ============================================================
@@ -1903,6 +2004,10 @@ def apply_module_theme(widget, theme=None):
 
     # 1. 递归刷新 QScrollArea 与 QWidget#card 的样式表，并 remap QLabel/QLineEdit/QFrame 颜色
     def _refresh(w):
+        # FluentCard 是原生卡（QScrollArea 子类），自带主题自适应
+        # 样式，不能套用 scroll_area_style()（会覆盖其原生背景）
+        if isinstance(w, FluentCard):
+            return
         if isinstance(w, QScrollArea):
             w.setStyleSheet(scroll_area_style())
         if isinstance(w, _QW) and w.objectName() == 'card':
@@ -1914,6 +2019,8 @@ def apply_module_theme(widget, theme=None):
             except Exception:
                 pass
         for child in w.findChildren(_QW):
+            if isinstance(child, FluentCard):
+                continue
             if isinstance(child, (QScrollArea,)):
                 _refresh(child)
             elif child.objectName() == 'card':
@@ -1933,8 +2040,11 @@ def apply_module_theme(widget, theme=None):
     _refresh(widget)
 
     # 2. 找到模块内最外层的 QScrollArea，刷新其 content widget（页面背景）
+    #    排除 FluentCard（原生卡是 QScrollArea 子类，内容背景由原生管理）
     scrolls = widget.findChildren(QScrollArea)
     for s in scrolls:
+        if isinstance(s, FluentCard):
+            continue
         content = s.widget()
         if content is not None:
             content.setStyleSheet(page_bg_style())

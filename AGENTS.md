@@ -120,8 +120,9 @@ PhysChem-DigitizerP/
 - `_theme_colors()`：按 `isDarkTheme()` 返回当前主题对应的语义颜色字典（`page_bg`/`card_bg`/`text_primary`/`accent` 等）。
 - `page_bg_style()` / `scroll_area_style()`：页面与滚动区背景样式，适配当前主题。
 - `card_style()` / `primary_btn_style()` / `accent_btn_style()`：卡片与按钮样式，按 `isDarkTheme()` 切换颜色。
-- `apply_module_theme(widget, theme=None)`：通用主题刷新助手，递归刷新模块 widget 内的 QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame 样式表，并通过缓存 `_orig_qss` dynamic property 实现亮↔暗双向切换（避免反复替换导致"切回亮色后仍是浅色字"）。各传感器模块的 `apply_theme()` 应委托本函数。
-- `CollapsibleCard`：标题用 `SubtitleLabel`，`paintEvent` / `_apply_theme_style` 主题感知；`apply_theme(theme)` 刷新箭头、全屏按钮颜色。
+- `apply_module_theme(widget, theme=None)`：通用主题刷新助手，递归刷新模块 widget 内的 QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame 样式表，并通过缓存 `_orig_qss` dynamic property 实现亮↔暗双向切换（避免反复替换导致"切回亮色后仍是浅色字"）。各传感器模块的 `apply_theme()` 应委托本函数。**注意**：`FluentCard`（原生卡）会被本函数跳过——它自带 Fluent 主题样式，套用自定义 QSS 反而会破坏原生背景。
+- `CollapsibleCard`：自绘可折叠卡片（圆角 + 边框 + 可点击 header），标题用 `SubtitleLabel`，`paintEvent` / `_apply_theme_style` 主题感知；`apply_theme(theme)` 刷新箭头、全屏按钮颜色。**仅图表卡片仍在用**（需要全屏 + 浮动面板能力）。
+- `FluentCard`：基于 FluentWidgets 原生 `ExpandGroupSettingCard` 的紧凑卡片适配层，用于模块内**普通卡片**（连接控制/参数/实时数据/操作按钮等）。自带 WinUI3 原生视觉：主题自适应背景与分隔线、带旋转动画的展开箭头。API：`FluentCard(title, content_widget=None, expanded=True)` 兼容旧 `CollapsibleCard(title, content, expanded=...)` 调用；构造时自动剥离传入 content 的 `objectName='card'` + `card_style()`（避免双层边框）；也可用 `add_row(label, widget)` / `add_widget(w)` / `add_layout(l)` 从零填充；`add_header_widget(w)` 往 header 右侧追加按钮；`toggle()` / `is_expanded()` 控制折叠。内部重写了 `_adjustViewSize()`（按内容高度定高）并把 `wheelEvent` 透传给父级（解决嵌套外层 QScrollArea 的滚动冲突）。
 - `FloatingDataPanel`：绘制背景主题感知。
 
 **双绘图引擎 `ChartPanel`**（matplotlib / pyqtgraph 统一抽象）：
@@ -216,7 +217,7 @@ class TemperatureSensorWidget(QWidget):
 2. 标签语义化映射：静态表单标签（"连接方式:""串口:"等）用 `BodyLabel`；次要说明/统计信息（原硬编码 `#666/#888` 灰色小字）用 `CaptionLabel`（不设硬编码色，主题自适应）；实时大数值与状态强调保留 `setFont` + 强调色（主题切换由 `apply_module_theme` 自动 remap）。
 3. 数字输入用 `SpinBox` / `DoubleSpinBox`（Fluent 样式，API 与 Qt 原生兼容）。
 4. 模式开关用 `SwitchButton`（WinUI3 开关）替代复选框，信号为 `checkedChanged`（**不是** `toggled`）。
-5. 卡片容器用 `CollapsibleCard`（core 提供），内容区 `objectName='card'` + `card_style()`，**不要**再拼接 `QWidget#card QLabel { color: ... }` 硬编码（FluentLabel 已随主题变色）。
+5. 卡片容器用 `FluentCard`（core 提供，基于原生 ExpandGroupSettingCard），可传已构建内容控件或 `add_row/add_widget` 填充；仅图表卡（需要全屏/浮动面板）用 `CollapsibleCard`。**不要**再拼接 `QWidget#card QLabel { color: ... }` 硬编码（FluentLabel 已随主题变色）。
 
 **图表开发要点**（新模块必须遵守）：
 1. 图表控件一律用 `core.ChartPanel`，**禁止**直接创建 matplotlib `Figure`/`FigureCanvas` 或 pyqtgraph `PlotWidget`——绕过抽象会导致设置页引擎切换对该模块失效。
@@ -367,8 +368,9 @@ Centralized shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices
 - `_theme_colors()`: returns a dict of semantic colors for the current theme based on `isDarkTheme()` (`page_bg`/`card_bg`/`text_primary`/`accent`, etc.).
 - `page_bg_style()` / `scroll_area_style()`: page and scroll area background styles, theme-aware.
 - `card_style()` / `primary_btn_style()` / `accent_btn_style()`: card and button styles that switch colors based on `isDarkTheme()`.
-- `apply_module_theme(widget, theme=None)`: generic theme refresh helper that recursively refreshes QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame stylesheets within a module widget. Uses a cached `_orig_qss` dynamic property to enable bidirectional light↔dark switching (avoids "stuck light colors after switching back"). Sensor modules' `apply_theme()` should delegate to this.
-- `CollapsibleCard`: title uses `SubtitleLabel`; `paintEvent` / `_apply_theme_style` are theme-aware; `apply_theme(theme)` refreshes arrow and fullscreen button colors.
+- `apply_module_theme(widget, theme=None)`: generic theme refresh helper that recursively refreshes QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame stylesheets within a module widget. Uses a cached `_orig_qss` dynamic property to enable bidirectional light↔dark switching (avoids "stuck light colors after switching back"). Sensor modules' `apply_theme()` should delegate to this. **Note**: `FluentCard` (the native card) is skipped — it ships its own Fluent theme styles, and applying custom QSS would break its native background.
+- `CollapsibleCard`: hand-drawn collapsible card (rounded corners + border + clickable header), title uses `SubtitleLabel`; `paintEvent` / `_apply_theme_style` are theme-aware; `apply_theme(theme)` refreshes arrow and fullscreen button colors. **Only the chart card still uses it** (it needs fullscreen + floating-panel capability).
+- `FluentCard`: a compact card adapter over the native `ExpandGroupSettingCard`, used for the modules' **regular cards** (connection control / parameters / live data / action buttons). Native WinUI3 look out of the box: theme-adaptive background & separator, rotating expand arrow with animation. API: `FluentCard(title, content_widget=None, expanded=True)` is drop-in compatible with the old `CollapsibleCard(title, content, expanded=...)` call; it automatically strips the passed content's `objectName='card'` + `card_style()` (avoids double borders); or fill from scratch with `add_row(label, widget)` / `add_widget(w)` / `add_layout(l)`; `add_header_widget(w)` appends a button to the header's right side; `toggle()` / `is_expanded()` control collapsing. It overrides `_adjustViewSize()` (sizes by content height) and forwards `wheelEvent` to the parent widget (fixes the scroll conflict when nested inside the module's outer QScrollArea).
 - `FloatingDataPanel`: theme-aware background painting.
 
 **Dual chart engine `ChartPanel`** (unified abstraction over matplotlib / pyqtgraph):
@@ -463,7 +465,7 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 2. Semantic label mapping: static form labels (e.g. "连接方式:", "串口:") use `BodyLabel`; secondary hints/statistics (previously hardcoded `#666/#888` gray small text) use `CaptionLabel` (no hardcoded colors — theme-adaptive); large live values and emphasized status keep `setFont` + accent color (theme switching is auto-remapped by `apply_module_theme`).
 3. Numeric input uses `SpinBox` / `DoubleSpinBox` (Fluent-styled, API-compatible with the Qt natives).
 4. Mode toggles use `SwitchButton` (WinUI3 switch) instead of checkboxes; its signal is `checkedChanged` (not `toggled`).
-5. Card containers use `CollapsibleCard` (from core) with `objectName='card'` + `card_style()`; do **not** append `QWidget#card QLabel { color: ... }` hardcodes — Fluent labels already adapt to the theme.
+5. Card containers use `FluentCard` (from core, based on the native ExpandGroupSettingCard) — pass a pre-built content widget or fill with `add_row`/`add_widget`; only the chart card (needing fullscreen/floating panel) uses `CollapsibleCard`. Do **not** append `QWidget#card QLabel { color: ... }` hardcodes — Fluent labels already adapt to the theme.
 
 **Chart development rules** (mandatory for new modules):
 1. Always use `core.ChartPanel` for charts — **never** create matplotlib `Figure`/`FigureCanvas` or pyqtgraph `PlotWidget` directly; bypassing the abstraction makes the settings-page engine switch ineffective for that module.

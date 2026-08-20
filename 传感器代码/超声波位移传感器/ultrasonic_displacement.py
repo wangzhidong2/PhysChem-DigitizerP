@@ -35,7 +35,7 @@ from core import (
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style,
-    modern_combo_style, CollapsibleCard, ExpandableTextEdit,
+    modern_combo_style, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
 )
 
@@ -138,7 +138,7 @@ class UltrasonicWidget(QWidget):
 
         conn_row.addStretch()
         card_layout.addLayout(conn_row)
-        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：实时数据（可折叠） ==========
@@ -157,7 +157,7 @@ class UltrasonicWidget(QWidget):
         self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True)
         layout.addWidget(card_data)
 
         # ========== 卡片3：图表 + 数据记录（可折叠） ==========
@@ -220,7 +220,7 @@ class UltrasonicWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
         layout.addWidget(card_actions)
 
         layout.addStretch()

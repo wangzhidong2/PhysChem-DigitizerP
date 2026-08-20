@@ -34,7 +34,7 @@ from core import (
     SerialThread, SampleRateComboBox, SimulatorThread,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    CollapsibleCard, ExpandableTextEdit,
+    CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
 )
 
@@ -174,7 +174,7 @@ class UltrasonicVelocityWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = CollapsibleCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：实时数据（可折叠） ==========
@@ -193,7 +193,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.velocity_stats_label = CaptionLabel("速度统计: 暂无数据")
         data_card_layout.addWidget(self.velocity_stats_label)
 
-        card_data = CollapsibleCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True)
         layout.addWidget(card_data)
 
         # ========== 卡片3：速度-时间曲线（可全屏） ==========
@@ -254,7 +254,7 @@ class UltrasonicVelocityWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = CollapsibleCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
         layout.addWidget(card_actions)
 
         layout.addStretch()
