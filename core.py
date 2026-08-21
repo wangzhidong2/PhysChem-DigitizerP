@@ -43,7 +43,7 @@ from qfluentwidgets import (
     LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
-    ExpandGroupSettingCard, FluentIcon,
+    ExpandGroupSettingCard, FluentIcon, RadioButton, SettingCard,
 )
 
 # pyserial 为可选依赖：未安装时程序仍可运行（模拟器模式不受影响），
@@ -2414,7 +2414,10 @@ def patch_combobox_arrow_flip():
 # 通用对话框
 # ============================================================
 class CalibrationDialog(QDialog):
-    """校准参数编辑对话框 - 支持单点/两点/三点校准"""
+    """校准参数编辑对话框 - 支持单点/两点/三点校准
+
+    FluentUI 风格：卡片式布局 + 原生控件（RadioButton / LineEdit / PushButton）。
+    """
 
     def __init__(self, calibration_points, parent=None):
         super().__init__(parent)
@@ -2422,75 +2425,113 @@ class CalibrationDialog(QDialog):
         self.calibration_mode = len(calibration_points) if calibration_points else 2
         self.init_ui()
 
+    # ---------- 卡片容器（带圆角 + 边框，跟随主题） ----------
+    class _Card(QWidget):
+        """轻量卡片：圆角背景 + 边框，跟随 FluentWidgets 主题。"""
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        def paintEvent(self, e):
+            c = _theme_colors()
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setBrush(QBrush(QColor(c['card_bg'])))
+            painter.setPen(QPen(QColor(c['card_border']), 1))
+            path = QPainterPath()
+            path.addRoundedRect(0.5, 0.5, self.width() - 1, self.height() - 1, 8, 8)
+            painter.drawPath(path)
+
     def init_ui(self):
         self.setWindowTitle("编辑校准参数")
         self.setModal(True)
-        self.setFixedSize(500, 500)
+        self.setFixedSize(520, 520)
 
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(20, 16, 20, 16)
+        main_layout.setSpacing(12)
 
-        info_label = QLabel(
-            "请选择校准模式并输入标准缓冲液 pH 值及其对应的 ADC 原始值："
-        )
-        info_label.setStyleSheet("color: #666; padding: 10px;")
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
+        # 说明文字
+        info = CaptionLabel("请选择校准模式并输入标准缓冲液 pH 值及其对应的 ADC 原始值：")
+        main_layout.addWidget(info)
 
-        mode_group = QGroupBox("校准模式")
-        mode_layout = QVBoxLayout()
+        # ===== 卡片1：校准模式 =====
+        mode_card = self._Card()
+        mode_inner = QVBoxLayout(mode_card)
+        mode_inner.setContentsMargins(16, 12, 16, 12)
+        mode_inner.setSpacing(8)
+
+        mode_title = StrongBodyLabel("校准模式")
+        mode_inner.addWidget(mode_title)
 
         self.mode_buttons = []
         modes = [
             (1, "单点校准", "仅使用一个参考点，需要已知理论斜率（约 -0.5 pH/V）"),
             (2, "两点校准", "线性拟合，适合大多数常规测量"),
-            (3, "三点校准", "二次拟合，精度最高，推荐用于精确实验")
+            (3, "三点校准", "二次拟合，精度最高，推荐用于精确实验"),
         ]
 
         for count, label, desc in modes:
-            rb_layout = QHBoxLayout()
-            rb = QRadioButton(f"{label}")
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            rb = RadioButton(f"{label}")
             rb.setProperty("mode", count)
             rb.setToolTip(desc)
-
             if count == self.calibration_mode:
                 rb.setChecked(True)
-
             rb.toggled.connect(self.on_mode_changed)
-            rb_layout.addWidget(rb)
-            rb_layout.addWidget(QLabel(f"({desc})"))
-            rb_layout.addStretch()
-            mode_layout.addLayout(rb_layout)
-
+            row.addWidget(rb)
+            desc_lbl = CaptionLabel(desc)
+            row.addWidget(desc_lbl, 1)
+            mode_inner.addLayout(row)
             self.mode_buttons.append(rb)
 
-        mode_group.setLayout(mode_layout)
-        layout.addWidget(mode_group)
+        main_layout.addWidget(mode_card)
 
-        points_group = QGroupBox("校准点设置")
-        self.points_layout = QVBoxLayout()
+        # ===== 卡片2：校准点设置 =====
+        self.points_card = self._Card()
+        self.points_inner = QVBoxLayout(self.points_card)
+        self.points_inner.setContentsMargins(16, 12, 16, 12)
+        self.points_inner.setSpacing(8)
+
+        points_title = StrongBodyLabel("校准点设置")
+        self.points_inner.addWidget(points_title)
+
         self.point_widgets = []
         self._create_point_inputs()
-        points_group.setLayout(self.points_layout)
-        layout.addWidget(points_group)
 
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
+        main_layout.addWidget(self.points_card)
 
+        main_layout.addStretch()
+
+        # 底部按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
         cancel_btn = PushButton("取消")
         cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_btn)
-
+        btn_layout.addWidget(cancel_btn)
         ok_btn = PrimaryPushButton("确定")
         ok_btn.clicked.connect(self.accept)
-        button_layout.addWidget(ok_btn)
+        btn_layout.addWidget(ok_btn)
+        main_layout.addLayout(btn_layout)
 
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
+        self.setLayout(main_layout)
 
     def _create_point_inputs(self):
-        for widget in self.point_widgets:
-            widget['group'].deleteLater()
+        """重建校准点输入行（根据当前模式动态生成）。"""
         self.point_widgets.clear()
+        # 删除 points_inner 中标题之后的所有子项（逆序安全删除）
+        while self.points_inner.count() > 1:
+            item = self.points_inner.takeAt(self.points_inner.count() - 1)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                lay = item.layout()
+                while lay.count():
+                    sub = lay.takeAt(lay.count() - 1)
+                    if sub.widget():
+                        sub.widget().deleteLater()
 
         point_names_1 = ["参考缓冲液 (点 1)"]
         point_names_2 = ["低 pH 缓冲液 (点 1)", "高 pH 缓冲液 (点 2)"]
@@ -2502,42 +2543,43 @@ class CalibrationDialog(QDialog):
         defaults = {
             1: [(7.00, 2281)],
             2: [(4.00, 2555), (9.18, 2030)],
-            3: [(4.00, 2555), (6.86, 2281), (9.18, 2030)]
+            3: [(4.00, 2555), (6.86, 2281), (9.18, 2030)],
         }
         default_points = defaults.get(self.calibration_mode, defaults[2])
 
         for i, name in enumerate(point_names):
-            group = QGroupBox(name)
-            group_layout = QHBoxLayout()
+            row = QHBoxLayout()
+            row.setSpacing(10)
 
-            ph_label = QLabel("pH 值:")
-            group_layout.addWidget(ph_label)
+            name_lbl = BodyLabel(name)
+            row.addWidget(name_lbl)
+            row.addSpacing(8)
 
+            row.addWidget(BodyLabel("pH"))
             ph_input = LineEdit()
-            ph_input.setText(str(default_points[i][0]) if i < len(default_points) else "7.00")
-            ph_input.setFixedWidth(80)
+            ph_input.setText(
+                str(default_points[i][0]) if i < len(default_points) else "7.00"
+            )
+            ph_input.setFixedWidth(72)
             ph_input.setAlignment(Qt.AlignmentFlag.AlignRight)
-            group_layout.addWidget(ph_input)
+            row.addWidget(ph_input)
 
-            group_layout.addWidget(QLabel("→"))
+            row.addWidget(CaptionLabel("→"))
 
-            adc_label = QLabel("ADC/电压:")
-            group_layout.addWidget(adc_label)
-
+            row.addWidget(BodyLabel("ADC"))
             adc_input = LineEdit()
-            adc_input.setText(str(default_points[i][1]) if i < len(default_points) else "2281")
-            adc_input.setFixedWidth(80)
+            adc_input.setText(
+                str(default_points[i][1]) if i < len(default_points) else "2281"
+            )
+            adc_input.setFixedWidth(72)
             adc_input.setAlignment(Qt.AlignmentFlag.AlignRight)
-            group_layout.addWidget(adc_input)
+            row.addWidget(adc_input)
 
-            group_layout.addStretch()
-            group.setLayout(group_layout)
-            self.points_layout.addWidget(group)
+            row.addStretch()
+            self.points_inner.addLayout(row)
 
             self.point_widgets.append({
-                'group': group,
-                'ph': ph_input,
-                'adc': adc_input
+                'row': row, 'ph': ph_input, 'adc': adc_input,
             })
 
     def on_mode_changed(self):
