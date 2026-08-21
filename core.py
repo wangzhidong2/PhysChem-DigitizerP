@@ -1051,7 +1051,7 @@ class ExpandableTextEdit(QWidget):
         # 文本区：小字号 + 不自动换行，宽度按最长一行数据动态预留
         self.text_edit = TextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont("Segoe UI", 9))
+        self.text_edit.setFont(QFont("Cascadia Code", 8))
         opt = QTextOption()
         opt.setWrapMode(QTextOption.WrapMode.NoWrap)
         self.text_edit.document().setDefaultTextOption(opt)
