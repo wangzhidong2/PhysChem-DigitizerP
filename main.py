@@ -22,6 +22,7 @@ import re
 import glob
 import webbrowser
 import importlib.util
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -1497,6 +1498,9 @@ def main():
     patch_combobox_arrow_flip()
     # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
+    # 应用图标
+    icon_path = str(Path(__file__).parent / "resources" / "icon.svg")
+    window.setWindowIcon(QIcon(icon_path))
     window.show()
     sys.exit(app.exec())
 
