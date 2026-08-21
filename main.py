@@ -1498,8 +1498,8 @@ def main():
     patch_combobox_arrow_flip()
     # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
-    # 应用图标
-    icon_path = str(Path(__file__).parent / "resources" / "icon.svg")
+    # 应用图标（.ico 适配 Windows 任务栏）
+    icon_path = str(Path(__file__).parent / "docs" / "images" / "icon.ico")
     window.setWindowIcon(QIcon(icon_path))
     window.show()
     sys.exit(app.exec())
