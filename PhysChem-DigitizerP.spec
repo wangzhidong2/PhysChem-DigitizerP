@@ -43,7 +43,12 @@ for dirpath, dirnames, filenames in os.walk('传感器代码'):
 datas = sensor_datas + [
     # 窗口图标：main.py 按 __file__ 相对 docs/images/icon.ico 加载
     (os.path.join('docs', 'images', 'icon.ico'), os.path.join('docs', 'images')),
+    # Gitee / GitCode 平台 logo：主页与设置页按 docs/images/ 相对路径加载，
+    # 加载失败仅回退 FluentIcon，但正常分发应带全
+    (os.path.join('docs', 'images', 'gitee.svg'), os.path.join('docs', 'images')),
+    (os.path.join('docs', 'images', 'gitcode.svg'), os.path.join('docs', 'images')),
 ]
+# docs/images 其余 png 为 README 截图，运行时用不到，不打包以控包体
 # FluentWidgets 的 FluentIcon 资源（SVG/QSS）
 datas += collect_data_files('qfluentwidgets')
 
