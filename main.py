@@ -1492,15 +1492,37 @@ class MainWindow(FluentWindow):
         self.apply_theme("light")
 
 
+def _set_windows_appusermodelid():
+    """设置 Windows AppUserModelID。
+
+    用 python.exe 启动时，任务栏按 AppUserModelID 分组图标；未设置时
+    沿用 python.exe 自身图标，窗口 QIcon 对任务栏无效。设置唯一 ID 后
+    任务栏才会显示窗口图标（标题栏图标不受影响，一直正常）。
+    """
+    if sys.platform == 'win32':
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                'PhysChem.DigitizerP')
+        except Exception:
+            pass
+
+
 def main():
+    _set_windows_appusermodelid()
     app = QApplication(sys.argv)
+    # 应用图标（.ico 同时设在 app 和 window 上）
+    icon_path = str(Path(__file__).parent / "docs" / "images" / "icon.ico")
+    app_icon = QIcon(icon_path)
+    # 显式注册各尺寸，避免任务栏按需缩放时取不到合适位图
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        app_icon.addFile(icon_path, QSize(size, size))
+    app.setWindowIcon(app_icon)
     # 让 ComboBox 展开时箭头朝上（FluentWidgets 默认始终朝下）
     patch_combobox_arrow_flip()
     # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
-    # 应用图标（.ico 适配 Windows 任务栏）
-    icon_path = str(Path(__file__).parent / "docs" / "images" / "icon.ico")
-    window.setWindowIcon(QIcon(icon_path))
+    window.setWindowIcon(app_icon)
     window.show()
     sys.exit(app.exec())
 
