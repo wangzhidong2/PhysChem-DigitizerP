@@ -150,7 +150,7 @@ class UltrasonicWidget(QWidget):
         data_card_layout.setSpacing(12)
 
         self.current_data_label = BodyLabel("等待连接...")
-        self.current_data_label.setFont(QFont("Segoe UI", 11))
+        self.current_data_label.setFont(QFont("Cascadia Code", 11))
         self.current_data_label.setStyleSheet("color: #444444;")
         data_card_layout.addWidget(self.current_data_label)
 

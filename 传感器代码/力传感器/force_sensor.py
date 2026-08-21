@@ -340,14 +340,14 @@ class ForceSensorWidget(QWidget):
         data_card_layout.setSpacing(12)
 
         self.current_force_label = BodyLabel("力/质量: --.-")
-        self.current_force_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        self.current_force_label.setFont(QFont("Cascadia Code", 24, QFont.Weight.Bold))
         self.current_force_label.setStyleSheet("color: #1a1a1a;")
         data_card_layout.addWidget(self.current_force_label)
 
         raw_row = QHBoxLayout()
         raw_row.setSpacing(20)
         self.current_raw_label = BodyLabel("原始ADC: ------")
-        self.current_raw_label.setFont(QFont("Segoe UI", 11))
+        self.current_raw_label.setFont(QFont("Cascadia Code", 11))
         self.current_raw_label.setStyleSheet("color: #444444;")
         raw_row.addWidget(self.current_raw_label)
         raw_row.addStretch()

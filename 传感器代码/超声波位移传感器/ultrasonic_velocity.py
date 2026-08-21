@@ -186,7 +186,7 @@ class UltrasonicVelocityWidget(QWidget):
         data_card_layout.setSpacing(12)
 
         self.current_data_label = BodyLabel("当前数据: 等待连接...")
-        self.current_data_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        self.current_data_label.setFont(QFont("Cascadia Code", 24, QFont.Weight.Bold))
         self.current_data_label.setStyleSheet("color: #1a1a1a;")
         data_card_layout.addWidget(self.current_data_label)
 
