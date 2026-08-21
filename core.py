@@ -1899,6 +1899,7 @@ def _theme_colors():
             'page_bg':     '#202020',
             'card_bg':     '#2d2d2d',
             'card_border': '#404040',
+            'content_bg':  '#3d3d3d',   # 卡片内容区灰色（亮于 card_bg，形成"白标题+灰内容"分层）
             'text_primary':'#ffffff',
             'text_secondary':'#c0c0c0',
             'text_hint':   '#888888',
@@ -1913,6 +1914,7 @@ def _theme_colors():
         'page_bg':     '#f3f3f3',
         'card_bg':     '#ffffff',
         'card_border': '#e5e5e5',
+        'content_bg':  '#f6f6f6',   # 卡片内容区灰色（深于 card_bg，形成内容区灰底分层）
         'text_primary':'#1a1a1a',
         'text_secondary':'#444444',
         'text_hint':   '#888888',
@@ -2062,19 +2064,24 @@ def apply_module_theme(widget, theme=None):
 
 
 def card_style():
-    """卡片容器样式（适配当前主题）。
+    """卡片内容区容器样式（适配当前主题）。
+
+    背景用 content_bg（内容区灰色）而非 card_bg，使卡片内容区呈现
+    "白标题(头部 card_bg) + 灰内容区"的两层分层，与 FluentCard 视觉统一。
+    目前该样式仅被图表卡（CollapsibleCard）内容使用；普通卡片走 FluentCard
+    （构造时会剥离 objectName='card' + card_style）。
 
     注意：页面容器常写 `content.setStyleSheet("background: #f3f3f3;")`，
     该无选择器的样式表会级联到所有子 widget，导致卡片内的中间容器
     （如 serial_panel、ble_panel 等未设 objectName 的 QWidget）继承
     灰色背景。这里用 `QWidget#card QWidget` 把卡片内所有子 widget
-    背景置透明，使其透出卡片白色底；各控件（ComboBox/TextEdit/
+    背景置透明，使其透出卡片灰底；各控件（ComboBox/TextEdit/
     QPushButton 等）自身的样式表优先级更高，不受影响。
     """
     c = _theme_colors()
     return f"""
         QWidget#card {{
-            background-color: {c['card_bg']};
+            background-color: {c['content_bg']};
             border: 1px solid {c['card_border']};
             border-radius: 8px;
         }}

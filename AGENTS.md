@@ -117,11 +117,11 @@ PhysChem-DigitizerP/
 集中存放共享代码——`SerialThread`、`BLESerialThread`、`scan_ble_devices`、`load/save_sensor_config`、`CalibrationDialog`、`SampleRateDialog`、现代化样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`）。
 
 **主题基础设施**（亮/暗主题全链路支持）：
-- `_theme_colors()`：按 `isDarkTheme()` 返回当前主题对应的语义颜色字典（`page_bg`/`card_bg`/`text_primary`/`accent` 等）。
+- `_theme_colors()`：按 `isDarkTheme()` 返回当前主题对应的语义颜色字典（`page_bg`/`card_bg`/`content_bg`/`text_primary`/`accent` 等）。
 - `page_bg_style()` / `scroll_area_style()`：页面与滚动区背景样式，适配当前主题。
-- `card_style()` / `primary_btn_style()` / `accent_btn_style()`：卡片与按钮样式，按 `isDarkTheme()` 切换颜色。
+- `card_style()` / `primary_btn_style()` / `accent_btn_style()`：卡片与按钮样式，按 `isDarkTheme()` 切换颜色。`card_style()` 的背景用 `content_bg`（内容区灰色，亮色 `#f6f6f6` / 暗色 `#3d3d3d`），使卡片内容区比头部（`card_bg`）更深/更浅，形成「白标题 + 灰内容区」分层，与 FluentCard 视觉统一。
 - `apply_module_theme(widget, theme=None)`：通用主题刷新助手，递归刷新模块 widget 内的 QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame 样式表，并通过缓存 `_orig_qss` dynamic property 实现亮↔暗双向切换（避免反复替换导致"切回亮色后仍是浅色字"）。各传感器模块的 `apply_theme()` 应委托本函数。**注意**：`FluentCard`（原生卡）会被本函数跳过——它自带 Fluent 主题样式，套用自定义 QSS 反而会破坏原生背景。
-- `CollapsibleCard`：自绘可折叠卡片（圆角 + 边框 + 可点击 header），标题用 `SubtitleLabel`，`paintEvent` / `_apply_theme_style` 主题感知；`apply_theme(theme)` 刷新箭头、全屏按钮颜色。**仅图表卡片仍在用**（需要全屏 + 浮动面板能力）。
+- `CollapsibleCard`：自绘可折叠卡片（圆角 + 边框 + 可点击 header），标题用 `SubtitleLabel`（暗色下白色、亮色下黑色），头部背景 `card_bg`、内容区背景 `content_bg`（由 `card_style()` 提供，形成「白标题 + 灰内容区」分层），`paintEvent` / `_apply_theme_style` 主题感知；`apply_theme(theme)` 刷新箭头、全屏按钮颜色。**仅图表卡片仍在用**（需要全屏 + 浮动面板能力）。
 - `FluentCard`：基于 FluentWidgets 原生 `ExpandGroupSettingCard` 的紧凑卡片适配层，用于模块内**普通卡片**（连接控制/参数/实时数据/操作按钮等）。自带 WinUI3 原生视觉：主题自适应背景与分隔线、带旋转动画的展开箭头。API：`FluentCard(title, content_widget=None, expanded=True)` 兼容旧 `CollapsibleCard(title, content, expanded=...)` 调用；构造时自动剥离传入 content 的 `objectName='card'` + `card_style()`（避免双层边框）；也可用 `add_row(label, widget)` / `add_widget(w)` / `add_layout(l)` 从零填充；`add_header_widget(w)` 往 header 右侧追加按钮；`toggle()` / `is_expanded()` 控制折叠。内部重写了 `_adjustViewSize()`（按内容高度定高）并把 `wheelEvent` 透传给父级（解决嵌套外层 QScrollArea 的滚动冲突）。
 - `FloatingDataPanel`：绘制背景主题感知。
 
