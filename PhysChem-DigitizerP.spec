@@ -19,8 +19,9 @@
 - qfluentwidgets 的 FluentIcon SVG 资源用 collect_data_files 收集。
 
 注意事项：
-- 推荐保持 onedir：onefile 每次运行解压到临时目录，启动慢且
+- onedir 目录模式（非单文件）：onefile 每次运行解压到临时目录，启动慢且
   sensor_config.json / app_config.json 无法跨次持久。
+- console=True 保留控制台窗口，传感器加载、串口收发日志实时可见。
 - 新增传感器模块后重新打包；打包产物内也可以直接往
   _internal/传感器代码/<子目录>/ 丢 .py 实现免重打包热插拔。
 """
@@ -80,7 +81,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,          # GUI 程序，不弹控制台
+    console=True,           # 保留控制台：传感器加载/串口日志直接可见，便于排障
     icon=os.path.join('docs', 'images', 'icon.ico'),   # exe 文件图标
 )
 
