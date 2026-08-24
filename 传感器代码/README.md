@@ -28,8 +28,10 @@
 │   ├── README.md                            # 使用说明
 │   ├── ESP32_Voltage_Sensor.ino             # ESP32-S3 内置 ADC 固件
 │   ├── HX711_Voltage.ino                    # HX711 24 位 ADC 固件
+│   ├── ADS1115_Voltage.ino                  # ADS1115 16 位 I2C ADC 固件
 │   └── voltage_sensor.py                    # 电压上位机模块（支持 HX711 模式）
 └── 电流传感器/                                 # ACS712 电流传感器模块
+    ├── README.md                            # 使用说明
     ├── ESP32_ADC_Raw_Data.ino               # ESP32-S3 ADC 原始数据固件
     └── current_sensor.py                    # 电流上位机模块（5A/20A/30A 量程，AC/DC，零点校准）
 ```
