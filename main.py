@@ -27,6 +27,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QStackedWidget, QScrollArea, QLineEdit,
+    QFileDialog,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics, QGuiApplication
@@ -63,7 +64,7 @@ from core import (
     patch_combobox_arrow_flip, CollapsibleCard,
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
     ChartPanel, chart_engine_available, resolve_chart_engine,
-    clear_sensor_config,
+    clear_sensor_config, export_sensor_config, import_sensor_config,
 )
 
 
@@ -938,6 +939,8 @@ class SettingsWidget(QWidget):
         group_personal.addSettingCard(self._theme_card)
         group_personal.addSettingCard(self._build_persistence_card())
         group_personal.addSettingCard(self._build_clear_config_card())
+        group_personal.addSettingCard(self._build_export_config_card())
+        group_personal.addSettingCard(self._build_import_config_card())
         group_personal.addSettingCard(self._build_engine_card())
         layout.addWidget(group_personal)
 
@@ -1068,6 +1071,90 @@ class SettingsWidget(QWidget):
         card.hBoxLayout.addWidget(btn)
         card.hBoxLayout.addSpacing(16)
         return card
+
+    def _build_export_config_card(self):
+        """导出配置卡片：将 sensor_config.json 导出到用户选择的文件夹。"""
+        card = SettingCard(
+            FIF.SHARE, "导出配置",
+            "将当前传感器校准配置导出到指定文件夹，便于备份或迁移到其他电脑", None)
+        btn = PushButton("导出", card)
+        btn.setFixedHeight(34)
+        btn.clicked.connect(self._on_export_config_clicked)
+        card.hBoxLayout.addWidget(btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _on_export_config_clicked(self):
+        """导出配置：弹出系统文件夹选择对话框，将 sensor_config.json 复制到目标目录。"""
+        folder = QFileDialog.getExistingDirectory(
+            self, "选择导出目录", "",
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
+        )
+        if not folder:
+            return  # 用户取消
+        ok, msg = export_sensor_config(folder)
+        if ok:
+            InfoBar.success(
+                title="导出成功",
+                content=f"配置已导出到 {msg}",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=4000,
+                parent=self,
+            )
+        else:
+            InfoBar.error(
+                title="导出失败",
+                content=msg,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self,
+            )
+
+    def _build_import_config_card(self):
+        """导入配置卡片：从用户选择的 JSON 文件导入 sensor_config.json。"""
+        card = SettingCard(
+            FIF.DOWN, "导入配置",
+            "从 JSON 文件导入传感器校准配置，覆盖当前已保存的配置", None)
+        btn = PushButton("导入", card)
+        btn.setFixedHeight(34)
+        btn.clicked.connect(self._on_import_config_clicked)
+        card.hBoxLayout.addWidget(btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _on_import_config_clicked(self):
+        """导入配置：弹出系统文件选择对话框，将选中的 JSON 文件写入 sensor_config.json。"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择配置文件", "",
+            "JSON 文件 (*.json);;所有文件 (*)",
+        )
+        if not file_path:
+            return  # 用户取消
+        ok, msg = import_sensor_config(file_path)
+        if ok:
+            InfoBar.success(
+                title="导入成功",
+                content=f"{msg}，重启程序后生效",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=4000,
+                parent=self,
+            )
+        else:
+            InfoBar.error(
+                title="导入失败",
+                content=msg,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self,
+            )
 
     def _on_clear_config_clicked(self):
         """清除用户设置：确认后清空 sensor_config.json，保存开关置为开。"""

@@ -130,7 +130,7 @@ class AppConfig(QConfig):
     configPersistenceEnabled = ConfigItem("General", "ConfigPersistenceEnabled", True)
     # 图表引擎：matplotlib（默认，静态美观）/ pyqtgraph（高性能交互）
     chartEngine = OptionsConfigItem(
-        "Chart", "Engine", "matplotlib",
+        "Chart", "Engine", "pyqtgraph",
         OptionsValidator(["matplotlib", "pyqtgraph"]),
     )
 
@@ -217,6 +217,77 @@ def save_sensor_config(module_name, config_dict):
     except Exception as e:
         print(f"⚠️ 保存 [{module_name}] 配置失败: {e}")
         return False
+
+
+def export_sensor_config(target_dir):
+    """将 sensor_config.json 导出到指定目录。
+
+    由设置页「导出配置」调用（系统文件夹选择对话框）。
+
+    Args:
+        target_dir: 目标目录路径（用户通过 QFileDialog 选择）
+
+    Returns:
+        tuple[bool, str]: (是否成功, 消息文件路径或错误描述)
+    """
+    import shutil
+    config_path = _get_config_file_path()
+    if not os.path.exists(config_path):
+        return False, "配置文件不存在，无需导出"
+    try:
+        dest = os.path.join(target_dir, CONFIG_FILENAME)
+        shutil.copy2(config_path, dest)
+        print(f"✓ 配置已导出到 {dest}")
+        return True, dest
+    except Exception as e:
+        print(f"⚠️ 导出配置失败: {e}")
+        return False, str(e)
+
+
+def import_sensor_config(source_file):
+    """从指定文件导入 sensor_config.json，覆盖当前配置。
+
+    由设置页「导入配置」调用（系统文件选择对话框）。
+
+    Args:
+        source_file: 源文件路径（用户通过 QFileDialog 选择的 .json 文件）
+
+    Returns:
+        tuple[bool, str]: (是否成功, 消息描述)
+    """
+    try:
+        with open(source_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except json.JSONDecodeError:
+        return False, "文件格式错误，不是有效的 JSON 文件"
+    except Exception as e:
+        return False, f"读取文件失败: {e}"
+
+    if not isinstance(data, dict):
+        return False, "文件内容格式错误，期望 JSON 对象"
+
+    config_path = _get_config_file_path()
+    try:
+        # 先写临时文件再重命名，避免 Windows 文件锁导致 PermissionError
+        import tempfile
+        dir_name = os.path.dirname(config_path)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, config_path)
+        except Exception:
+            # 清理临时文件
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        print(f"✓ 配置已从 {source_file} 导入到 {config_path}")
+        return True, f"已导入 {len(data)} 个模块的配置"
+    except Exception as e:
+        print(f"⚠️ 导入配置失败: {e}")
+        return False, f"写入配置文件失败: {e}"
 
 
 def clear_sensor_config():
