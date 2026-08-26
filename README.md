@@ -1,26 +1,25 @@
 # PhysChem-DigitizerP
 
-基于 Arduino/ESP32/ESP8266 开发的低成本理化实验数字化采集系统
+基于 Arduino/ESP32与Python开发的低成本理化实验数字化采集系统
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
 
-## 📖 项目简介
+##  项目简介
 
-**PhysChem-DigitizerP** 是一个开源的物理化学实验数字化采集系统，旨在为中学物理/化学实验室提供低成本的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python + PySide6）两部分，实现了从传感器数据采集、实时可视化到数据导出的完整功能。
+**PhysChem-DigitizerP** 是一个开源的物理化学实验数字化传感器系统，目的在于为中学物理/化学实验提供低成本，可视化的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python ）两部分，实现了从传感器数据采集、实时可视化到数据导出的功能。该项目处于维护中，但鉴于本人是个高中生，没有办法及时更新，所以更新不规律。
 
-- **低成本替代**：单传感器成本 < ¥30（商业方案通常 > ¥500）
-- **开源透明**：GPL-3.0 协议，硬件设计和软件代码完全开源
-- **模块化设计**：新增传感器只需丢文件，无需修改主程序
-- **现代化界面**：PySide6 图形界面，侧边栏导航 + 实时数据可视化
-- **双绘图引擎**：matplotlib（静态美观）与 pyqtgraph（高性能交互）可在设置中一键热切换
+- **低成本替代**：单传感器成本 < ¥80（商业方案通常 > ¥200）
+- **开源透明**：GPL-3.0 协议，硬件设计和软件代码完全开源，同时提供我认为写的比较详细的教程
+- **模块化设计**：新增传感器只需丢文件，详情参看Agents.md，同时也方便AI Agent开发
+- **现代化界面**：PySide6 +Fluent-widgets库图形界面，UI美观，尽可能的复刻fluent design
 
 <p align="center">
-  <img src="docs/images/home.png" alt="主界面" width="800"/>
+  <img src="docs/images/home.png" alt="首页" width="800"/>
 </p>
-<p align="center">软件主界面 — 模块导航与项目概览</p>
+<p align="center">软件首页</p>
 
 ## 📦 核心依赖库
 
@@ -34,18 +33,27 @@
 | **numpy** | ≥1.21.0 | 数值计算 |
 
 ```bash
-pip install PySide6>=6.4.0 numpy>=1.21.0
+pip install PySide6 numpy
 # 串口通信（连接真实下位机需要；未安装时可用模拟器模式，程序不会崩溃）
-pip install pyserial>=3.5
-# 绘图引擎（matplotlib / pyqtgraph 至少安装其一，推荐都装）
-pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
+pip install pyserial
+# 绘图引擎（matplotlib / pyqtgraph 至少安装其一）
+pip install matplotlib pyqtgraph
 # WinUI3 风格组件库（必需）
 pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
 pip install bleak
 ```
-
-## 🧩 功能模块
+如果你所在的shell不支持一次输入多个模块，依次输入以下命令
+```powershell
+pip install PySide6
+pip install PySide6-Fluent-Widgets
+pip install numpy
+pip install pyserial
+pip install pyqtgraph
+pip install matplotlib
+pip install bleak
+```
+##  功能模块
 
 项目采用**模块化架构**——主程序 `main.py` 启动时扫描 `传感器代码/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
 
