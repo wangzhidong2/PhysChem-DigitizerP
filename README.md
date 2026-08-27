@@ -226,13 +226,13 @@ python test_serial.py
 
 ## 8.技术文档
 
-- **[AGENTS.md](AGENTS.md)** — 开发者指南：模块化架构说明、识别区格式、添加新模块完整教程
+- **[AGENTS.md](AGENTS.md)** — 开发者指南
 - **[传感器代码总览](传感器代码/README.md)** — 各传感器固件与上位机模块对照表
-- **[超声波位移传感器](传感器代码/超声波位移传感器/README.md)** — 接线指南、固件说明、校准方法与计算原理
-- **[pH 传感器](传感器代码/ph传感器/README.md)** — 接线、多模式校准（单点/两点/三点）、电极保养
-- **[力传感器](传感器代码/力传感器/README.md)** — HX711 接线、去皮校准、串口命令
-- **[电压传感器](传感器代码/电压传感器/README.md)** — ADC 接线、分压扩展、精度优化
-- **[电流传感器](传感器代码/电流传感器/README.md)** — ACS712 接线、量程选择、零点校准、AC/DC 测量
+- **[超声波位移传感器](传感器代码/超声波位移传感器/README.md)** 
+- **[pH 传感器](传感器代码/ph传感器/README.md)** 
+- **[力传感器](传感器代码/力传感器/README.md)** 
+- **[电压传感器](传感器代码/电压传感器/README.md)** 
+- **[电流传感器](传感器代码/电流传感器/README.md)** 
 
 ## 9.扩展开发
 
@@ -259,14 +259,8 @@ python test_serial.py
 <p align="center">
   <img src="docs/images/settings.png" alt="设置界面" width="800"/>
 </p>
-<p align="center">设置界面 — 主题与图表引擎切换</p>
+<p align="center">设置界面 </p>
 
-- **左侧侧边栏**：WinUI3 风格导航（FluentWindow），模块图标由识别区文字渲染
-- **串口控制**：选择端口、刷新、连接/断开
-- **实时数据**：当前值、统计信息、数据记录
-- **图表区域**：实时数据曲线（matplotlib / pyqtgraph 双引擎，设置中切换；pyqtgraph 支持悬停查看数值）
-- **操作按钮**：开始/停止采集、保存数据、清除数据
-- **设置页**：应用主题（亮/暗/跟随系统）、图表引擎切换（立即生效）、保存配置开关、清除用户设置、关于与源码链接
 
 ## 📄 许可证
 
@@ -281,7 +275,7 @@ python test_serial.py
 
 ## 📧 联系方式
 
-如有问题或建议，请提交 [GitHub Issue](https://github.com/wangzhidong2/PhysChem-DigitizerP/issues) 或 [Gitee Issue](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/issues)。
+如有问题或建议，请提交 [GitHub Issue](https://github.com/wangzhidong2/PhysChem-DigitizerP/issues) 或 [Gitcode Issue](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/issues)。
 
 ## 🌐 项目地址
 
