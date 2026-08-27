@@ -114,7 +114,7 @@ python ./main.py
 ### 4.3.选择开发板并烧录
 
 - ESP8266：开发板选 **WeMos D1 R1**
-- ESP32：开发板选 **ESP32 Dev Module**
+- ESP32：开发板选 **ESP32 S3 Dev Module**
 - 选择正确端口，点击上传
 
 ### 4.4.验证固件
