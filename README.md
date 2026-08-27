@@ -10,7 +10,7 @@
 ## 1.写在前面
 本项目的开源协议是GPLv3,为什么用GPLv3开源呢?因为b人也是一个开源爱好者，想把自由一直传递下去，同时我的上游库PySide6与Fluent-Widgets库也都是GPL类的。请在制作自己的分支的时候，遵守GPL相关协议，耗子尾汁哦:) 如果你的项目是商用项目，实在不想公开源代码的话，那你跟PySide6与Fluent-Widgets库商量，违反GPL,反正我不会去追究你，因为我还要上晚自习😒😒，如果跟上游库商量好之后，你想要闭源进行商用的话，跟我说一声不过分吧？要不然…我会在生日许愿时祝你电脑蓝屏:(  哦。
 
-##  2.项目简介
+## 2.项目简介
 
 **PhysChem-DigitizerP** 是一个开源的物理化学实验数字化传感器系统，目的在于为中学物理/化学实验提供低成本，可视化的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python ）两部分，实现了从传感器数据采集、实时可视化到数据导出的功能。该项目处于维护中，但鉴于本人是个高中生，没有办法及时更新，所以更新不规律。
 
@@ -26,12 +26,12 @@
 
 ## 3.快速上手上位机
 ### 3.1.使用预打包文件（无需配置环境）
-3.1.1.在releases页面下载打包好的程序
+#### 3.1.1.在 releases 页面下载打包好的程序
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/b3ff419c-13e0-4858-9748-a3a51d6e1dfe/image.png 'image.png')
-3.1.2.解压，打开主程序
+#### 3.1.2.解压，打开主程序
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/3c8e2021-48eb-4ce6-8a39-dc7cb063d59f/image.png 'image.png')
-### 3.2.从源码打开(需要python环境，git可选）
-#### 3.2.1.[安装python]( www.python.org) 
+### 3.2.从源码打开（需要 python 环境，git 可选）
+#### 3.2.1.[安装 python](https://www.python.org)
 **注意，版本号大于3.10**
 #### 3.2.2.安装库
 
@@ -84,10 +84,10 @@ cd PhysChem-DigitizerP
 python ./main.py
 ```
 #### 3.2.4.或者，使用平台的源代码打包功能
-3.2.4.1.下载代码 
+##### 3.2.4.1.下载代码
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/e776925b-b898-4fe4-82b9-1b01bd4260e2/image.png 'image.png')
-3.2.4.2.解压，双击main.py打开
-###  3.3.功能模块
+##### 3.2.4.2.解压，双击 `main.py` 打开
+### 3.3.功能模块
 
 项目采用**模块化架构**——主程序 `main.py` 启动时扫描 `传感器代码/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
 
@@ -99,16 +99,17 @@ python ./main.py
 | 力/质量传感器 | HX711 | ESP32-S3 | 物理 | [使用说明](传感器代码/力传感器/README.md) |
 | 电压传感器 | ESP32 ADC / HX711等AD转换模块 | ESP32-S3 | 物理 |  [使用说明](传感器代码/电压传感器/README.md) |
 | 电流传感器 | ACS712 | ESP32-S3 | 物理 |  [使用说明](传感器代码/电流传感器/README.md) |
+
 ## 4.下位机固件烧录
-### 4.1.[安装arduino IDE](arduino.cc)
-### 4.2.安装 Arduino IDE 并添加开发板支持：
-   -**ESP8266**：`http://arduino.esp8266.com/stable/package_esp8266com_index.json`
-   
-   -**ESP32**：`https://dl.espressif.com/dl/package_esp32_index.json`
-   
-   -**ESP32 国内镜像（推荐）**：`https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json` [这个镜像使用教程点击此处](https://blog.csdn.net/2501_91081681/article/details/159542001)
-   - 文件 → 首选项 → 附加开发板管理器网址 → 粘贴上述地址
-   - 在搜索框中输入 esp32，找到 esp32 by Espressif Systems⚠️ 注意：下拉列表中会有多个选项，选择带有 -cn 后缀的版本，这是针对国内网络优化的版本。
+### 4.1.安装 [Arduino IDE](https://www.arduino.cc/en/software)
+### 4.2.添加开发板支持
+- **ESP8266**：`http://arduino.esp8266.com/stable/package_esp8266com_index.json`
+
+- **ESP32**：`https://dl.espressif.com/dl/package_esp32_index.json`
+
+- **ESP32 国内镜像（推荐）**：`https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json`（[镜像使用教程](https://blog.csdn.net/2501_91081681/article/details/159542001)）
+- 文件 → 首选项 → 附加开发板管理器网址 → 粘贴上述地址
+- 在搜索框中输入 esp32，找到 esp32 by Espressif Systems ⚠️ 注意：下拉列表中会有多个选项，选择带有 `-cn` 后缀的版本，这是针对国内网络优化的版本。
 
 ## 📂 项目结构
 
