@@ -6,7 +6,18 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
-
+```写在前面
+写在前面
+本项目的开源协议是GPLv3,为什么用GPLv3开源呢?因为b人
+也是一个开源爱好者，想把自由一直传递下去，同时我的上
+游库PySide6与Fluent-Widgets库也都是GPL类的。请在制作
+自己的分支的时候，遵守GPL相关协议，耗子尾汁哦😄😁
+如果你的项目是商用项目，实在不想公开源代码的话，那你
+跟PySide6与Fluent-Widgets库商量，违反GPL,反正我不会
+去追究你，因为我还要上晚自习😫😫，如果跟上游库商量好
+之后，你想要进行商用的话，跟我说一声不过分吧？要不然
+…我会在生日许愿时祝你电脑蓝屏:( 哦^_^
+```
 ##  项目简介
 
 **PhysChem-DigitizerP** 是一个开源的物理化学实验数字化传感器系统，目的在于为中学物理/化学实验提供低成本，可视化的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python ）两部分，实现了从传感器数据采集、实时可视化到数据导出的功能。该项目处于维护中，但鉴于本人是个高中生，没有办法及时更新，所以更新不规律。
