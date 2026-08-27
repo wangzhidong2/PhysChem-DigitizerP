@@ -103,7 +103,9 @@ python ./main.py
 ### 4.1.[安装arduino IDE](arduino.cc)
 ### 4.2.安装 Arduino IDE 并添加开发板支持：
    -**ESP8266**：`http://arduino.esp8266.com/stable/package_esp8266com_index.json`
+   
    -**ESP32**：`https://dl.espressif.com/dl/package_esp32_index.json`
+   
    -**ESP32 国内镜像（推荐）**：`https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json` [这个镜像使用教程点击此处](https://blog.csdn.net/2501_91081681/article/details/159542001)
    - 文件 → 首选项 → 附加开发板管理器网址 → 粘贴上述地址
    - 在搜索框中输入 esp32，找到 esp32 by Espressif Systems⚠️ 注意：下拉列表中会有多个选项，选择带有 -cn 后缀的版本，这是针对国内网络优化的版本。
