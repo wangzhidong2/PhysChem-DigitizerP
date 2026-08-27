@@ -8,15 +8,7 @@
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
 ```写在前面
 写在前面
-本项目的开源协议是GPLv3,为什么用GPLv3开源呢?因为b人
-也是一个开源爱好者，想把自由一直传递下去，同时我的上
-游库PySide6与Fluent-Widgets库也都是GPL类的。请在制作
-自己的分支的时候，遵守GPL相关协议，耗子尾汁哦😄😁
-如果你的项目是商用项目，实在不想公开源代码的话，那你
-跟PySide6与Fluent-Widgets库商量，违反GPL,反正我不会
-去追究你，因为我还要上晚自习😫😫，如果跟上游库商量好
-之后，你想要进行商用的话，跟我说一声不过分吧？要不然
-…我会在生日许愿时祝你电脑蓝屏:( 哦^_^
+本项目的开源协议是GPLv3,为什么用GPLv3开源呢?因为b人也是一个开源爱好者，想把自由一直传递下去，同时我的上游库PySide6与Fluent-Widgets库也都是GPL类的。请在制作自己的分支的时候，遵守GPL相关协议，耗子尾汁哦:) 如果你的项目是商用项目，实在不想公开源代码的话，那你跟PySide6与Fluent-Widgets库商量，违反GPL,反正我不会去追究你，因为我还要上晚自习😒😒，如果跟上游库商量好之后，你想要闭源进行商用的话，跟我说一声不过分吧？要不然…我会在生日许愿时祝你电脑蓝屏:(  哦。
 ```
 ##  项目简介
 
@@ -54,7 +46,11 @@ pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
 pip install bleak
 ```
-如果你所在的shell不支持一次输入多个模块，依次输入以下命令
+或者
+```bash
+pip install PySide6 PySide6-Fluent-Widgets numpy pyserial matplotlib pyqtgraph bleak
+```
+如果你所在的shell（powershell）不支持一次输入多个模块，依次输入以下命令
 ```powershell
 pip install PySide6
 pip install PySide6-Fluent-Widgets
