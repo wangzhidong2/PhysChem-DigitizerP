@@ -938,9 +938,7 @@ class SettingsWidget(QWidget):
         self._theme_card = self._build_theme_card(group_personal)
         group_personal.addSettingCard(self._theme_card)
         group_personal.addSettingCard(self._build_persistence_card())
-        group_personal.addSettingCard(self._build_clear_config_card())
-        group_personal.addSettingCard(self._build_export_config_card())
-        group_personal.addSettingCard(self._build_import_config_card())
+        group_personal.addSettingCard(self._build_config_management_card())
         group_personal.addSettingCard(self._build_engine_card())
         layout.addWidget(group_personal)
 
@@ -1060,27 +1058,21 @@ class SettingsWidget(QWidget):
             # 拒绝：切回关闭（qconfig.set 会同步翻转开关 UI 并落盘）
             qconfig.set(app_cfg.configPersistenceEnabled, False)
 
-    def _build_clear_config_card(self):
-        """清除用户设置卡片：确认后删除 sensor_config.json 并开启配置保存。"""
+    def _build_config_management_card(self):
+        """传感器配置管理卡片：清除、导出、导入传感器校准配置。"""
         card = SettingCard(
-            FIF.DELETE, "清除用户设置",
-            "删除已保存的所有传感器校准配置（sensor_config.json），恢复默认值", None)
-        btn = PushButton("清除", card)
-        btn.setFixedHeight(34)
-        btn.clicked.connect(self._on_clear_config_clicked)
-        card.hBoxLayout.addWidget(btn)
-        card.hBoxLayout.addSpacing(16)
-        return card
-
-    def _build_export_config_card(self):
-        """导出配置卡片：将 sensor_config.json 导出到用户选择的文件夹。"""
-        card = SettingCard(
-            FIF.SHARE, "导出配置",
-            "将当前传感器校准配置导出到指定文件夹，便于备份或迁移到其他电脑", None)
-        btn = PushButton("导出", card)
-        btn.setFixedHeight(34)
-        btn.clicked.connect(self._on_export_config_clicked)
-        card.hBoxLayout.addWidget(btn)
+            FIF.SETTING, "传感器配置管理",
+            "清除、导入或导出传感器校准配置（sensor_config.json）", None)
+        for text, handler in (
+            ("清除", self._on_clear_config_clicked),
+            ("导出", self._on_export_config_clicked),
+            ("导入", self._on_import_config_clicked),
+        ):
+            btn = PushButton(text, card)
+            btn.setFixedHeight(34)
+            btn.clicked.connect(handler)
+            card.hBoxLayout.addWidget(btn)
+            card.hBoxLayout.addSpacing(8)
         card.hBoxLayout.addSpacing(16)
         return card
 
@@ -1113,18 +1105,6 @@ class SettingsWidget(QWidget):
                 duration=3000,
                 parent=self,
             )
-
-    def _build_import_config_card(self):
-        """导入配置卡片：从用户选择的 JSON 文件导入 sensor_config.json。"""
-        card = SettingCard(
-            FIF.DOWN, "导入配置",
-            "从 JSON 文件导入传感器校准配置，覆盖当前已保存的配置", None)
-        btn = PushButton("导入", card)
-        btn.setFixedHeight(34)
-        btn.clicked.connect(self._on_import_config_clicked)
-        card.hBoxLayout.addWidget(btn)
-        card.hBoxLayout.addSpacing(16)
-        return card
 
     def _on_import_config_clicked(self):
         """导入配置：弹出系统文件选择对话框，将选中的 JSON 文件写入 sensor_config.json。"""
