@@ -253,10 +253,14 @@ python test_serial.py
 
 ## 10.软件界面
 
-<p align="center">
-  <img src="docs/images/settings.png" alt="设置界面" width="800"/>
-</p>
-<p align="center">设置界面 </p>
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/f9f05bf8-eff3-44c9-a936-0506706a98b7/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/b33d6c6d-4ca0-4fda-916b-e172bcdd46a5/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/bb43d395-bfac-457f-b4f4-c64c6dfdf07b/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/e889a4f2-e905-4b78-ad44-3b16f0306423/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/688d7b86-ef42-4db4-a0b7-e4548eb0715e/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/f5efa7dd-d849-4b55-9987-3f4d5a8cc738/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/2079c7dc-a898-4b7e-befe-b9b0215b053b/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/fa47701f-39b1-4a8a-846f-303207164ae2/image.png 'image.png')
 
 
 ## 📄 许可证
