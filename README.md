@@ -19,10 +19,7 @@
 - **模块化设计**：新增传感器只需丢文件，详情参看Agents.md，同时也方便AI Agent开发
 - **现代化界面**：PySide6 +Fluent-widgets库图形界面，UI美观，尽可能的复刻fluent design
 
-<p align="center">
-  <img src="docs/images/home.png" alt="首页" width="800"/>
-</p>
-<p align="center">软件首页</p>
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/1f6418ee-c7c5-48d0-948f-c704f9c59442/image.png 'image.png')
 
 ## 3.快速上手上位机
 ### 3.1.使用预打包文件（无需配置环境）
