@@ -43,6 +43,29 @@ from core import (
 class UltrasonicWidget(QWidget):
     """超声波位移模块界面"""
 
+    # 连接控制卡片内按钮统一样式：白底黑字
+    CARD_BTN_STYLE = """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            color: #1a1a1a;
+            border-radius: 6px;
+            padding: 0 16px;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background-color: #f5f5f5;
+            border: 1px solid #0078d4;
+            color: #0078d4;
+        }
+        QPushButton:pressed { background-color: #e5e5e5; }
+        QPushButton:disabled {
+            background-color: #f5f5f5;
+            color: #aaaaaa;
+            border: 1px solid #e5e5e5;
+        }
+    """
+
     def __init__(self):
         super().__init__()
         self.serial_thread = None
@@ -109,6 +132,7 @@ class UltrasonicWidget(QWidget):
 
         self.refresh_btn = PushButton("刷新")
         self.refresh_btn.setFixedHeight(36)
+        self.refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.refresh_btn.clicked.connect(self.refresh_ports)
         serial_row.addWidget(self.refresh_btn)
         conn_row.addWidget(self.serial_panel)
@@ -123,8 +147,9 @@ class UltrasonicWidget(QWidget):
         conn_row.addWidget(self.sim_panel)
         self.sim_panel.hide()
 
-        self.connect_btn = PrimaryPushButton("连接")
+        self.connect_btn = PushButton("连接")
         self.connect_btn.setFixedHeight(36)
+        self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
         self.connect_btn.clicked.connect(self.toggle_connection)
         conn_row.addWidget(self.connect_btn)
 

@@ -287,15 +287,8 @@ class CurrentSensorWidget(QWidget):
         self.connect_btn = PushButton("连接")
         self.connect_btn.setFixedHeight(36)
         self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.connect_btn.clicked.connect(self.connect_device)
+        self.connect_btn.clicked.connect(self.toggle_connection)
         row1.addWidget(self.connect_btn)
-
-        self.disconnect_btn = PushButton("断开")
-        self.disconnect_btn.setFixedHeight(36)
-        self.disconnect_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.disconnect_btn.clicked.connect(self.disconnect_all)
-        self.disconnect_btn.setEnabled(False)
-        row1.addWidget(self.disconnect_btn)
 
         row1.addSpacing(16)
         row1.addWidget(BodyLabel("采样频率:"))
@@ -765,6 +758,14 @@ class CurrentSensorWidget(QWidget):
             self.ble_scan_btn.setEnabled(BLE_AVAILABLE)
             self.ble_scan_btn.setText("扫描BLE")
 
+    def toggle_connection(self):
+        """切换连接状态：已连接则断开，否则按当前模式连接"""
+        if (self.serial_thread and self.serial_thread.isRunning()) or \
+           (self.ble_thread and self.ble_thread.isRunning()):
+            self.disconnect_all()
+        else:
+            self.connect_device()
+
     def connect_device(self):
         mode = self.mode_combo.currentText()
         if "BLE" in mode:
@@ -784,8 +785,7 @@ class CurrentSensorWidget(QWidget):
                 start_value=max_adc / 2.0)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
-            self.connect_btn.setEnabled(False)
-            self.disconnect_btn.setEnabled(True)
+            self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
             self.current_value_label.setText("--.- " + self.current_unit)
             self.current_raw_label.setText("原始ADC: 模拟器连接中...")
@@ -806,8 +806,7 @@ class CurrentSensorWidget(QWidget):
             self.serial_thread = SerialThread(port)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
-            self.connect_btn.setEnabled(False)
-            self.disconnect_btn.setEnabled(True)
+            self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
             self.current_value_label.setText("--.- " + self.current_unit)
             self.current_raw_label.setText("原始ADC: 连接中...")
@@ -834,8 +833,7 @@ class CurrentSensorWidget(QWidget):
             self.ble_thread.data_received.connect(self.handle_data)
             self.ble_thread.connection_status.connect(self.on_ble_status)
             self.ble_thread.start()
-            self.connect_btn.setEnabled(False)
-            self.disconnect_btn.setEnabled(True)
+            self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
             self.current_value_label.setText("电流: BLE连接中...")
             self.current_raw_label.setText("ADC: BLE连接中...")
@@ -856,8 +854,7 @@ class CurrentSensorWidget(QWidget):
             self.ble_thread.stop()
             self.ble_thread.wait()
             self.ble_thread = None
-        self.connect_btn.setEnabled(True)
-        self.disconnect_btn.setEnabled(False)
+        self.connect_btn.setText("连接")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         self.zero_cal_btn.setEnabled(False)

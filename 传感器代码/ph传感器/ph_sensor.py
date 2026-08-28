@@ -232,15 +232,8 @@ class PhSensorWidget(QWidget):
         self.connect_btn = PushButton("连接")
         self.connect_btn.setFixedHeight(36)
         self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.connect_btn.clicked.connect(self.connect_device)
+        self.connect_btn.clicked.connect(self.toggle_connection)
         row1.addWidget(self.connect_btn)
-
-        self.disconnect_btn = PushButton("断开")
-        self.disconnect_btn.setFixedHeight(36)
-        self.disconnect_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.disconnect_btn.clicked.connect(self.disconnect_serial)
-        self.disconnect_btn.setEnabled(False)
-        row1.addWidget(self.disconnect_btn)
 
         row1.addSpacing(16)
         row1.addWidget(BodyLabel("采样频率:"))
@@ -410,6 +403,13 @@ class PhSensorWidget(QWidget):
             self.serial_panel.hide()
             self.sim_panel.show()
 
+    def toggle_connection(self):
+        """切换连接状态：已连接则断开，否则按当前模式连接"""
+        if self.serial_thread and self.serial_thread.isRunning():
+            self.disconnect_serial()
+        else:
+            self.connect_device()
+
     def connect_device(self):
         if self.mode_combo.currentIndex() == 0:
             self.connect_serial()
@@ -425,8 +425,7 @@ class PhSensorWidget(QWidget):
                 start_value=2281)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
-            self.connect_btn.setEnabled(False)
-            self.disconnect_btn.setEnabled(True)
+            self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
             self.current_ph_label.setText("pH: --.-")
             self.current_adc_label.setText("ADC: 模拟器连接中...")
@@ -448,8 +447,7 @@ class PhSensorWidget(QWidget):
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
 
-            self.connect_btn.setEnabled(False)
-            self.disconnect_btn.setEnabled(True)
+            self.connect_btn.setText("断开")
             self.start_btn.setEnabled(True)
             self.current_ph_label.setText("pH: --.-")
             self.current_adc_label.setText("ADC: 连接中...")
@@ -464,8 +462,7 @@ class PhSensorWidget(QWidget):
             self.serial_thread.wait()
             self.serial_thread = None
 
-        self.connect_btn.setEnabled(True)
-        self.disconnect_btn.setEnabled(False)
+        self.connect_btn.setText("连接")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         self.current_ph_label.setText("pH: --.-")
