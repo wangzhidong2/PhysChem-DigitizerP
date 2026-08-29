@@ -312,6 +312,56 @@ def clear_sensor_config():
         return False
 
 
+# app_config.json 默认值
+_APP_CONFIG_DEFAULT = {
+    "Chart": {"Engine": "pyqtgraph"},
+    "General": {"ConfigPersistenceEnabled": True},
+    "QFluentWidgets": {
+        "FontFamilies": ["Segoe UI", "Microsoft YaHei", "PingFang SC"],
+        "ThemeColor": "#ff009faa",
+        "ThemeMode": "Light",
+    },
+}
+
+
+def reset_all_config():
+    """将 app_config.json 和 sensor_config.json 恢复为默认值。
+
+    由设置页「恢复默认设置」调用（确认框后）。
+    恢复后重启程序完全生效。
+
+    Returns:
+        tuple[bool, str]: (是否成功, 消息描述)
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+
+    # 1. 恢复 app_config.json
+    app_config_path = os.path.join(here, 'app_config.json')
+    try:
+        with open(app_config_path, 'w', encoding='utf-8') as f:
+            json.dump(_APP_CONFIG_DEFAULT, f, ensure_ascii=False, indent=4)
+        print(f"✓ 已恢复应用配置：{app_config_path}")
+    except Exception as e:
+        return False, f"恢复应用配置失败: {e}"
+
+    # 2. 删除 sensor_config.json
+    sensor_config_path = _get_config_file_path()
+    try:
+        if os.path.exists(sensor_config_path):
+            os.remove(sensor_config_path)
+            print(f"✓ 已清除传感器配置：{sensor_config_path}")
+    except Exception as e:
+        return False, f"删除传感器配置失败: {e}"
+
+    # 3. 重新加载 app_config 到内存
+    try:
+        qconfig.load(app_config_path, app_cfg)
+    except Exception:
+        pass
+
+    return True, "所有设置已恢复默认值，重启后完全生效"
+
+
 def fluent_message_box(parent, title, text):
     """WinUI3 风格提示弹窗，替代原生 QMessageBox 的 warning/critical/information。
 

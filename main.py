@@ -64,7 +64,7 @@ from core import (
     patch_combobox_arrow_flip, CollapsibleCard,
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
     ChartPanel, chart_engine_available, resolve_chart_engine,
-    clear_sensor_config, export_sensor_config, import_sensor_config,
+    clear_sensor_config, export_sensor_config, import_sensor_config, reset_all_config,
 )
 
 
@@ -939,6 +939,7 @@ class SettingsWidget(QWidget):
         group_personal.addSettingCard(self._theme_card)
         group_personal.addSettingCard(self._build_persistence_card())
         group_personal.addSettingCard(self._build_config_management_card())
+        group_personal.addSettingCard(self._build_reset_all_card())
         group_personal.addSettingCard(self._build_engine_card())
         layout.addWidget(group_personal)
 
@@ -1167,6 +1168,43 @@ class SettingsWidget(QWidget):
                 "配置文件删除失败，请查看控制台输出",
                 self,
             )
+            box.hideYesButton()
+            box.cancelButton.setText("关闭")
+            box.cancelButton.setStyleSheet("color: #dc3545;")
+            box.exec()
+
+    def _build_reset_all_card(self):
+        """恢复默认设置卡片：清除 app_config.json 与 sensor_config.json 到默认值。"""
+        card = SettingCard(
+            FIF.UPDATE, "恢复默认设置",
+            "将应用配置和传感器校准配置全部恢复为默认值", None)
+        btn = PushButton("恢复", card)
+        btn.setFixedHeight(34)
+        btn.clicked.connect(self._on_reset_all_clicked)
+        card.hBoxLayout.addWidget(btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _on_reset_all_clicked(self):
+        """恢复默认设置：确认后重置 app_config.json 和 sensor_config.json。"""
+        box = MessageBox(
+            "恢复默认设置",
+            "将清除应用配置（主题/引擎等）和所有传感器校准配置，\n"
+            "恢复为出厂默认值。\n是否继续？",
+            self,
+        )
+        box.yesButton.setText("确定")
+        box.cancelButton.setText("取消")
+        if not box.exec():
+            return
+        ok, msg = reset_all_config()
+        if ok:
+            box = MessageBox("已恢复", msg, self)
+            box.hideYesButton()
+            box.cancelButton.setText("关闭")
+            box.exec()
+        else:
+            box = MessageBox("恢复失败", msg, self)
             box.hideYesButton()
             box.cancelButton.setText("关闭")
             box.cancelButton.setStyleSheet("color: #dc3545;")
