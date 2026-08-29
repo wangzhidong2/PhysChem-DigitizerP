@@ -1086,25 +1086,25 @@ class SettingsWidget(QWidget):
             return  # 用户取消
         ok, msg = export_sensor_config(folder)
         if ok:
-            InfoBar.success(
-                title="导出成功",
-                content=f"配置已导出到 {msg}",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=4000,
-                parent=self,
+            box = MessageBox(
+                "导出成功",
+                f"配置已导出到 {msg}",
+                self,
             )
+            box.hideYesButton()
+            box.cancelButton.setText("关闭")
+            box.cancelButton.setStyleSheet("color: #28a745;")
+            box.exec()
         else:
-            InfoBar.error(
-                title="导出失败",
-                content=msg,
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=3000,
-                parent=self,
+            box = MessageBox(
+                "导出失败",
+                msg,
+                self,
             )
+            box.hideYesButton()
+            box.cancelButton.setText("关闭")
+            box.cancelButton.setStyleSheet("color: #dc3545;")
+            box.exec()
 
     def _on_import_config_clicked(self):
         """导入配置：弹出系统文件选择对话框，将选中的 JSON 文件写入 sensor_config.json。"""
@@ -1116,25 +1116,25 @@ class SettingsWidget(QWidget):
             return  # 用户取消
         ok, msg = import_sensor_config(file_path)
         if ok:
-            InfoBar.success(
-                title="导入成功",
-                content=f"{msg}，重启程序后生效",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=4000,
-                parent=self,
+            box = MessageBox(
+                "导入成功",
+                f"{msg}，重启程序后生效",
+                self,
             )
+            box.hideYesButton()
+            box.cancelButton.setText("关闭")
+            box.cancelButton.setStyleSheet("color: #28a745;")
+            box.exec()
         else:
-            InfoBar.error(
-                title="导入失败",
-                content=msg,
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=3000,
-                parent=self,
+            box = MessageBox(
+                "导入失败",
+                msg,
+                self,
             )
+            box.hideYesButton()
+            box.cancelButton.setText("关闭")
+            box.cancelButton.setStyleSheet("color: #dc3545;")
+            box.exec()
 
     def _on_clear_config_clicked(self):
         """清除用户设置：确认后清空 sensor_config.json，保存开关置为开。"""
@@ -1169,6 +1169,7 @@ class SettingsWidget(QWidget):
             )
             box.hideYesButton()
             box.cancelButton.setText("关闭")
+            box.cancelButton.setStyleSheet("color: #dc3545;")
             box.exec()
 
     def _build_engine_card(self):
