@@ -1,6 +1,6 @@
 # pH 传感器
 
-SEN0161 pH 电极 + 信号放大模块，ESP32-S3 采集。上位机模块 `ph_sensor.py`，支持单点 / 两点 / 三点校准，校准参数保存在 `sensor_config.json`。
+
 
 详细模块介绍：[DFRobot SEN0161 pH 计 Wiki](https://wiki.dfrobot.com.cn/_SKU_SEN0161_pH_meter_pH%E8%AE%A1)
 
@@ -14,7 +14,7 @@ ESP32-S3           pH 放大模块
 5V           →     V
 GND          →     G
 GPIO1        →     PO（模拟输出）
-GND          →     G（第二个地，接地更稳）
+GND          →     G（第二个接地，接地更稳）
 ```
 
 - pH 放大模块要 5V 供电，接 3.3V 不工作
@@ -107,7 +107,7 @@ default_calibration = [
 - 检查 VCC/GND/PO 接线
 - 用万用表测 PO 电压，应在 0-3.3V
 - 电极开路或接触不良
-
+- 外部电路干扰
 ## 8.技术参数
 
 | 参数 | 值 |
