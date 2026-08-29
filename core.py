@@ -128,7 +128,7 @@ class AppConfig(QConfig):
     # 传感器配置持久化开关：False 时不读取也不写入 sensor_config.json，
     # 所有更改仅本次会话有效（默认开启，保持原有行为）
     configPersistenceEnabled = ConfigItem("General", "ConfigPersistenceEnabled", True)
-    # 图表引擎：matplotlib（默认，静态美观）/ pyqtgraph（高性能交互）
+    # 图表引擎：pyqtgraph（默认，高性能交互）/ matplotlib（静态美观）
     chartEngine = OptionsConfigItem(
         "Chart", "Engine", "pyqtgraph",
         OptionsValidator(["matplotlib", "pyqtgraph"]),

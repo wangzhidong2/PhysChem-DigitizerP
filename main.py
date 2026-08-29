@@ -1176,17 +1176,15 @@ class SettingsWidget(QWidget):
     def _build_engine_card(self):
         """图表引擎切换卡片：matplotlib / pyqtgraph 运行时热切换。
 
-        - matplotlib：默认引擎，静态渲染美观
-        - pyqtgraph：高性能，内置缩放/平移交互
         选择立即生效：所有已打开模块的图表原地换引擎并重放当前数据；
         同时写入 app_config.json，下次启动沿用。
-
-        引擎缺失时优雅降级：
-        - 未安装的引擎选项灰显不可点击（副标题标注缺失情况）
-        - 配置的引擎被卸载时显示实际生效引擎（已自动降级）
         """
         self._engine_values = ["matplotlib", "pyqtgraph"]
-        labels = ["matplotlib（默认）", "pyqtgraph（高性能）"]
+        _default = app_cfg.chartEngine.value
+        labels = [
+            f"matplotlib{'（默认）' if _default == 'matplotlib' else ''}",
+            f"pyqtgraph{'（默认）' if _default == 'pyqtgraph' else ''}",
+        ]
         available = []
         for i, engine in enumerate(self._engine_values):
             if chart_engine_available(engine):
@@ -1195,7 +1193,7 @@ class SettingsWidget(QWidget):
                 labels[i] += "（未安装）"
         # 副标题按安装情况给出提示
         if len(available) == len(self._engine_values):
-            content = "matplotlib 静态美观 / pyqtgraph 高性能可交互，切换立即生效"
+            content = "切换立即生效"
         elif len(available) == 1:
             missing = "pyqtgraph" if available[0] == "matplotlib" else "matplotlib"
             content = f"当前仅 {available[0]} 可用（{missing} 未安装）"
