@@ -1,71 +1,57 @@
-# 传感器代码总览
+# 传感器代码
 
-此文件夹存放各种传感器的**下位机固件**（`.ino`）和**上位机模块**（`.py`），两者在同一个子目录中。上位机模块文件头带有识别区（meta header），主程序 `main.py` 启动时通过 `importlib` 自动扫描并加载。
+本目录存放各传感器的下位机固件（`.ino`）和上位机模块（`.py`），两者在同一子目录中。上位机模块文件头带识别区（meta header），主程序 `main.py` 启动时自动扫描并加载，新增传感器不需要改主程序。
 
-## 📁 目录结构
+## 1.目录结构
 
 ```
 传感器代码/
 ├── README.md                                # 本文件
-├── 超声波位移传感器/                          # HC-SR04 超声波模块
-│   ├── README.md                            # 使用说明
+├── 超声波位移传感器/                          # HC-SR04 超声波
 │   ├── HC-SR04esp32.ino                     # ESP32 固件
 │   ├── HC-SR04esp8266.ino                   # ESP8266 固件
 │   ├── csbwithbt.ino                        # ESP32-S3 + BLE 固件
-│   ├── ultrasonic_displacement.py           # 位移测量上位机模块
-│   └── ultrasonic_velocity.py               # 速度测量上位机模块
-├── ph传感器/                                  # pH 传感器模块
-│   ├── README.md                            # 使用说明
+│   ├── ultrasonic_displacement.py           # 位移测量
+│   └── ultrasonic_velocity.py               # 速度测量
+├── ph传感器/
 │   ├── ph esp32.ino                         # ESP32-S3 固件
-│   ├── PH传感器原理图.pdf                     # 接线原理图
-│   └── ph_sensor.py                         # pH 上位机模块
-├── 力传感器/                                   # HX711 力/质量传感器模块
-│   ├── README.md                            # 使用说明
+│   └── ph_sensor.py
+├── 力传感器/
 │   ├── force.ino                            # ESP32-S3 固件
-│   ├── force_sensor.py                      # 力/质量上位机模块
+│   ├── force_sensor.py
 │   └── 资料（HX711称重模块商家提供的）/
-├── 电压传感器/                                 # ESP32 ADC + HX711 电压采集模块
-│   ├── README.md                            # 使用说明
-│   ├── ESP32_Voltage_Sensor.ino             # ESP32-S3 内置 ADC 固件
-│   ├── HX711_Voltage.ino                    # HX711 24 位 ADC 固件
-│   ├── ADS1115_Voltage.ino                  # ADS1115 16 位 I2C ADC 固件
-│   └── voltage_sensor.py                    # 电压上位机模块（支持 HX711 模式）
-└── 电流传感器/                                 # ACS712 电流传感器模块
-    ├── README.md                            # 使用说明
-    ├── ESP32_ADC_Raw_Data.ino               # ESP32-S3 ADC 原始数据固件
-    └── current_sensor.py                    # 电流上位机模块（5A/20A/30A 量程，AC/DC，零点校准）
+├── 电压传感器/
+│   ├── ESP32_Voltage_Sensor.ino             # 内置 ADC
+│   ├── HX711_Voltage.ino                    # HX711 24 位
+│   ├── ADS1115_Voltage.ino                  # ADS1115 16 位
+│   └── voltage_sensor.py
+└── 电流传感器/
+    ├── ESP32_ADC_Raw_Data.ino               # ESP32-S3 固件
+    └── current_sensor.py
 ```
 
-## 📋 支持的传感器
+## 2.支持的传感器
 
-| 传感器 | 型号 | 支持开发板 | 上位机模块 | 状态 |
-|--------|------|-----------|-----------|------|
-| 超声波位移 | HC-SR04 | ESP32 / ESP8266 / ESP32-S3 | `ultrasonic_displacement.py` | ✅ 已完成 |
-| 超声波速度 | HC-SR04 | （共享上述固件） | `ultrasonic_velocity.py` | ✅ 已完成 |
-| pH 值检测 | SEN0161 | ESP32-S3 | `ph_sensor.py` | ✅ 已完成 |
-| 力/质量测量 | HX711 | ESP32-S3 | `force_sensor.py` | ✅ 已完成 |
-| 电压采集 | ESP32 内置 ADC / HX711 | ESP32-S3 | `voltage_sensor.py` | ✅ 已完成 |
-| 电流采集 | ACS712 | ESP32-S3 | `current_sensor.py` | ✅ 已完成 |
+| 传感器 | 型号 | 开发板 | 上位机模块 |
+|--------|------|--------|-----------|
+| 超声波位移 | HC-SR04 | ESP32 / ESP8266 / ESP32-S3 | `ultrasonic_displacement.py` |
+| 超声波速度 | HC-SR04 | （共享上述固件） | `ultrasonic_velocity.py` |
+| pH | SEN0161 | ESP32-S3 | `ph_sensor.py` |
+| 力/质量 | HX711 | ESP32-S3 | `force_sensor.py` |
+| 电压 | ESP32 内置 ADC / HX711 / ADS1115 | ESP32-S3 | `voltage_sensor.py` |
+| 电流 | ACS712 | ESP32-S3 | `current_sensor.py` |
 
-## 🔧 通用配置
+## 3.通用约定
 
-- **波特率**：115200
-- **数据格式**：`时间戳,测量值`（CSV，Python 直接解析）
-- **编码**：UTF-8
-- **启动信号**：固件启动时输出 `START`
+- 波特率：115200
+- 数据格式：`时间戳,测量值`（CSV）
+- 固件启动时输出一行 `START`
+- 上位机模块统一从 `core.py` 导入共享组件（通信线程 / 配置 / 样式），不重复实现
 
-## 📝 添加新传感器
-
-新增传感器**无需修改 `main.py`**，只需 2 步：
+## 4.添加新传感器
 
 1. 在本目录下新建子目录，放入 `.ino` 和 `.py`
-2. 在 `.py` 文件头写识别区（`icon` / `name` / `category` / `class`）
+2. 在 `.py` 文件头写识别区：`icon` / `name` / `category` / `class`
+3. 重启 `main.py`，模块自动出现在侧边栏和主页
 
-> 📖 完整教程请参考根目录 [AGENTS.md - 添加新传感器模块](../AGENTS.md#添加新传感器模块)。
-
-## 📝 代码规范
-
-1. 下位机固件使用 Arduino 标准编码风格，输出格式遵守 `时间戳,测量值`
-2. 上位机模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
-3. 上位机模块文件头**必须**包含识别区，字段名/冒号/空格写错会导致加载失败
-4. 上位机模块从 `core` 导入共享代码（`SerialThread` / 配置 / 现代化样式），不要重复实现
+更多细节见根目录 [AGENTS.md](../AGENTS.md#添加新传感器模块)。
