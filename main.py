@@ -1231,7 +1231,8 @@ class SettingsWidget(QWidget):
                 "matplotlib 在 PySide6 中存在一些兼容性 bug，\n"
                 "pyqtgraph 可以提供更好的兼容性与性能，\n"
                 "建议保留在 pyqtgraph。\n"
-                "是否继续切换？",
+                "是否继续切换？\n\n"
+                "已知 bug：使用滚轮在模块内翻页时，到图标这个区域时，滚轮会失效",
                 self,
             )
             box.yesButton.setText("继续切换")
