@@ -2,6 +2,10 @@
 
 SEN0161 pH 电极 + 信号放大模块，ESP32-S3 采集。上位机模块 `ph_sensor.py`，支持单点 / 两点 / 三点校准，校准参数保存在 `sensor_config.json`。
 
+详细模块介绍：[DFRobot SEN0161 pH 计 Wiki](https://wiki.dfrobot.com.cn/_SKU_SEN0161_pH_meter_pH%E8%AE%A1)
+
+购买参考（淘宝）：https://e.tb.cn/h.R19bhV92NZIwylY 搜索「PH值测试模块 电极 采集监测 土壤水质酸碱浓度传感器」
+
 ## 1.接线
 
 ```

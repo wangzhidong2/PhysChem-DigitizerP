@@ -2,6 +2,11 @@
 
 HX711 24 位 ADC + 电阻应变式称重传感器，ESP32-S3 采集。上位机模块 `force_sensor.py`，支持去皮、两点校准、有线串口和 BLE 两种连接方式，校准参数保存在 `sensor_config.json`。
 
+<p align="center">
+  <img src="../../docs/images/实拍图.jpg" alt="力传感器实拍" width="600"/>
+</p>
+<p align="center">图1: 力/质量传感器模块实物</p>
+
 ## 1.接线
 
 ### 1.1.ESP32-S3 ↔ HX711 模块
@@ -28,6 +33,21 @@ B+ / B-      →    未使用
 ```
 
 不同厂家的称重传感器线序可能不同，以传感器标注为准。接线松动会导致读数跳动。
+
+<p align="center">
+  <img src="../../docs/images/接线指南一.png" alt="接线指南一" width="600"/>
+</p>
+<p align="center">图2: ESP32-S3 与 HX711 模块接线示意图</p>
+
+<p align="center">
+  <img src="../../docs/images/接线指南二.png" alt="接线指南二" width="600"/>
+</p>
+<p align="center">图3: HX711 模块与称重传感器接线示意图</p>
+
+<p align="center">
+  <img src="../../docs/images/组装注意事项.png" alt="组装注意事项" width="600"/>
+</p>
+<p align="center">图4: 组装注意事项</p>
 
 ## 2.BOM
 
