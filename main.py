@@ -26,7 +26,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QStackedWidget, QScrollArea, QLineEdit,
+    QPushButton, QFrame, QStackedWidget, QScrollArea,
     QFileDialog,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect
@@ -41,6 +41,7 @@ from qfluentwidgets import (
     TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
     SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
     SwitchSettingCard, MessageBox, qconfig, IndicatorPosition,
+    LineEdit,
 )
 
 
@@ -108,10 +109,12 @@ def make_text_icon(text: str, size: int = 128) -> QIcon:
         fm = QFontMetrics(font)
     p.setFont(font)
 
-    # 三种状态：Normal(深色文字)/Active(强调色)/Selected(白色，选中时背景已是 accent)
+    # 三种状态：Normal(主题文字色)/Active(强调色)/Selected(白色，选中时背景已是 accent)
+    # Normal 颜色随主题：深色模式下导航背景变暗，文字图标用浅色
+    _normal_color = "#f3f3f3" if isDarkTheme() else "#1a1a1a"
     for mode, color in (
-        (QIcon.Normal, QColor("#1a1a1a")),
-        (QIcon.Active, QColor("#005fb8")),
+        (QIcon.Normal, QColor(_normal_color)),
+        (QIcon.Active, QColor("#005fb8" if not isDarkTheme() else "#60cdff")),
         (QIcon.Selected, QColor("#ffffff")),
     ):
         p.setCompositionMode(QPainter.CompositionMode_Clear)
@@ -252,41 +255,12 @@ def scan_modules(modules_dir):
 # 主页
 # ============================================================
 class HomePageWidget(QWidget):
-    """主页面 - 基于 FluentWidgets 原生可折叠卡片（ExpandGroupSettingCard）"""
+    """主页面 - 基于 FluentWidgets 原生可折叠卡片（ExpandGroupSettingCard）
+
+    所有卡片使用 FluentWidgets 原生样式，深色/浅色模式自动适配。
+    """
 
     module_clicked = Signal(str)
-
-    # 卡片统一白色背景样式（覆盖 ExpandSettingCard 默认半透明灰）
-    CARD_QSS = """
-        ExpandSettingCard {
-            border: 1px solid #e5e5e5;
-            border-radius: 8px;
-            background-color: #ffffff !important;
-        }
-        ExpandSettingCard > #view {
-            background: #ffffff !important;
-            border: none;
-            border-bottom-left-radius: 8px;
-            border-bottom-right-radius: 8px;
-        }
-        ExpandSettingCard > #scrollWidget {
-            border: none;
-            background-color: #ffffff !important;
-        }
-        /* 内容物容器继承卡片白色（默认是 #f3f3f3 浅灰） */
-        ExpandSettingCard #view GroupWidget,
-        ExpandSettingCard #view GroupSeparator,
-        ExpandSettingCard #view SettingIconWidget,
-        ExpandSettingCard #view QWidget#scrollWidget {
-            background-color: #ffffff !important;
-            border: none;
-        }
-        /* BodyLabel 默认透明，但叠在浅灰容器上显灰，强制白底 */
-        ExpandSettingCard #view BodyLabel {
-            background-color: #ffffff !important;
-            border: none;
-        }
-    """
 
     def __init__(self):
         super().__init__()
@@ -345,45 +319,11 @@ class HomePageWidget(QWidget):
         self.scroll.setWidget(self.content)
         main_layout.addWidget(self.scroll)
 
-    def _apply_card_style(self, card):
-        """给 ExpandGroupSettingCard 应用统一白色背景样式。
-
-        样式表对某些 FluentWidgets 子组件（GroupWidget/SettingIconWidget 等）不生效，
-        因为它们用 paintEvent 直接绘制背景。所以除样式表外，再递归给所有子 QWidget
-        设置 autoFillBackground + 白色 palette，强制白底。
-        """
-        card.setStyleSheet(self.CARD_QSS)
-        try:
-            from PySide6.QtGui import QPalette, QColor
-            white = QPalette()
-            white.setColor(QPalette.ColorRole.Window, QColor("#ffffff"))
-            # 卡片自身
-            card.setAutoFillBackground(True)
-            card.setPalette(white)
-            # view + scrollWidget
-            for name in ("view", "scrollWidget"):
-                w = getattr(card, name, None)
-                if w is not None:
-                    w.setAutoFillBackground(True)
-                    w.setPalette(white)
-                    w.setStyleSheet("background-color: #ffffff; border: none;")
-            # 递归所有子 QWidget
-            for child in card.findChildren(QWidget):
-                # 保留标签自身的彩色背景（如 GPL-3.0 开源绿底）
-                if isinstance(child, QLabel) and child.styleSheet() and "background-color" in child.styleSheet():
-                    continue
-                child.setAutoFillBackground(True)
-                child.setPalette(white)
-        except Exception as e:
-            print(f"⚠️ _apply_card_style palette: {e}")
-        return card
-
     def _build_info_card(self):
         """项目信息卡片：项目名 + 简介 + 标签（不可折叠）。"""
         card = ExpandGroupSettingCard(
             FIF.HOME, "PhysChem-DigitizerP",
             "基于 Arduino/ESP32 的低成本理化实验数字化采集系统")
-        self._apply_card_style(card)
 
         # 项目简介（content 留空，避免与副标题重复的灰色注释）
         desc = BodyLabel(
@@ -435,7 +375,6 @@ class HomePageWidget(QWidget):
         card = ExpandGroupSettingCard(
             FIF.LINK, "项目地址",
             "GitHub / Gitee / GitCode 三平台仓库地址")
-        self._apply_card_style(card)
 
         repo_urls = [
             ("GitHub", "https://github.com/wangzhidong2/PhysChem-DigitizerP",
@@ -446,12 +385,13 @@ class HomePageWidget(QWidget):
              gitcode_icon),
         ]
 
-        # 每个平台一行：URL 输入框（加宽完整显示）+ 复制按钮 + 访问按钮
+        # 每个平台一行：URL 输入框（FluentWidgets 原生 LineEdit，主题自适应）+ 复制按钮 + 访问按钮
         for name, url, icon in repo_urls:
             row = QHBoxLayout()
             row.setSpacing(8)
 
-            url_edit = QLineEdit(url)
+            url_edit = LineEdit()
+            url_edit.setText(url)
             url_edit.setReadOnly(True)
             url_edit.setFont(QFont("Consolas", 10))
             url_edit.setCursor(Qt.CursorShape.IBeamCursor)
@@ -506,7 +446,6 @@ class HomePageWidget(QWidget):
         card = ExpandGroupSettingCard(
             FIF.MENU, "传感器模块",
             "点击展开查看所有传感器模块")
-        self._apply_card_style(card)
 
         cat_names = {
             'physics': '物理实验模块',
@@ -590,9 +529,12 @@ class HomePageWidget(QWidget):
         self.module_clicked.emit(module_name)
 
     def apply_theme(self, theme):
-        """主题切换：FluentWidgets 原生组件自动适配，仅刷新页面背景。"""
+        """主题切换：刷新页面/滚动区背景，重建模块卡片（文字图标随主题变色）。"""
         self.scroll.setStyleSheet(scroll_area_style())
         self.content.setStyleSheet(page_bg_style())
+        # 重建模块卡片（文字图标颜色随主题变化）
+        if self._modules:
+            self._rebuild_module_cards()
 
 
 # ============================================================
@@ -903,15 +845,14 @@ class SettingsWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        # 深色模式 / 跟随系统暂未完成（字体颜色有问题），先只做浅色；
-        # 后两项仅占位，灰显不可点击并标注「（开发中）」。
+        # 主题模式：浅色 / 深色 / 跟随系统
         self._theme_combo_items = ["浅色模式", "深色模式", "跟随系统"]
         self._theme_combo_values = ["light", "dark", "auto"]
         # 「清除用户设置」程序内开启保存开关时，跳过开启确认框（用户已确认过）
         self._suppress_persistence_confirm = False
         self.init_ui()
-        # 仅支持浅色：固定选中亮色
-        self._theme_combo.setCurrentIndex(0)
+        # 按当前 FluentWidgets 主题同步下拉框选中项
+        self._sync_theme_combo_from_current()
 
     def init_ui(self):
         outer = QVBoxLayout(self)
@@ -991,19 +932,13 @@ class SettingsWidget(QWidget):
     def _build_theme_card(self, parent):
         """主题切换卡片：自定义 SettingCard，内嵌一个 ComboBox。
 
-        深色模式 / 跟随系统尚未完成，仅作占位：禁用且标注「（开发中）」，
-        当前只允许选择亮色。
+        支持亮色 / 深色 / 跟随系统三种模式。
         """
         card = SettingCard(FIF.PALETTE, "应用主题",
                            "切换亮色 / 深色模式 / 跟随系统", parent)
         combo = ComboBox(card)
         combo.addItems(self._theme_combo_items)
         combo.setMinimumWidth(160)
-        # 占位项灰显不可点击 + 标注开发中
-        combo.setItemEnabled(1, False)  # 深色模式
-        combo.setItemEnabled(2, False)  # 跟随系统
-        combo.setItemText(1, "深色模式（开发中）")
-        combo.setItemText(2, "跟随系统（开发中）")
         combo.currentIndexChanged.connect(self._on_theme_combo_changed)
         card.hBoxLayout.addWidget(combo)
         card.hBoxLayout.addSpacing(16)
@@ -1412,11 +1347,15 @@ class SettingsWidget(QWidget):
             self.theme_change_requested.emit(mode)
 
     def _sync_theme_combo_from_current(self):
-        """根据当前 FluentWidgets 主题，反向同步下拉框选项。
-
-        当前仅支持浅色，始终选中亮色；深色 / 跟随系统为占位项不选中。
-        """
-        self._theme_combo.setCurrentIndex(0)
+        """根据当前 FluentWidgets 主题，反向同步下拉框选项。"""
+        from qfluentwidgets import qconfig as _qcfg, Theme as _Theme
+        t = _qcfg.theme  # Theme.LIGHT / Theme.DARK / Theme.AUTO
+        if t == _Theme.DARK:
+            self._theme_combo.setCurrentIndex(1)
+        elif t == _Theme.AUTO:
+            self._theme_combo.setCurrentIndex(2)
+        else:
+            self._theme_combo.setCurrentIndex(0)
 
     def apply_theme(self, theme):
         """主题切换时刷新本页背景与下拉框同步。"""
@@ -1448,6 +1387,7 @@ class MainWindow(FluentWindow):
         self.current_theme = "light"
         self.modules = {}  # name -> widget
         self.module_widgets = []  # 按注册顺序排列的 widget 列表
+        self._nav_icons = {}  # name -> (icon_text, nav_item)，主题切换时重建图标
 
         self.init_ui()
         self.apply_modern_style()
@@ -1491,7 +1431,8 @@ class MainWindow(FluentWindow):
             widget.setObjectName(obj_name)
             # 把识别区文字图标（V/F/x/pH/v/A）画成 QIcon
             text_icon = make_text_icon(info.get('icon', '?'))
-            self.addSubInterface(widget, text_icon, info['name'])
+            nav_item = self.addSubInterface(widget, text_icon, info['name'])
+            self._nav_icons[info['name']] = (info.get('icon', '?'), nav_item)
             self.modules[info['name']] = widget
             self.module_widgets.append(widget)
 
@@ -1551,6 +1492,13 @@ class MainWindow(FluentWindow):
             return
         self.current_theme = theme
         self.apply_theme(theme)
+
+        # 重建侧边栏文字图标（深/浅色下 Normal 状态颜色不同）
+        for name, (icon_text, nav_item) in self._nav_icons.items():
+            try:
+                nav_item.setIcon(make_text_icon(icon_text))
+            except Exception as e:
+                print(f"⚠️ 重建模块 {name} 导航图标失败: {e}")
 
         # 先刷新设置页（主题下拉框需要反向同步当前主题）
         if "设置" in self.modules:
