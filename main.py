@@ -1153,25 +1153,23 @@ class SettingsWidget(QWidget):
             self._suppress_persistence_confirm = True
             qconfig.set(app_cfg.configPersistenceEnabled, True)
             self._suppress_persistence_confirm = False
-            InfoBar.success(
-                title="已清除",
-                content="用户配置已删除，重启程序后全部恢复默认值",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=3000,
-                parent=self,
+            box = MessageBox(
+                "已清除",
+                "用户配置已删除，重启程序后全部恢复默认值",
+                self,
             )
+            box.hideYesButton()
+            box.cancelButton.setText("关闭")
+            box.exec()
         else:
-            InfoBar.error(
-                title="清除失败",
-                content="配置文件删除失败，请查看控制台输出",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=3000,
-                parent=self,
+            box = MessageBox(
+                "清除失败",
+                "配置文件删除失败，请查看控制台输出",
+                self,
             )
+            box.hideYesButton()
+            box.cancelButton.setText("关闭")
+            box.exec()
 
     def _build_engine_card(self):
         """图表引擎切换卡片：matplotlib / pyqtgraph 运行时热切换。
