@@ -1224,6 +1224,25 @@ class SettingsWidget(QWidget):
         engine = self._engine_values[idx]
         if not chart_engine_available(engine):
             return   # 未安装引擎的选项已禁用，此处为双保险
+        # 从 pyqtgraph 切换到 matplotlib 时弹确认框（pyqtgraph 推荐）
+        if engine == "matplotlib" and app_cfg.chartEngine.value == "pyqtgraph":
+            box = MessageBox(
+                "切换到 matplotlib",
+                "matplotlib 在 PySide6 中存在一些兼容性 bug，\n"
+                "pyqtgraph 可以提供更好的兼容性与性能，\n"
+                "建议保留在 pyqtgraph。\n"
+                "是否继续切换？",
+                self,
+            )
+            box.yesButton.setText("继续切换")
+            box.cancelButton.setText("保留 pyqtgraph")
+            if not box.exec():
+                # 取消：下拉框切回 pyqtgraph（blockSignals 防递归）
+                self._engine_combo.blockSignals(True)
+                self._engine_combo.setCurrentIndex(
+                    self._engine_values.index("pyqtgraph"))
+                self._engine_combo.blockSignals(False)
+                return
         qconfig.set(app_cfg.chartEngine, engine)   # 落盘 + 下次启动沿用
         self.engine_change_requested.emit(engine)  # 通知主窗口热切换
 
