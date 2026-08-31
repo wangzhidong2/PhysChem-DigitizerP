@@ -163,7 +163,7 @@ PhysChem-DigitizerP/
         └── current_sensor.py        # 电流上位机模块（5A/20A/30A 量程，AC/DC）
 ```
 
-> 📖 模块加载机制、识别区格式与添加新模块的完整教程请参考 [AGENTS.md](AGENTS.md)。
+> 模块加载机制、识别区格式与添加新模块的完整教程请参考 [AGENTS.md](AGENTS.md)。
 
 ## 6.使用方法
 
@@ -203,7 +203,7 @@ python main.py
 - 串口下拉框显示"未安装 pyserial"占位；手动选择串口模式并连接时，弹窗提示安装命令 `pip install pyserial`
 - 安装后重启程序即可恢复串口连接功能
 
-> 📖 各模块的具体接线、校准步骤和实验方法请参考对应的模块 README。
+> 各模块的具体接线、校准步骤和实验方法请参考对应的模块 README。
 
 ## 7.故障排除
 
@@ -251,7 +251,7 @@ python test_serial.py
 
 重启 `main.py` 即自动出现在侧边栏 + 主页卡片 + 内容栈。
 
-> 📖 完整字段说明与注意事项请参考 [AGENTS.md](AGENTS.md)。
+>  完整字段说明与注意事项请参考 [AGENTS.md](AGENTS.md)。
 
 ## 10.软件界面
 
@@ -265,22 +265,22 @@ python test_serial.py
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/fa47701f-39b1-4a8a-846f-303207164ae2/image.png 'image.png')
 
 
-## 📄 许可证
+## 许可证
 
 本项目采用 **GNU General Public License v3.0** - 详见 [LICENSE](LICENSE) 文件
 
-## 👥 致谢
+##  致谢
 
 - **硬件平台**：[ESP32](https://www.espressif.com/) / [ESP8266 Community](https://www.esp8266.com/)
 - **图形界面**：[PySide6](https://www.qt.io/qt-for-python)
 - **数据可视化**：[Matplotlib](https://matplotlib.org/) / [pyqtgraph](https://www.pyqtgraph.org/)
 - **串口通信**：[pyserial](https://github.com/pyserial/pyserial)
 
-## 📧 联系方式
+##  联系方式
 
 如有问题或建议，请提交 [GitHub Issue](https://github.com/wangzhidong2/PhysChem-DigitizerP/issues) 或 [Gitcode Issue](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/issues)。
 
-## 🌐 项目地址
+## 项目地址
 
 - **GitHub**: [https://github.com/wangzhidong2/PhysChem-DigitizerP](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 - **Gitee**: [https://gitee.com/wangzhidong2/PhysChem-DigitizerP/](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
@@ -288,4 +288,4 @@ python test_serial.py
 
 ---
 
-**Happy Experimenting! 🔬📊**
+
