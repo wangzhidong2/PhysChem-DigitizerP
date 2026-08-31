@@ -1,7 +1,8 @@
 # PhysChem-DigitizerP
 
 基于 Arduino/ESP32与Python开发的低成本理化实验数字化采集系统
-[![AtomGitStars](www.gitcode.com/wangzhidong2/PhysChem-DigitizerP//star/new_badge.svg)](www.gitcode.com/wangzhidong2/PhysChem-DigitizerP/)
+
+[![AtomGitStars](https://www.gitcode.com/wangzhidong2/PhysChem-DigitizerP/star/new_badge.svg)](https://www.gitcode.com/wangzhidong2/PhysChem-DigitizerP/)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
