@@ -30,7 +30,7 @@
 #### 3.1.2.解压，打开主程序
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/3c8e2021-48eb-4ce6-8a39-dc7cb063d59f/image.png 'image.png')
 ### 3.2.从源码打开（需要 python 环境，git 可选）
-#### 3.2.1.[安装 python](https://www.python.org)
+#### 3.2.1.[安装 python](https://www.python.org/downloads/)
 **注意，版本号大于3.10**
 #### 3.2.2.安装库
 
