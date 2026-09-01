@@ -1,3 +1,4 @@
+![Screenshot_20260901_222222.jpg](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/blob/main/docs/images/icon.svg)
 # PhysChem-DigitizerP
 
 基于 Arduino/ESP32与Python开发的低成本理化实验数字化采集系统
