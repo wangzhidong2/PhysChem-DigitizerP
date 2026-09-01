@@ -40,6 +40,7 @@ from PySide6.QtGui import (
 
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
+    SwitchButton, DoubleSpinBox,
     LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
@@ -433,6 +434,12 @@ class ChartPanel(QWidget):
         self._pg_hover_vline = None   # pyqtgraph 悬停指示线（懒创建）
         self._pg_hover_label = None   # pyqtgraph 悬停数据标签（懒创建）
         self._pg_hover_view = None    # 最近悬停位置 (子图索引, 视图x)，重绘后据此恢复
+        # 视图窗口控制（仅 pyqtgraph）：显示整个范围 / 最近 N 秒滚动窗口
+        self._view_window_row = None  # 控制行控件（懒创建，模块嵌入图表卡顶部）
+        self._win_switch = None       # SwitchButton「显示整个范围」
+        self._win_spin = None         # DoubleSpinBox 窗口秒数（支持小数）
+        self._win_full_range = True   # True=整个范围（默认），False=最近 N 秒
+        self._win_seconds = 5.0       # 滚动窗口长度（秒）
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -814,6 +821,9 @@ class ChartPanel(QWidget):
                 pi.enableAutoRange(y=True)
         # 重绘完成：若鼠标正悬停在图表上，按记录位置恢复悬停（数值已更新）
         self._restore_pg_hover()
+        # 滚动窗口模式：覆盖提交时恢复的自动量程，把 x 轴锁定为最近 N 秒
+        # （传当次 spec 而非 _last：end() 在提交后才写 _last，用 _last 会落后一拍）
+        self._update_view_window(spec)
 
     # ---------------- 引擎 / 主题 / 清空 ----------------
     def _rebuild_widget(self):
@@ -838,6 +848,7 @@ class ChartPanel(QWidget):
             return
         self._engine = engine
         self._rebuild_widget()
+        self._sync_view_window_visibility()
 
     def apply_chart_theme(self, dark):
         """亮/暗主题切换（由各模块 apply_theme 调用）。"""
@@ -865,6 +876,107 @@ class ChartPanel(QWidget):
         else:
             self.figure.clear()
             self._widget.draw()
+
+    # ---------------- 视图窗口控制（仅 pyqtgraph） ----------------
+    def get_view_window_widget(self):
+        """返回「显示整个范围 / 最近 N 秒」控制行，模块插入图表卡顶部即可。
+
+        仅 pyqtgraph 引擎下可见可用；matplotlib / 占位模式下该行自动隐藏
+        （隐藏后不占布局空间，其余功能不受影响）。
+        懒创建：同一 ChartPanel 多次调用返回同一控件实例。
+        """
+        if self._view_window_row is None:
+            self._build_view_window_widget()
+        return self._view_window_row
+
+    def _build_view_window_widget(self):
+        """构建视图窗口控制行：SwitchButton（整范围开关）+ DoubleSpinBox（秒数）。"""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+
+        self._win_switch = SwitchButton("显示整个范围")
+        self._win_switch.setChecked(True)          # 默认勾选＝现有自动量程行为
+        self._win_switch.checkedChanged.connect(self._on_win_switch_changed)
+
+        self._win_spin = DoubleSpinBox()
+        self._win_spin.setRange(0.1, 10800.0)      # 0.1 秒 ~ 3 小时，支持小数
+        self._win_spin.setDecimals(1)
+        self._win_spin.setValue(self._win_seconds)
+        self._win_spin.setSuffix(" 秒")
+        self._win_spin.setMinimumWidth(110)
+        self._win_spin.setEnabled(False)            # 整范围模式下输入框不可用
+        self._win_spin.valueChanged.connect(self._on_win_seconds_changed)
+
+        lay.addWidget(self._win_switch)
+        lay.addWidget(BodyLabel("最近"))
+        lay.addWidget(self._win_spin)
+        lay.addStretch(1)
+
+        self._view_window_row = row
+        self._sync_view_window_visibility()
+
+    def _on_win_switch_changed(self, checked):
+        """勾选=显示整个范围（恢复自动量程/模块 xlim）；取消勾选=启用滚动窗口。"""
+        self._win_full_range = checked
+        if self._win_spin is not None:
+            self._win_spin.setEnabled(not checked)
+        self._apply_view_window()
+
+    def _on_win_seconds_changed(self, value):
+        """窗口秒数变化：滚动窗口模式下即时生效。"""
+        self._win_seconds = value
+        if not self._win_full_range:
+            self._update_view_window()
+
+    def _apply_view_window(self):
+        """按开关状态应用视图范围（仅 pyqtgraph 生效）。"""
+        if self._engine != 'pyqtgraph':
+            return
+        if self._win_full_range:
+            # 回到整范围：重放最近一次事务，恢复模块设定的 xlim / 自动量程
+            if self._last is not None:
+                self._commit(self._last)
+            else:
+                for pi in self._pg_plots:
+                    pi.enableAutoRange(x=True)
+            return
+        self._update_view_window()
+
+    def _update_view_window(self, spec=None):
+        """滚动窗口：把每个子图的 x 轴锁定为最近 N 秒。
+
+        右边缘取该子图各曲线的最新横坐标，左边缘为「右边缘 - N 秒」；
+        数据不足 N 秒时左边缘让位到最早数据点，不显示大片空白区。
+        spec 缺省用最近一次已提交事务；数据提交路径（_commit_pg）传当次
+        事务，保证窗口右边缘跟踪最新数据而非上一次事务。
+        """
+        if spec is None:
+            spec = self._last
+        if (self._engine != 'pyqtgraph' or self._win_full_range
+                or spec is None):
+            return
+        for pi, sp in zip(self._pg_plots, spec):
+            x_first = x_last = None
+            for s in sp['plot']:
+                if not len(s['x']):
+                    continue
+                x0, x1 = s['x'][0], s['x'][-1]
+                x_first = x0 if x_first is None else min(x_first, x0)
+                x_last = x1 if x_last is None else max(x_last, x1)
+            if x_last is None:              # 该子图暂无数据：回退自动量程
+                pi.enableAutoRange(x=True)
+                continue
+            x_left = x_last - self._win_seconds
+            if x_first is not None and x_left < x_first:
+                x_left = x_first
+            pi.setXRange(x_left, x_last, padding=0)
+
+    def _sync_view_window_visibility(self):
+        """视图窗口控制行仅在 pyqtgraph 引擎下显示。"""
+        if self._view_window_row is not None:
+            self._view_window_row.setVisible(self._engine == 'pyqtgraph')
 
 
 # ============================================================

@@ -560,6 +560,8 @@ class VoltageSensorWidget(QWidget):
         self.chart = ChartPanel()
         content_row.addWidget(self.chart, stretch=2)
 
+        # 视图窗口控制：显示整个范围 / 最近 N 秒（仅 pyqtgraph，其他引擎自动隐藏）
+        chart_card_layout.addWidget(self.chart.get_view_window_widget())
         chart_card_layout.addLayout(content_row, 1)
         card_chart = CollapsibleCard("电压-时间曲线", card_chart_content, expanded=True, fullscreen=True)
         # 图表卡片加高为原来的 2 倍（内容区最小 400px），页面滚动查看
