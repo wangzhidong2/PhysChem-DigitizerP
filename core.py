@@ -447,6 +447,9 @@ class ChartPanel(QWidget):
                                       # pi.clear() 不会移除，需手动管理生命周期）
         self._pg_fit_scatter = []     # 拟合时原始数据散点层（PlotDataItem 列表，
                                       # 随 pi.clear() 移除，仅需清引用防悬挂）
+        self._scatter_hidden = False  # True=散点已被用户清除（重新选拟合方式恢复）
+        self._clear_btn = None        # 「清除离散点」按钮（二次点击确认）
+        self._clear_timer = None      # 确认态超时复位定时器（防悬置）
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -895,6 +898,9 @@ class ChartPanel(QWidget):
             self._hide_pg_hover()
             self._remove_pg_fit_texts()
             self._pg_fit_scatter = []   # 散点随 pi.clear() 移除，仅清引用
+            # 新数据到来散点恢复显示（清除状态不跨数据段）
+            self._scatter_hidden = False
+            self._reset_clear_confirm()
             for pi in self._pg_plots:
                 pi.clear()
         else:
@@ -962,6 +968,20 @@ class ChartPanel(QWidget):
         lay.addSpacing(8)
         lay.addWidget(BodyLabel("拟合"))
         lay.addWidget(self._fit_combo)
+        lay.addSpacing(8)
+
+        # 清除离散点：二次点击确认，防止误触删掉拟合时的原始散点。
+        # 第一次点击进入确认态（文字变为「再次点击确认清除」+ 红色强调），
+        # 3 秒内再次点击才真正清除；超时自动复位。
+        self._clear_btn = PushButton("清除离散点")
+        self._clear_btn.clicked.connect(self._on_clear_btn_clicked)
+        self._clear_btn.setEnabled(False)   # 拟合未开启时不可用
+        self._clear_timer = QTimer(self)
+        self._clear_timer.setSingleShot(True)
+        self._clear_timer.setInterval(3000)
+        self._clear_timer.timeout.connect(self._reset_clear_confirm)
+
+        lay.addWidget(self._clear_btn)
         lay.addStretch(1)
 
         # 拟合方式注解：次要说明文字，CaptionLabel 主题自适应（不设硬编码色）
@@ -1037,6 +1057,7 @@ class ChartPanel(QWidget):
         """视图窗口控制行仅在 pyqtgraph 引擎下显示。"""
         if self._view_window_row is not None:
             self._view_window_row.setVisible(self._engine == 'pyqtgraph')
+        self._sync_clear_btn_state()
 
     # ---------------- 曲线拟合（仅 pyqtgraph） ----------------
     # 拟合方式注解文案（索引与 _fit_combo / _fit_mode 一致）
@@ -1058,9 +1079,50 @@ class ChartPanel(QWidget):
     def _on_fit_type_changed(self, index):
         """拟合方式切换：更新注解，重放最近一次事务叠加/移除拟合曲线。"""
         self._fit_mode = index    # 0=无拟合，1~3=多项式次数，4=对数，5=幂函数
+        # 重新选择拟合方式 → 散点恢复显示（清除状态只针对上一次选择）
+        self._scatter_hidden = False
         self._update_fit_hint()
+        self._sync_clear_btn_state()
         if self._last is not None:
             self._commit(self._last)
+
+    def _on_clear_btn_clicked(self):
+        """「清除离散点」按钮：二次点击才真正清除（防误触）。
+
+        第一次点击进入确认态（按钮文字变警告提示 + 启动 3 秒定时器），
+        3 秒内第二次点击才执行清除；超时自动复位。
+        """
+        if self._scatter_hidden or self._fit_mode <= 0:
+            return
+        if (self._clear_btn is not None
+                and self._clear_btn.text() == "再次点击确认清除"):
+            # 第二次点击：确认清除散点
+            self._scatter_hidden = True
+            self._pg_fit_scatter = []   # 引用作废（散点 item 随重绘 pi.clear 移除）
+            self._reset_clear_confirm()
+            self._sync_clear_btn_state()
+            if self._last is not None:
+                self._commit(self._last)   # 重绘：_draw_pg_fit 不再画散点
+        else:
+            # 第一次点击：进入确认态
+            if self._clear_btn is not None:
+                self._clear_btn.setText("再次点击确认清除")
+            if self._clear_timer is not None:
+                self._clear_timer.start()
+
+    def _reset_clear_confirm(self):
+        """退出确认态（清除完成或超时）：复位按钮文字与定时器。"""
+        if self._clear_timer is not None and self._clear_timer.isActive():
+            self._clear_timer.stop()
+        if self._clear_btn is not None:
+            self._clear_btn.setText("清除离散点")
+
+    def _sync_clear_btn_state(self):
+        """清除离散点按钮仅 pyqtgraph + 拟合开启 + 散点未被清除时可用。"""
+        if self._clear_btn is not None:
+            self._clear_btn.setEnabled(
+                self._engine == 'pyqtgraph' and self._fit_mode > 0
+                and not self._scatter_hidden)
 
     def _remove_pg_fit_texts(self):
         """从视口移除拟合方程文本（pi.clear() 不会移除，需手动清理）。"""
@@ -1090,8 +1152,9 @@ class ChartPanel(QWidget):
             s = sp['plot'][0]             # 拟合第一条曲线（模块主数据曲线）
             x = np.asarray(s['x'], dtype=float)
             y = np.asarray(s['y'], dtype=float)
-            # 原始数据散点层：半透明小圆点（数据量过大时省略防卡顿）
-            if len(x) <= 3000:
+            # 原始数据散点层：半透明小圆点（数据量过大时省略防卡顿；
+            # 用户经「清除离散点」二次确认清除后不再绘制）
+            if len(x) <= 3000 and not self._scatter_hidden:
                 br = QColor(s['color']); br.setAlpha(90)
                 pn = QColor(s['color']); pn.setAlpha(160)
                 sc = pi.plot(x, y, pen=None, symbol='o', symbolSize=5,
