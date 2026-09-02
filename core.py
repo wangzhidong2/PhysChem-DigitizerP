@@ -890,13 +890,20 @@ class ChartPanel(QWidget):
         return self._view_window_row
 
     def _build_view_window_widget(self):
-        """构建视图窗口控制行：SwitchButton（整范围开关）+ DoubleSpinBox（秒数）。"""
+        """构建视图窗口控制行：SwitchButton（整范围开关）+ DoubleSpinBox（秒数）。
+
+        SwitchButton 的 on/off 文字必须用 setOnText/setOffText 指定中文：
+        构造参数传入的文字会在 setChecked 时被默认英文 On/Off 覆盖
+        （无中文翻译器环境下）。
+        """
         row = QWidget()
         lay = QHBoxLayout(row)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(10)
 
-        self._win_switch = SwitchButton("显示整个范围")
+        self._win_switch = SwitchButton()
+        self._win_switch.setOnText("显示整个范围")   # 勾选=显示全部数据
+        self._win_switch.setOffText("滚动窗口")       # 取消=最近 N 秒
         self._win_switch.setChecked(True)          # 默认勾选＝现有自动量程行为
         self._win_switch.checkedChanged.connect(self._on_win_switch_changed)
 
