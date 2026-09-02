@@ -434,12 +434,16 @@ class ChartPanel(QWidget):
         self._pg_hover_vline = None   # pyqtgraph 悬停指示线（懒创建）
         self._pg_hover_label = None   # pyqtgraph 悬停数据标签（懒创建）
         self._pg_hover_view = None    # 最近悬停位置 (子图索引, 视图x)，重绘后据此恢复
-        # 视图窗口控制（仅 pyqtgraph）：显示整个范围 / 最近 N 秒滚动窗口
+        # 视图窗口控制 + 曲线拟合（仅 pyqtgraph）：同一控制行
         self._view_window_row = None  # 控制行控件（懒创建，模块嵌入图表卡顶部）
         self._win_switch = None       # SwitchButton「显示整个范围」
         self._win_spin = None         # DoubleSpinBox 窗口秒数（支持小数）
         self._win_full_range = True   # True=整个范围（默认），False=最近 N 秒
         self._win_seconds = 5.0       # 滚动窗口长度（秒）
+        self._fit_combo = None        # ComboBox 拟合方式（无/线性/二次/三次）
+        self._fit_degree = 0          # 0=不拟合，1~3=多项式次数
+        self._pg_fit_texts = []       # 拟合方程文本（TextItem 锚定视口左上角，
+                                      # pi.clear() 不会移除，需手动管理生命周期）
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -473,6 +477,8 @@ class ChartPanel(QWidget):
         # （_pg_hover_view 保留：坐标语义一致，数据重放后据此恢复悬停）
         self._pg_hover_vline = None
         self._pg_hover_label = None
+        # 拟合方程文本同理：随旧视口销毁，引用作废
+        self._pg_fit_texts = []
         self._widget = pg.GraphicsLayoutWidget()
         self._pg_plots = []
         for i in range(self._n_plots):
@@ -497,6 +503,9 @@ class ChartPanel(QWidget):
                 ax = pi.getAxis(loc)
                 ax.setPen(mkPen(fg, width=1))
                 ax.setTextPen(fg)
+        # 拟合开启时按新前景色重画方程文本（同引擎不重建控件，需手动刷新）
+        if self._fit_degree > 0 and self._last is not None:
+            self._draw_pg_fit(self._last)
         self._restore_pg_hover()
 
     # ---------------- pyqtgraph 悬停交互 ----------------
@@ -825,6 +834,8 @@ class ChartPanel(QWidget):
                 pi.vb.updateAutoRange()
         # 重绘完成：若鼠标正悬停在图表上，按记录位置恢复悬停（数值已更新）
         self._restore_pg_hover()
+        # 拟合开启时在最新数据上重画拟合曲线（实时采集自动跟随更新）
+        self._draw_pg_fit(spec)
         # 滚动窗口模式：覆盖提交时恢复的自动量程，把 x 轴锁定为最近 N 秒
         # （传当次 spec 而非 _last：end() 在提交后才写 _last，用 _last 会落后一拍）
         self._update_view_window(spec)
@@ -875,15 +886,16 @@ class ChartPanel(QWidget):
             # 清数据同时清除悬停记录，避免恢复逻辑定位到已清空的图
             self._pg_hover_view = None
             self._hide_pg_hover()
+            self._remove_pg_fit_texts()
             for pi in self._pg_plots:
                 pi.clear()
         else:
             self.figure.clear()
             self._widget.draw()
 
-    # ---------------- 视图窗口控制（仅 pyqtgraph） ----------------
+    # ---------------- 视图窗口控制 + 曲线拟合（仅 pyqtgraph） ----------------
     def get_view_window_widget(self):
-        """返回「显示整个范围 / 最近 N 秒」控制行，模块插入图表卡顶部即可。
+        """返回「显示整个范围 / 最近 N 秒 + 拟合」控制行，模块插入图表卡顶部即可。
 
         仅 pyqtgraph 引擎下可见可用；matplotlib / 占位模式下该行自动隐藏
         （隐藏后不占布局空间，其余功能不受影响）。
@@ -894,10 +906,10 @@ class ChartPanel(QWidget):
         return self._view_window_row
 
     def _build_view_window_widget(self):
-        """构建视图窗口控制行：SwitchButton（整范围开关）+ DoubleSpinBox（秒数）。
+        """构建图表分析控制行：视图窗口（开关+秒数）+ 曲线拟合（方式选择）。
 
         SwitchButton 的 on/off 文字必须用 setOnText/setOffText 指定中文：
-        构造参数传入的文字会在 setChecked 时被默认英文 On/Off 覆盖
+        构造参数传入的文字会在 setChecked 时被默认的英文 On/Off 覆盖
         （无中文翻译器环境下）。
         """
         row = QWidget()
@@ -920,9 +932,18 @@ class ChartPanel(QWidget):
         self._win_spin.setEnabled(False)            # 整范围模式下输入框不可用
         self._win_spin.valueChanged.connect(self._on_win_seconds_changed)
 
+        self._fit_combo = ComboBox()
+        self._fit_combo.addItems(["无拟合", "线性拟合", "二次拟合", "三次拟合"])
+        self._fit_combo.setCurrentIndex(0)
+        self._fit_combo.setMinimumWidth(100)
+        self._fit_combo.currentIndexChanged.connect(self._on_fit_type_changed)
+
         lay.addWidget(self._win_switch)
         lay.addWidget(BodyLabel("最近"))
         lay.addWidget(self._win_spin)
+        lay.addSpacing(8)
+        lay.addWidget(BodyLabel("拟合"))
+        lay.addWidget(self._fit_combo)
         lay.addStretch(1)
 
         self._view_window_row = row
@@ -990,6 +1011,83 @@ class ChartPanel(QWidget):
         """视图窗口控制行仅在 pyqtgraph 引擎下显示。"""
         if self._view_window_row is not None:
             self._view_window_row.setVisible(self._engine == 'pyqtgraph')
+
+    # ---------------- 曲线拟合（仅 pyqtgraph） ----------------
+    def _on_fit_type_changed(self, index):
+        """拟合方式切换：重放最近一次事务，渲染时叠加/移除拟合曲线。"""
+        self._fit_degree = index          # 0=无拟合，1/2/3=多项式次数
+        if self._last is not None:
+            self._commit(self._last)
+
+    def _remove_pg_fit_texts(self):
+        """从视口移除拟合方程文本（pi.clear() 不会移除，需手动清理）。"""
+        for ti in self._pg_fit_texts:
+            if ti.scene() is not None:
+                ti.setParent(None)
+        self._pg_fit_texts = []
+
+    def _draw_pg_fit(self, spec):
+        """对每个子图的第一条曲线做多项式拟合并叠加显示。
+
+        拟合曲线用同色虚线绘制；方程与 R² 以 TextItem 锚定视口左上角
+        （跟随视口而非数据坐标，缩放/滚动窗口时位置稳定）。
+        点数不足（< 次数+1）或拟合失败（如 x 全相同）的子图静默跳过。
+        """
+        import numpy as np
+        from pyqtgraph import mkPen, TextItem
+        self._remove_pg_fit_texts()
+        if self._engine != 'pyqtgraph' or self._fit_degree <= 0:
+            return
+        n = self._fit_degree
+        fg = '#e0e0e0' if self._dark else '#1a1a1a'
+        for pi, sp in zip(self._pg_plots, spec):
+            if not sp['plot'] or not len(sp['plot'][0]['x']):
+                continue
+            s = sp['plot'][0]             # 拟合第一条曲线（模块主数据曲线）
+            x = np.asarray(s['x'], dtype=float)
+            y = np.asarray(s['y'], dtype=float)
+            if len(x) < n + 1:
+                continue
+            try:
+                coef = np.polyfit(x, y, n)
+            except Exception:
+                continue
+            # 决定系数 R² = 1 - SS_res / SS_tot
+            y_pred = np.polyval(coef, x)
+            ss_res = float(np.sum((y - y_pred) ** 2))
+            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+            r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+            # 拟合曲线：数据范围内 200 点虚线（颜色与原曲线一致）
+            xs = np.linspace(float(x.min()), float(x.max()), 200)
+            pen = mkPen(s['color'], width=2,
+                        style=Qt.PenStyle.DashLine)
+            pi.plot(xs, np.polyval(coef, xs), pen=pen)
+            # 方程文本：锚定视口左上角（视口本地坐标，不随数据缩放变化；
+            # anchor=(0,0) 表示文本框左上角对齐 setPos 位置，pyqtgraph 0.14
+            # 的 anchor 是构造参数/属性而非旧版锚定方法）
+            ti = TextItem(self._format_fit_equation(coef, r2), color=fg,
+                          anchor=(0, 0))
+            ti.setParentItem(pi.getViewBox())
+            ti.setPos(8, 8)
+            self._pg_fit_texts.append(ti)
+
+    @staticmethod
+    def _format_fit_equation(coef, r2):
+        """生成拟合方程文本：y = aₙxⁿ + ... + a₁x + a₀（4 位有效数字）。"""
+        deg = len(coef) - 1
+        sup = {1: '', 2: '²', 3: '³'}
+        text = 'y = '
+        for k, c in enumerate(coef):
+            p = deg - k
+            if k > 0:
+                text += ' − ' if c < 0 else ' + '
+            elif c < 0:
+                text += '−'
+            text += f"{abs(c):.4g}"
+            if p > 0:
+                text += 'x' + sup.get(p, f'^{p}')
+        text += f"\nR² = {r2:.4f}"
+        return text
 
 
 # ============================================================
