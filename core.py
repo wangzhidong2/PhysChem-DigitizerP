@@ -445,6 +445,8 @@ class ChartPanel(QWidget):
         self._fit_hint = None         # CaptionLabel 拟合方式注解（随选择动态更新）
         self._pg_fit_texts = []       # 拟合方程文本（TextItem 锚定视口左上角，
                                       # pi.clear() 不会移除，需手动管理生命周期）
+        self._pg_fit_scatter = []     # 拟合时原始数据散点层（PlotDataItem 列表，
+                                      # 随 pi.clear() 移除，仅需清引用防悬挂）
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -480,6 +482,7 @@ class ChartPanel(QWidget):
         self._pg_hover_label = None
         # 拟合方程文本同理：随旧视口销毁，引用作废
         self._pg_fit_texts = []
+        self._pg_fit_scatter = []
         self._widget = pg.GraphicsLayoutWidget()
         self._pg_plots = []
         for i in range(self._n_plots):
@@ -847,6 +850,9 @@ class ChartPanel(QWidget):
         old = self._widget
         self._widget = None
         self._pg_plots = []
+        # 拟合文本/散点随旧场景销毁，引用作废（引擎切换后重建）
+        self._pg_fit_texts = []
+        self._pg_fit_scatter = []
         if old is not None:
             self._lay.removeWidget(old)
             old.setParent(None)
@@ -888,6 +894,7 @@ class ChartPanel(QWidget):
             self._pg_hover_view = None
             self._hide_pg_hover()
             self._remove_pg_fit_texts()
+            self._pg_fit_scatter = []   # 散点随 pi.clear() 移除，仅清引用
             for pi in self._pg_plots:
                 pi.clear()
         else:
@@ -1065,13 +1072,15 @@ class ChartPanel(QWidget):
     def _draw_pg_fit(self, spec):
         """对每个子图的第一条曲线做拟合并叠加显示。
 
-        拟合曲线用同色虚线绘制；方程与 R² 以 TextItem 锚定视口左上角
+        拟合曲线用同色虚线绘制，原始数据点以半透明散点叠加，便于直观
+        对比数据分布与拟合贴合度；方程与 R² 以 TextItem 锚定视口左上角
         （跟随视口而非数据坐标，缩放/滚动窗口时位置稳定）。
         各模式共用本渲染骨架，数值计算见 _fit_points。
         """
         from pyqtgraph import mkPen, TextItem
         import numpy as np
         self._remove_pg_fit_texts()
+        self._pg_fit_scatter = []         # 散点随 pi.clear() 移除，仅清引用
         if self._engine != 'pyqtgraph' or self._fit_mode <= 0:
             return
         fg = '#e0e0e0' if self._dark else '#1a1a1a'
@@ -1081,6 +1090,13 @@ class ChartPanel(QWidget):
             s = sp['plot'][0]             # 拟合第一条曲线（模块主数据曲线）
             x = np.asarray(s['x'], dtype=float)
             y = np.asarray(s['y'], dtype=float)
+            # 原始数据散点层：半透明小圆点（数据量过大时省略防卡顿）
+            if len(x) <= 3000:
+                br = QColor(s['color']); br.setAlpha(90)
+                pn = QColor(s['color']); pn.setAlpha(160)
+                sc = pi.plot(x, y, pen=None, symbol='o', symbolSize=5,
+                             symbolBrush=br, symbolPen=mkPen(pn, width=1))
+                self._pg_fit_scatter.append(sc)
             fit = self._fit_points(x, y)
             if fit is None:               # 点数不足/定义域不满足：静默跳过
                 continue
