@@ -848,6 +848,9 @@ class SettingsWidget(QWidget):
         # 主题模式：浅色 / 深色 / 跟随系统
         self._theme_combo_items = ["浅色模式", "深色模式", "跟随系统"]
         self._theme_combo_values = ["light", "dark", "auto"]
+        # 当前主题模式（显式记录：qconfig.theme 会把 AUTO 解析成 LIGHT/DARK，
+        # 无法据此区分「跟随系统」，故单独维护；同步下拉框用）
+        self._theme_mode = "light"
         # 「清除用户设置」程序内开启保存开关时，跳过开启确认框（用户已确认过）
         self._suppress_persistence_confirm = False
         self.init_ui()
@@ -1337,25 +1340,34 @@ class SettingsWidget(QWidget):
         if not self._theme_combo.items[idx].isEnabled:
             return
         mode = self._theme_combo_values[idx]
+        self._theme_mode = mode
         if mode == "auto":
-            # 跟随系统：交给 FluentWidgets 处理 AUTO 主题
+            # 跟随系统：交给 FluentWidgets 处理 AUTO 主题。
+            # 传 "auto" 而非解析后的实际亮暗——change_app_theme 收到 auto
+            # 时不再 setTheme(固定主题)，避免把 AUTO 覆盖掉导致主题模式
+            # 反复横跳 + 全量刷新死循环。
             setTheme(Theme.AUTO)
-            # 实际亮/暗由系统决定，通知主窗口刷新自定义 widget
-            actual = "dark" if isDarkTheme() else "light"
-            self.theme_change_requested.emit(actual)
+            self.theme_change_requested.emit("auto")
         else:
             self.theme_change_requested.emit(mode)
 
     def _sync_theme_combo_from_current(self):
-        """根据当前 FluentWidgets 主题，反向同步下拉框选项。"""
-        from qfluentwidgets import qconfig as _qcfg, Theme as _Theme
-        t = _qcfg.theme  # Theme.LIGHT / Theme.DARK / Theme.AUTO
-        if t == _Theme.DARK:
-            self._theme_combo.setCurrentIndex(1)
-        elif t == _Theme.AUTO:
-            self._theme_combo.setCurrentIndex(2)
-        else:
-            self._theme_combo.setCurrentIndex(0)
+        """按当前主题模式反向同步下拉框选项。
+
+        用显式维护的 _theme_mode（qconfig.theme 会把 AUTO 解析成
+        LIGHT/DARK，无法区分「跟随系统」）。
+
+        必须 blockSignals：setCurrentIndex 会触发 currentIndexChanged，
+        进而回调 _on_theme_combo_changed 二次 emit → change_app_theme
+        全量刷新递归（主题切换被放大数倍、跟随系统时反复横跳卡死）。
+        本方法只是 UI 同步，不应触发任何事件。
+        """
+        idx = {"light": 0, "dark": 1, "auto": 2}.get(self._theme_mode, 0)
+        self._theme_combo.blockSignals(True)
+        try:
+            self._theme_combo.setCurrentIndex(idx)
+        finally:
+            self._theme_combo.blockSignals(False)
 
     def apply_theme(self, theme):
         """主题切换时刷新本页背景与下拉框同步。"""
@@ -1385,11 +1397,18 @@ class MainWindow(FluentWindow):
         self.setFont(font)
 
         self.current_theme = "light"
+        # 主题模式（light/dark/auto）：auto 下监听 qconfig.themeChanged，
+        # 系统主题变化时自动刷新自定义控件（跟随系统真实生效）
+        self._theme_mode = "light"
         self.modules = {}  # name -> widget
         self.module_widgets = []  # 按注册顺序排列的 widget 列表
         self._nav_icons = {}  # name -> (icon_text, nav_item)，主题切换时重建图标
 
         self.init_ui()
+        # 跟随系统模式下，qfluentwidgets 系统主题监听器改变主题时会广播
+        # themeChanged；仅 auto 模式响应，固定模式由 change_app_theme 负责
+        from qfluentwidgets import qconfig
+        qconfig.themeChanged.connect(self._on_fluent_theme_changed)
         self.apply_modern_style()
 
     def init_ui(self):
@@ -1480,19 +1499,49 @@ class MainWindow(FluentWindow):
             self.switchTo(self.modules[module_name])
 
     def change_app_theme(self, theme):
-        """切换应用主题（light/dark）。
+        """切换应用主题（light / dark / auto）。
 
-        流程：
-        1. 先切换 FluentWidgets 主题（setTheme）—— 这会自动刷新所有
-           FluentWidgets 组件（ComboBox/PushButton/SettingCard/...）的颜色；
-        2. 再通知各页面 apply_theme() 刷新自定义 widget 的硬编码颜色
-           （QScrollArea 背景、QLabel 颜色、CollapsibleCard 等）。
+        auto（跟随系统）：设置页已把 qconfig 主题置为 Theme.AUTO，这里
+        只按系统实际亮暗刷新自定义控件，**不再调用 setTheme**——否则会把
+        AUTO 覆盖成固定主题，导致主题模式与下拉框反复横跳、每次系统主题
+        变化都触发秒级全量刷新，界面卡死。
         """
-        if theme not in ("light", "dark"):
+        if theme not in ("light", "dark", "auto"):
+            return
+        self._theme_mode = theme
+        if theme == "auto":
+            actual = "dark" if isDarkTheme() else "light"
+            self.current_theme = actual
+            self._refresh_custom_theme(actual)
             return
         self.current_theme = theme
-        self.apply_theme(theme)
+        self.apply_theme(theme)       # setTheme 固定主题（刷新 FluentWidgets）
+        self._refresh_custom_theme(theme)
 
+    def _on_fluent_theme_changed(self, _theme=None):
+        """qconfig.themeChanged 回调：仅跟随系统模式下重刷自定义控件。
+
+        固定模式下 setTheme 由 change_app_theme 驱动，其已做全量刷新，
+        这里再刷会造成重复开销；auto 模式下系统主题（由 qfluentwidgets
+        系统监听器触发）改变时，FluentWidgets 组件自动变色，而自定义
+        QSS 控件需要手动刷新——本回调补齐这部分。
+        """
+        if self._theme_mode != "auto":
+            return
+        try:
+            actual = "dark" if isDarkTheme() else "light"
+            self.current_theme = actual
+            self._refresh_custom_theme(actual)
+        except Exception as e:
+            print(f"⚠️ 跟随系统主题刷新失败: {e}")
+
+    def _refresh_custom_theme(self, theme):
+        """按当前亮/暗主题刷新自定义 widget 颜色（不调用 setTheme）。
+
+        覆盖：导航文字图标重绘 + 设置页 / 主页 / 各传感器模块 apply_theme
+        （QScrollArea 背景、QLabel 颜色、图表主题等）。FluentWidgets 组件
+        的颜色由 setTheme 统一刷新，不在本方法职责内。
+        """
         # 重建侧边栏文字图标（深/浅色下 Normal 状态颜色不同）
         for name, (icon_text, nav_item) in self._nav_icons.items():
             try:
