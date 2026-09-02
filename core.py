@@ -442,6 +442,7 @@ class ChartPanel(QWidget):
         self._win_seconds = 5.0       # 滚动窗口长度（秒）
         self._fit_combo = None        # ComboBox 拟合方式（多项式/对数/幂函数）
         self._fit_mode = 0            # 0=不拟合，1~3=多项式次数，4=对数，5=幂函数
+        self._fit_hint = None         # CaptionLabel 拟合方式注解（随选择动态更新）
         self._pg_fit_texts = []       # 拟合方程文本（TextItem 锚定视口左上角，
                                       # pi.clear() 不会移除，需手动管理生命周期）
         lay = QVBoxLayout(self)
@@ -906,12 +907,21 @@ class ChartPanel(QWidget):
         return self._view_window_row
 
     def _build_view_window_widget(self):
-        """构建图表分析控制行：视图窗口（开关+秒数）+ 曲线拟合（方式选择）。
+        """构建图表分析控制区：视图窗口（开关+秒数）+ 拟合（方式+注解）。
+
+        外层纵向两行：第一行是控件（开关/秒数/拟合下拉），第二行是
+        CaptionLabel 注解——随拟合选择动态更新，说明该方式的公式与
+        数据要求（如定义域），用户无需查文档即可选对拟合类型。
 
         SwitchButton 的 on/off 文字必须用 setOnText/setOffText 指定中文：
         构造参数传入的文字会在 setChecked 时被默认的英文 On/Off 覆盖
         （无中文翻译器环境下）。
         """
+        box = QWidget()
+        vlay = QVBoxLayout(box)
+        vlay.setContentsMargins(0, 0, 0, 0)
+        vlay.setSpacing(2)
+
         row = QWidget()
         lay = QHBoxLayout(row)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -947,7 +957,15 @@ class ChartPanel(QWidget):
         lay.addWidget(self._fit_combo)
         lay.addStretch(1)
 
-        self._view_window_row = row
+        # 拟合方式注解：次要说明文字，CaptionLabel 主题自适应（不设硬编码色）
+        self._fit_hint = CaptionLabel()
+        self._fit_hint.setWordWrap(True)
+        self._update_fit_hint()
+
+        vlay.addWidget(row)
+        vlay.addWidget(self._fit_hint)
+
+        self._view_window_row = box
         self._sync_view_window_visibility()
 
     def _on_win_switch_changed(self, checked):
@@ -1014,9 +1032,26 @@ class ChartPanel(QWidget):
             self._view_window_row.setVisible(self._engine == 'pyqtgraph')
 
     # ---------------- 曲线拟合（仅 pyqtgraph） ----------------
+    # 拟合方式注解文案（索引与 _fit_combo / _fit_mode 一致）
+    _FIT_HINTS = (
+        "拟合：选择拟合方式后，在曲线上叠加同色虚线拟合曲线，并显示方程与 R²（越接近 1 拟合越好）。",
+        "线性拟合 y = a·x + b：直线趋势，适合匀速 / 恒定变化率的数据。",
+        "二次拟合 y = a·x² + b·x + c：抛物线趋势，适合匀加速变化（如自由落体位移）。",
+        "三次拟合 y = a·x³ + b·x² + c·x + d：S 形 / 波动趋势，适合更复杂的变化。",
+        "对数拟合 y = a·ln(x) + b：先快后缓并趋于平稳的趋势，要求数据 x > 0（x ≤ 0 的点自动剔除）。",
+        "幂函数拟合 y = a·x^b：按比例缩放的关系（b=2 面积、b=3 体积类规律），要求数据 x > 0 且 y > 0。",
+    )
+
+    def _update_fit_hint(self):
+        """按当前拟合方式刷新注解文字（选择变化时调用）。"""
+        if self._fit_hint is not None:
+            idx = self._fit_mode if self._fit_mode is not None else 0
+            self._fit_hint.setText(self._FIT_HINTS[idx])
+
     def _on_fit_type_changed(self, index):
-        """拟合方式切换：重放最近一次事务，渲染时叠加/移除拟合曲线。"""
+        """拟合方式切换：更新注解，重放最近一次事务叠加/移除拟合曲线。"""
         self._fit_mode = index    # 0=无拟合，1~3=多项式次数，4=对数，5=幂函数
+        self._update_fit_hint()
         if self._last is not None:
             self._commit(self._last)
 
