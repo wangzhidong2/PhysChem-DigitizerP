@@ -440,8 +440,8 @@ class ChartPanel(QWidget):
         self._win_spin = None         # DoubleSpinBox 窗口秒数（支持小数）
         self._win_full_range = True   # True=整个范围（默认），False=最近 N 秒
         self._win_seconds = 5.0       # 滚动窗口长度（秒）
-        self._fit_combo = None        # ComboBox 拟合方式（无/线性/二次/三次）
-        self._fit_degree = 0          # 0=不拟合，1~3=多项式次数
+        self._fit_combo = None        # ComboBox 拟合方式（多项式/对数/幂函数）
+        self._fit_mode = 0            # 0=不拟合，1~3=多项式次数，4=对数，5=幂函数
         self._pg_fit_texts = []       # 拟合方程文本（TextItem 锚定视口左上角，
                                       # pi.clear() 不会移除，需手动管理生命周期）
         lay = QVBoxLayout(self)
@@ -504,7 +504,7 @@ class ChartPanel(QWidget):
                 ax.setPen(mkPen(fg, width=1))
                 ax.setTextPen(fg)
         # 拟合开启时按新前景色重画方程文本（同引擎不重建控件，需手动刷新）
-        if self._fit_degree > 0 and self._last is not None:
+        if self._fit_mode > 0 and self._last is not None:
             self._draw_pg_fit(self._last)
         self._restore_pg_hover()
 
@@ -933,9 +933,10 @@ class ChartPanel(QWidget):
         self._win_spin.valueChanged.connect(self._on_win_seconds_changed)
 
         self._fit_combo = ComboBox()
-        self._fit_combo.addItems(["无拟合", "线性拟合", "二次拟合", "三次拟合"])
+        self._fit_combo.addItems(["无拟合", "线性拟合", "二次拟合", "三次拟合",
+                                  "对数拟合", "幂函数拟合"])
         self._fit_combo.setCurrentIndex(0)
-        self._fit_combo.setMinimumWidth(100)
+        self._fit_combo.setMinimumWidth(110)
         self._fit_combo.currentIndexChanged.connect(self._on_fit_type_changed)
 
         lay.addWidget(self._win_switch)
@@ -1015,7 +1016,7 @@ class ChartPanel(QWidget):
     # ---------------- 曲线拟合（仅 pyqtgraph） ----------------
     def _on_fit_type_changed(self, index):
         """拟合方式切换：重放最近一次事务，渲染时叠加/移除拟合曲线。"""
-        self._fit_degree = index          # 0=无拟合，1/2/3=多项式次数
+        self._fit_mode = index    # 0=无拟合，1~3=多项式次数，4=对数，5=幂函数
         if self._last is not None:
             self._commit(self._last)
 
@@ -1027,18 +1028,17 @@ class ChartPanel(QWidget):
         self._pg_fit_texts = []
 
     def _draw_pg_fit(self, spec):
-        """对每个子图的第一条曲线做多项式拟合并叠加显示。
+        """对每个子图的第一条曲线做拟合并叠加显示。
 
         拟合曲线用同色虚线绘制；方程与 R² 以 TextItem 锚定视口左上角
         （跟随视口而非数据坐标，缩放/滚动窗口时位置稳定）。
-        点数不足（< 次数+1）或拟合失败（如 x 全相同）的子图静默跳过。
+        各模式共用本渲染骨架，数值计算见 _fit_points。
         """
-        import numpy as np
         from pyqtgraph import mkPen, TextItem
+        import numpy as np
         self._remove_pg_fit_texts()
-        if self._engine != 'pyqtgraph' or self._fit_degree <= 0:
+        if self._engine != 'pyqtgraph' or self._fit_mode <= 0:
             return
-        n = self._fit_degree
         fg = '#e0e0e0' if self._dark else '#1a1a1a'
         for pi, sp in zip(self._pg_plots, spec):
             if not sp['plot'] or not len(sp['plot'][0]['x']):
@@ -1046,34 +1046,86 @@ class ChartPanel(QWidget):
             s = sp['plot'][0]             # 拟合第一条曲线（模块主数据曲线）
             x = np.asarray(s['x'], dtype=float)
             y = np.asarray(s['y'], dtype=float)
-            if len(x) < n + 1:
+            fit = self._fit_points(x, y)
+            if fit is None:               # 点数不足/定义域不满足：静默跳过
                 continue
-            try:
-                coef = np.polyfit(x, y, n)
-            except Exception:
-                continue
-            # 决定系数 R² = 1 - SS_res / SS_tot
-            y_pred = np.polyval(coef, x)
-            ss_res = float(np.sum((y - y_pred) ** 2))
-            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-            r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+            xs, ys, text = fit
             # 拟合曲线：数据范围内 200 点虚线（颜色与原曲线一致）
-            xs = np.linspace(float(x.min()), float(x.max()), 200)
             pen = mkPen(s['color'], width=2,
                         style=Qt.PenStyle.DashLine)
-            pi.plot(xs, np.polyval(coef, xs), pen=pen)
+            pi.plot(xs, ys, pen=pen)
             # 方程文本：锚定视口左上角（视口本地坐标，不随数据缩放变化；
             # anchor=(0,0) 表示文本框左上角对齐 setPos 位置，pyqtgraph 0.14
             # 的 anchor 是构造参数/属性而非旧版锚定方法）
-            ti = TextItem(self._format_fit_equation(coef, r2), color=fg,
-                          anchor=(0, 0))
+            ti = TextItem(text, color=fg, anchor=(0, 0))
             ti.setParentItem(pi.getViewBox())
             ti.setPos(8, 8)
             self._pg_fit_texts.append(ti)
 
+    def _fit_points(self, x, y):
+        """按当前拟合方式计算拟合曲线与方程文本。
+
+        返回 (xs, ys, equation_text) 或 None（点数不足、数据不在函数
+        定义域内、或拟合数值失败时静默跳过该子图）。
+
+        各模式：
+        - 1~3 多项式：y = aₙxⁿ + ... + a₀，np.polyfit 直接最小二乘
+        - 4 对数：y = a·ln(x) + b，要求 x > 0（非正点剔除后拟合）
+        - 5 幂函数：y = a·x^b，要求 x > 0 且 y > 0；对数线性化
+          （ln y = b·ln x + ln a）求参，R² 按原始 y 尺度报告
+        """
+        import numpy as np
+        mode = self._fit_mode
+        if mode in (1, 2, 3):            # ---- 多项式 ----
+            if len(x) < mode + 1:
+                return None
+            try:
+                coef = np.polyfit(x, y, mode)
+            except Exception:
+                return None
+            r2 = self._r_squared(y, np.polyval(coef, x))
+            xs = np.linspace(float(x.min()), float(x.max()), 200)
+            return xs, np.polyval(coef, xs), self._format_poly_equation(coef, r2)
+        if mode == 4:                    # ---- 对数 y = a·ln(x) + b ----
+            mask = x > 0                 # ln(x) 仅正数有定义
+            if int(mask.sum()) < 2:
+                return None
+            xv, yv = x[mask], y[mask]
+            try:
+                a, b = np.polyfit(np.log(xv), yv, 1)
+            except Exception:
+                return None
+            r2 = self._r_squared(yv, a * np.log(xv) + b)
+            xs = np.linspace(float(xv.min()), float(xv.max()), 200)
+            text = self._format_log_power_equation('log', float(a), float(b), r2)
+            return xs, a * np.log(xs) + b, text
+        if mode == 5:                    # ---- 幂函数 y = a·x^b ----
+            mask = (x > 0) & (y > 0)     # 双对数线性化要求全为正
+            if int(mask.sum()) < 2:
+                return None
+            xv, yv = x[mask], y[mask]
+            try:
+                b, ln_a = np.polyfit(np.log(xv), np.log(yv), 1)
+            except Exception:
+                return None
+            a = float(np.exp(ln_a))
+            r2 = self._r_squared(yv, a * xv ** b)
+            xs = np.linspace(float(xv.min()), float(xv.max()), 200)
+            text = self._format_log_power_equation('power', a, float(b), r2)
+            return xs, a * xs ** b, text
+        return None
+
     @staticmethod
-    def _format_fit_equation(coef, r2):
-        """生成拟合方程文本：y = aₙxⁿ + ... + a₁x + a₀（4 位有效数字）。"""
+    def _r_squared(y, y_pred):
+        """决定系数 R² = 1 − SS_res / SS_tot（SS_tot 为 0 时返回 1）。"""
+        import numpy as np
+        ss_res = float(np.sum((y - y_pred) ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+        return 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+
+    @staticmethod
+    def _format_poly_equation(coef, r2):
+        """多项式方程文本：y = aₙxⁿ + ... + a₁x + a₀（4 位有效数字）。"""
         deg = len(coef) - 1
         sup = {1: '', 2: '²', 3: '³'}
         text = 'y = '
@@ -1086,6 +1138,24 @@ class ChartPanel(QWidget):
             text += f"{abs(c):.4g}"
             if p > 0:
                 text += 'x' + sup.get(p, f'^{p}')
+        text += f"\nR² = {r2:.4f}"
+        return text
+
+    @staticmethod
+    def _format_log_power_equation(kind, a, b, r2):
+        """对数/幂函数方程文本（4 位有效数字，负号用 Unicode −）。
+
+        kind='log'   → y = a·ln(x) + b
+        kind='power' → y = a·x^b
+        """
+        if kind == 'log':
+            sa = '−' if a < 0 else ''
+            sb = ' − ' if b < 0 else ' + '
+            text = f"y = {sa}{abs(a):.4g}·ln(x){sb}{abs(b):.4g}"
+        else:
+            sa = '−' if a < 0 else ''
+            sb = '−' if b < 0 else ''
+            text = f"y = {sa}{abs(a):.4g}·x^{sb}{abs(b):.4g}"
         text += f"\nR² = {r2:.4f}"
         return text
 
