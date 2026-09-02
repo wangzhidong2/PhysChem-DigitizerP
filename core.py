@@ -815,10 +815,14 @@ class ChartPanel(QWidget):
                 pi.setXRange(*sp['xlim'], padding=0)
             else:
                 pi.enableAutoRange(x=True)
+                # enableAutoRange 是「打开开关+延迟生效」，实际重算要等下次
+                # 重绘；强制立即重算，保证切回整范围/首帧时视图即已正确
+                pi.vb.updateAutoRange()
             if sp['ylim']:
                 pi.setYRange(*sp['ylim'], padding=0)
             else:
                 pi.enableAutoRange(y=True)
+                pi.vb.updateAutoRange()
         # 重绘完成：若鼠标正悬停在图表上，按记录位置恢复悬停（数值已更新）
         self._restore_pg_hover()
         # 滚动窗口模式：覆盖提交时恢复的自动量程，把 x 轴锁定为最近 N 秒
@@ -948,6 +952,7 @@ class ChartPanel(QWidget):
             else:
                 for pi in self._pg_plots:
                     pi.enableAutoRange(x=True)
+                    pi.vb.updateAutoRange()
             return
         self._update_view_window()
 
@@ -974,6 +979,7 @@ class ChartPanel(QWidget):
                 x_last = x1 if x_last is None else max(x_last, x1)
             if x_last is None:              # 该子图暂无数据：回退自动量程
                 pi.enableAutoRange(x=True)
+                pi.vb.updateAutoRange()
                 continue
             x_left = x_last - self._win_seconds
             if x_first is not None and x_left < x_first:
