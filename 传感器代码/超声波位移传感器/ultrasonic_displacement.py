@@ -442,6 +442,8 @@ class UltrasonicWidget(QWidget):
 
     def update_chart(self):
         """更新图表"""
+        if not self.isVisible():
+            return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
         if len(self.data_points) > 0:
             c = self.chart
             c.begin()

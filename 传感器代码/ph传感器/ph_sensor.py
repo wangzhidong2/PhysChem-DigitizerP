@@ -592,6 +592,8 @@ class PhSensorWidget(QWidget):
 
     def update_chart(self):
         """更新pH值图表（双引擎统一 API）"""
+        if not self.isVisible():
+            return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
         if len(self.ph_data) > 0:
             c = self.chart
             c.begin()

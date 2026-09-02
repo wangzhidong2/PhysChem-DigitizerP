@@ -1036,6 +1036,8 @@ class VoltageSensorWidget(QWidget):
             self.stats_label.setText(stats_text)
 
     def update_chart(self):
+        if not self.isVisible():
+            return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
         if len(self.voltage_data) > 0:
             # 图表数据按当前单位换算
             display_data = [self.to_current_unit(v) for v in self.voltage_data]

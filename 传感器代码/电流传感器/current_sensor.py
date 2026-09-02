@@ -1023,6 +1023,8 @@ class CurrentSensorWidget(QWidget):
             )
 
     def update_chart(self):
+        if not self.isVisible():
+            return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
         if not self.current_data:
             return
         display_data = [self.to_current_unit(c) for c in self.current_data]

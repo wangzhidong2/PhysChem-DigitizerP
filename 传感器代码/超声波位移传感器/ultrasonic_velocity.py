@@ -506,6 +506,8 @@ class UltrasonicVelocityWidget(QWidget):
 
     def update_chart(self):
         """更新速度图表（双子图：距离-时间 + 速度-时间）"""
+        if not self.isVisible():
+            return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
         if len(self.velocity_data) > 0:
             c = self.chart
             c.begin()

@@ -843,6 +843,8 @@ class ForceSensorWidget(QWidget):
             self.stats_label.setText(stats_text)
 
     def update_chart(self):
+        if not self.isVisible():
+            return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
         if len(self.force_data) > 0:
             ylabel = self.get_chart_ylabel()
             if self.calibrated:

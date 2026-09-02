@@ -455,6 +455,10 @@ class ChartPanel(QWidget):
         self._lay = lay
         self._widget = None     # 当前引擎实际控件
         self._pg_plots = []     # pyqtgraph: PlotItem 列表
+        # 增量更新缓存：记录最近一次全量重建时各子图的 PlotDataItem /
+        # InfiniteLine 与结构签名；实时流式路径结构未变时只 setData 复用，
+        # 避免每 100ms 全量 pi.clear()+重建控件（pyqtgraph 实时绘制卡顿主因）
+        self._pg_cache = None
         self._build_widget()
 
     # ---------------- 引擎控件构建 ----------------
@@ -747,11 +751,18 @@ class ChartPanel(QWidget):
         self._spec = None
 
     # ---------------- 渲染实现 ----------------
-    def _commit(self, spec):
+    def _commit(self, spec, force_autorange=False):
+        """渲染提交的事务。
+
+        force_autorange（仅 pyqtgraph）：True 时立即同步重算自动量程
+        （用户显式操作如切回整范围、首次渲染时用）；实时提交路径保持
+        False，交给 pyqtgraph 的延迟 autoRange（合并到重绘帧，避免每次
+        采集都同步 O(N) 计算拖慢刷新）。
+        """
         if self._engine is None:      # 占位模式：仅记录事务，不渲染
             return
         if self._engine == 'pyqtgraph':
-            self._commit_pg(spec)
+            self._commit_pg(spec, force_autorange=force_autorange)
         else:
             self._commit_mpl(spec)
 
@@ -790,35 +801,59 @@ class ChartPanel(QWidget):
         self.figure.tight_layout()
         self._widget.draw()
 
-    def _commit_pg(self, spec):
+    def _commit_pg(self, spec, force_autorange=False):
         import pyqtgraph as pg
         from pyqtgraph import mkPen
+        # 实时流式路径：结构未变（曲线/参考线数量、图例、轴模式一致）时
+        # 只 setData 复用已有控件，避开每帧全量 pi.clear()+重建 PlotDataItem
+        # 的控件抖动——pyqtgraph 大流量实时绘制卡顿的主因之一。拟合开启时
+        # 散点/拟合曲线每帧重建，不走增量。
+        if (not force_autorange and self._fit_mode <= 0
+                and self._pg_incremental_ok(spec)):
+            self._incremental_pg(spec)
+            self._restore_pg_hover()
+            self._draw_pg_fit(spec)      # 拟合关闭时为快速空操作
+            self._update_view_window(spec)
+            return
         # 注意：pi.clear() 会把悬停元素移出场景，但不销毁——重绘完成后由
         # _restore_pg_hover() 按记录位置重新加回并定位。高频实时更新下
         # 悬停标签持续显示且数值跟随最新数据，不会随重绘闪烁消失。
         pen_style = {'dash': Qt.PenStyle.DashLine,
                      'dot': Qt.PenStyle.DotLine,
                      'solid': Qt.PenStyle.SolidLine}
+        cache = []
         for pi, sp in zip(self._pg_plots, spec):
             pi.clear()
             # 显式清空上一轮图例条目：旧版 pyqtgraph 的 pi.clear() 不清图例，
             # 每次重绘（含实时数据更新）都会累积条目直至撑爆图表
             if pi.legend is not None:
                 pi.legend.clear()
-            legend = None
-            if sp['legend'] and any(
-                    s['label'] for s in sp['plot'] + sp['hline']):
-                legend = pi.addLegend()
+            legend_on = bool(sp['legend'] and any(
+                s['label'] for s in sp['plot'] + sp['hline']))
+            legend = pi.addLegend() if legend_on else None
+            curves, hlines = [], []
             for s in sp['plot']:
                 pen = mkPen(s['color'], width=s['width'])
-                pi.plot(s['x'], s['y'], pen=pen,
-                        name=s['label'] if sp['legend'] else None)
+                curve = pi.plot(s['x'], s['y'], pen=pen,
+                                name=s['label'] if sp['legend'] else None)
+                # 大数据实时优化：峰值降采样（视图内保留峰值形状）+ 只画
+                # 可见区域 + 跳过有限性检查。pyqtgraph 自动选择采样率，
+                # 点少时退化为全量绘制，不影响数据与拟合/悬停逻辑。
+                # 0.14 把 mode 参数改名为 method，跨版本兼容处理
+                try:
+                    curve.setDownsampling(None, True, method='peak')
+                except TypeError:
+                    curve.setDownsampling(None, True, mode='peak')
+                curve.setClipToView(True)
+                curve.setSkipFiniteCheck(True)
+                curves.append(curve)
             for h in sp['hline']:
                 c = QColor(h['color'])
                 c.setAlpha(int(h['alpha'] * 255))
                 pen = mkPen(c, width=h['width'], style=pen_style[h['style']])
                 ln = pg.InfiniteLine(pos=h['y'], angle=0, pen=pen)
                 pi.addItem(ln)
+                hlines.append(ln)
                 if legend is not None and h['label']:
                     # InfiniteLine 无 opts 属性，旧版 pyqtgraph 的图例
                     # 绘制（ItemSample.paint）会直接崩溃并拖垮整棵控件树
@@ -832,13 +867,22 @@ class ChartPanel(QWidget):
             else:
                 pi.enableAutoRange(x=True)
                 # enableAutoRange 是「打开开关+延迟生效」，实际重算要等下次
-                # 重绘；强制立即重算，保证切回整范围/首帧时视图即已正确
-                pi.vb.updateAutoRange()
+                # 重绘；仅用户显式操作（切回整范围等）时强制立即重算，
+                # 实时提交路径交由 pyqtgraph 延迟到重绘帧自动算，避免
+                # 每次采集同步 O(N) 范围计算拖慢刷新
+                if force_autorange:
+                    pi.vb.updateAutoRange()
             if sp['ylim']:
                 pi.setYRange(*sp['ylim'], padding=0)
             else:
                 pi.enableAutoRange(y=True)
-                pi.vb.updateAutoRange()
+                if force_autorange:
+                    pi.vb.updateAutoRange()
+            cache.append({'curves': curves, 'hlines': hlines,
+                          'n_plot': len(curves), 'n_hline': len(hlines),
+                          'legend': legend_on,
+                          'xlim': bool(sp['xlim']), 'ylim': bool(sp['ylim'])})
+        self._pg_cache = cache
         # 重绘完成：若鼠标正悬停在图表上，按记录位置恢复悬停（数值已更新）
         self._restore_pg_hover()
         # 拟合开启时在最新数据上重画拟合曲线（实时采集自动跟随更新）
@@ -846,6 +890,73 @@ class ChartPanel(QWidget):
         # 滚动窗口模式：覆盖提交时恢复的自动量程，把 x 轴锁定为最近 N 秒
         # （传当次 spec 而非 _last：end() 在提交后才写 _last，用 _last 会落后一拍）
         self._update_view_window(spec)
+
+    def _pg_incremental_ok(self, spec):
+        """增量复用判断：结构与最近一次全量重建一致时返回 True。
+
+        结构 = 子图数、每子图曲线/参考线数量、图例开关、显式轴范围开关。
+        任何一项变化（模块切换曲线、单位切换增删参考线、拟合开关等）
+        都会导致不匹配，退回全量重建。
+        """
+        c = self._pg_cache
+        if c is None or len(c) != len(spec):
+            return False
+        for sp, e in zip(spec, c):
+            if len(sp['plot']) != e['n_plot'] or len(sp['hline']) != e['n_hline']:
+                return False
+            if bool(sp['legend'] and any(
+                    s['label'] for s in sp['plot'] + sp['hline'])) != e['legend']:
+                return False
+            if bool(sp['xlim']) != e['xlim'] or bool(sp['ylim']) != e['ylim']:
+                return False
+        return True
+
+    def _incremental_pg(self, spec):
+        """增量更新：复用缓存中的曲线/参考线控件，只 setData 刷数据。
+
+        调用前已用 _pg_incremental_ok 确认结构与缓存一致。曲线/参考线
+        setData / setValue / setPen 都不重建对象，图例、轴、标题为廉价
+        操作每帧照刷，悬停元素因不执行 pi.clear() 而原地保留不抖动。
+        """
+        import pyqtgraph as pg
+        from pyqtgraph import mkPen
+        pen_style = {'dash': Qt.PenStyle.DashLine,
+                     'dot': Qt.PenStyle.DotLine,
+                     'solid': Qt.PenStyle.SolidLine}
+        for pi, sp, e in zip(self._pg_plots, spec, self._pg_cache):
+            for curve, s in zip(e['curves'], sp['plot']):
+                curve.setData(s['x'], s['y'])
+                curve.setPen(mkPen(s['color'], width=s['width']))
+            for ln, h in zip(e['hlines'], sp['hline']):
+                c = QColor(h['color'])
+                c.setAlpha(int(h['alpha'] * 255))
+                ln.setValue(h['y'])
+                ln.setPen(mkPen(c, width=h['width'], style=pen_style[h['style']]))
+            if e['legend']:
+                legend = pi.legend if pi.legend is not None else pi.addLegend()
+                legend.clear()
+                for curve, s in zip(e['curves'], sp['plot']):
+                    legend.addItem(curve, s['label'])
+                for h in sp['hline']:
+                    if h['label']:
+                        c = QColor(h['color'])
+                        c.setAlpha(int(h['alpha'] * 255))
+                        legend.addItem(pg.PlotDataItem(pen=mkPen(
+                            c, width=h['width'],
+                            style=pen_style[h['style']])), h['label'])
+            pi.setLabel('bottom', sp['xlabel'])
+            pi.setLabel('left', sp['ylabel'])
+            pi.setTitle(sp['title'])
+            # 轴范围与全量路径一致：显式范围跟随模块设定，自动范围保持开启
+            # （增量路径不强制同步重算，交由 pyqtgraph 在 setData 后按需扩展）
+            if sp['xlim']:
+                pi.setXRange(*sp['xlim'], padding=0)
+            else:
+                pi.enableAutoRange(x=True)
+            if sp['ylim']:
+                pi.setYRange(*sp['ylim'], padding=0)
+            else:
+                pi.enableAutoRange(y=True)
 
     # ---------------- 引擎 / 主题 / 清空 ----------------
     def _rebuild_widget(self):
@@ -856,6 +967,8 @@ class ChartPanel(QWidget):
         # 拟合文本/散点随旧场景销毁，引用作废（引擎切换后重建）
         self._pg_fit_texts = []
         self._pg_fit_scatter = []
+        # 增量缓存指向旧场景控件，随控件一起作废
+        self._pg_cache = None
         if old is not None:
             self._lay.removeWidget(old)
             old.setParent(None)
@@ -898,6 +1011,8 @@ class ChartPanel(QWidget):
             self._hide_pg_hover()
             self._remove_pg_fit_texts()
             self._pg_fit_scatter = []   # 散点随 pi.clear() 移除，仅清引用
+            # 增量缓存指向被清空的控件，作废（下次提交走全量重建重建缓存）
+            self._pg_cache = None
             # 新数据到来散点恢复显示（清除状态不跨数据段）
             self._scatter_hidden = False
             self._reset_clear_confirm()
@@ -1014,8 +1129,9 @@ class ChartPanel(QWidget):
             return
         if self._win_full_range:
             # 回到整范围：重放最近一次事务，恢复模块设定的 xlim / 自动量程
+            # （用户显式操作，强制立即重算量程，视图即时正确）
             if self._last is not None:
-                self._commit(self._last)
+                self._commit(self._last, force_autorange=True)
             else:
                 for pi in self._pg_plots:
                     pi.enableAutoRange(x=True)
@@ -1079,6 +1195,9 @@ class ChartPanel(QWidget):
     def _on_fit_type_changed(self, index):
         """拟合方式切换：更新注解，重放最近一次事务叠加/移除拟合曲线。"""
         self._fit_mode = index    # 0=无拟合，1~3=多项式次数，4=对数，5=幂函数
+        # 拟合状态属于结构：开关变化会使缓存中的结构签名失配，作废缓存
+        # 强制下次提交走全量重建（顺带清掉旧拟合曲线/散点的场景残留）
+        self._pg_cache = None
         # 重新选择拟合方式 → 散点恢复显示（清除状态只针对上一次选择）
         self._scatter_hidden = False
         self._update_fit_hint()
