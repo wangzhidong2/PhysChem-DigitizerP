@@ -41,7 +41,7 @@ from PySide6.QtGui import (
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
     SwitchButton, DoubleSpinBox,
-    LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
+    LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
     ExpandGroupSettingCard, FluentIcon, RadioButton, SettingCard,
@@ -3640,6 +3640,170 @@ class CalibrationDialog(QDialog):
             adc_val = float(widget['adc'].text())
             points.append((ph_val, adc_val))
         return points
+
+
+class CalibrationMessageBox(MessageBoxBase):
+    """校准参数编辑弹窗 — 基于 Fluent-Widgets 原生 MessageBoxBase。
+
+    WinUI3 掩码弹窗：居中浮窗 + 阴影 + 确定/取消按钮，样式随 Fluent 主题，
+    与主程序其他 MessageBox 视觉一致。支持单点 / 两点 / 三点校准：
+    模式单选实时切换输入行，确定前做 pH→ADC 输入校验。
+    API 与旧 CalibrationDialog 兼容（exec 返回 QDialog.Accepted = 1）。
+    """
+
+    def __init__(self, calibration_points, parent=None):
+        super().__init__(parent)
+        points = list(calibration_points) if calibration_points else []
+        self.calibration_points = points
+        self.calibration_mode = len(points) if points else 2
+        self.point_widgets = []
+
+        self.yesButton.setText("确定")
+        self.cancelButton.setText("取消")
+        # 只固定宽度：竖向高度交由表单内容自适应（MessageBoxBase 未固定尺寸，
+        # 若不限宽会随掩码撑满整个父窗口）
+        self.widget.setFixedWidth(520)
+
+        self._build_form()
+
+    def _build_form(self):
+        view = self.viewLayout
+        view.addWidget(SubtitleLabel("编辑校准参数"))
+
+        info = CaptionLabel("请选择校准模式并输入标准缓冲液 pH 值及其对应的 ADC 原始值：")
+        info.setWordWrap(True)
+        view.addWidget(info)
+
+        # 校准模式单选
+        modes = [
+            (1, "单点校准", "仅一个参考点，使用已知理论斜率"),
+            (2, "两点校准", "线性拟合，适合大多数常规测量"),
+            (3, "三点校准", "二次拟合，精度最高，适合精确实验"),
+        ]
+        self.mode_buttons = []
+        for count, label, desc in modes:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            rb = RadioButton(label)
+            rb.setProperty("mode", count)
+            rb.setToolTip(desc)
+            rb.setChecked(count == self.calibration_mode)
+            rb.toggled.connect(self._on_mode_toggled)
+            row.addWidget(rb)
+            row.addWidget(CaptionLabel(desc), 1)
+            view.addLayout(row)
+            self.mode_buttons.append(rb)
+
+        # 校准点输入行容器（模式切换时重建）
+        self.points_inner = QVBoxLayout()
+        self.points_inner.setSpacing(8)
+        view.addLayout(self.points_inner)
+        self._create_point_inputs()
+
+        # 校验失败提示（红色，亮/暗主题均可见）
+        self._error_label = CaptionLabel("")
+        self._error_label.setWordWrap(True)
+        self._error_label.setStyleSheet("color: #e5484d;")
+        self._error_label.hide()
+        view.addWidget(self._error_label)
+
+    def _create_point_inputs(self):
+        """重建校准点输入行：按当前模式动态生成，优先回填已保存的校准点。"""
+        # 清空旧行
+        while self.points_inner.count():
+            item = self.points_inner.takeAt(self.points_inner.count() - 1)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+            elif item.layout() is not None:
+                lay = item.layout()
+                while lay.count():
+                    sub = lay.takeAt(lay.count() - 1)
+                    if sub.widget() is not None:
+                        sub.widget().deleteLater()
+
+        self.point_widgets.clear()
+        point_names = {
+            1: ["参考缓冲液 (点 1)"],
+            2: ["低 pH 缓冲液 (点 1)", "高 pH 缓冲液 (点 2)"],
+            3: ["酸性缓冲液 (点 1)", "中性缓冲液 (点 2)", "碱性缓冲液 (点 3)"],
+        }[self.calibration_mode]
+        defaults = {
+            1: [(7.00, 2281)],
+            2: [(4.00, 2555), (9.18, 2030)],
+            3: [(4.00, 2555), (6.86, 2281), (9.18, 2030)],
+        }[self.calibration_mode]
+
+        for i, name in enumerate(point_names):
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            row.addWidget(BodyLabel(name), 1)
+            row.addSpacing(4)
+
+            row.addWidget(BodyLabel("pH"))
+            ph_input = LineEdit()
+            saved = self.calibration_points[i] if i < len(self.calibration_points) else None
+            ph_input.setText(f"{saved[0]:g}" if saved else f"{defaults[i][0]:g}")
+            ph_input.setFixedWidth(72)
+            ph_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+            row.addWidget(ph_input)
+
+            row.addWidget(CaptionLabel("→"))
+
+            row.addWidget(BodyLabel("ADC"))
+            adc_input = LineEdit()
+            adc_input.setText(f"{saved[1]:g}" if saved else f"{defaults[i][1]:g}")
+            adc_input.setFixedWidth(72)
+            adc_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+            row.addWidget(adc_input)
+
+            self.points_inner.addLayout(row)
+            self.point_widgets.append({'row': row, 'ph': ph_input, 'adc': adc_input})
+
+    def _on_mode_toggled(self):
+        rb = self.sender()
+        if rb is not None and rb.isChecked():
+            self.calibration_mode = rb.property("mode")
+            self._create_point_inputs()
+            self._error_label.hide()
+
+    def validate(self):
+        """确定前校验输入：pH 须为 0~14 数值、ADC 须为数值；非法时提示并阻止关闭。"""
+        points = []
+        for i, w in enumerate(self.point_widgets, 1):
+            ph_text = w['ph'].text().strip()
+            adc_text = w['adc'].text().strip()
+            if not ph_text or not adc_text:
+                self._fail(f"第 {i} 点的 pH 或 ADC 值为空")
+                return False
+            try:
+                ph_val = float(ph_text)
+            except ValueError:
+                self._fail(f"第 {i} 点的 pH 值「{ph_text}」不是有效数字")
+                return False
+            try:
+                adc_val = float(adc_text)
+            except ValueError:
+                self._fail(f"第 {i} 点的 ADC 值「{adc_text}」不是有效数字")
+                return False
+            if not (0.0 <= ph_val <= 14.0):
+                self._fail(f"第 {i} 点的 pH 值须在 0~14 之间")
+                return False
+            points.append((ph_val, adc_val))
+        self._parsed_points = points
+        self._error_label.hide()
+        return True
+
+    def _fail(self, msg):
+        self._error_label.setText(f"输入有误：{msg}")
+        self._error_label.show()
+
+    def get_calibration_mode(self):
+        return self.calibration_mode
+
+    def get_calibration_points(self):
+        """返回校验无误的校准点（未点确定时返回初始值）。"""
+        return list(getattr(self, '_parsed_points', self.calibration_points))
 
 
 class SampleRateDialog(QDialog):
