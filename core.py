@@ -40,6 +40,7 @@ from PySide6.QtGui import (
 
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
+    SwitchButton, DoubleSpinBox,
     LineEdit, TextEdit, Dialog, MessageBox, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
@@ -433,11 +434,42 @@ class ChartPanel(QWidget):
         self._pg_hover_vline = None   # pyqtgraph 悬停指示线（懒创建）
         self._pg_hover_label = None   # pyqtgraph 悬停数据标签（懒创建）
         self._pg_hover_view = None    # 最近悬停位置 (子图索引, 视图x)，重绘后据此恢复
+        # 视图窗口控制 + 曲线拟合 + 离群点剔除（仅 pyqtgraph）：紧凑分析面板
+        self._analysis_panel = None   # 面板控件（懒创建，模块嵌入图表卡左侧栏）
+        self._win_switch = None       # SwitchButton「显示整个范围」
+        self._win_spin = None         # DoubleSpinBox 窗口秒数（支持小数）
+        self._win_full_range = True   # True=整个范围（默认），False=最近 N 秒
+        self._win_seconds = 5.0       # 滚动窗口长度（秒）
+        self._fit_combo = None        # ComboBox 拟合方式（多项式/对数/幂函数）
+        self._fit_mode = 0            # 0=不拟合，1~3=多项式次数，4=对数，5=幂函数
+        self._fit_hint = None         # CaptionLabel 拟合方式注解（随选择动态更新）
+        self._pg_fit_texts = []       # 拟合方程文本（TextItem 锚定视口左上角，
+                                      # pi.clear() 不会移除，需手动管理生命周期）
+        self._pg_fit_scatter = []     # 拟合时原始数据散点层（PlotDataItem 列表，
+                                      # 随 pi.clear() 移除，仅需清引用防悬挂）
+        self._scatter_hidden = False  # True=散点已被用户清除（重新选拟合方式恢复）
+        self._clear_btn = None        # 「清除离散点」按钮（二次点击确认）
+        self._clear_timer = None      # 确认态超时复位定时器（防悬置）
+        # 离群点剔除（仅 pyqtgraph）：残差比例法 + 多级撤销栈。
+        # _outlier_masks：每子图一个 bool 掩码（True=保留）或 None（全部保留），
+        # 长度等于该子图第一条曲线在「剔除那一刻」的数据长度；之后新追加的
+        # 数据点不在掩码范围内，默认保留。_outlier_stack 记录每次剔除前的掩码，
+        # 供多级撤销（退到底即全部恢复）。
+        self._outlier_spin = None     # 比例输入（0.5%~50%，默认 5%）
+        self._outlier_btn = None      # 「剔除离群点」按钮
+        self._outlier_undo_btn = None  # 「撤销」按钮
+        self._outlier_label = None    # 已移除点数计数
+        self._outlier_masks = None    # 每子图掩码列表（None=未启用剔除）
+        self._outlier_stack = []      # 撤销栈：每项为上一步的多子图掩码列表
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
         self._widget = None     # 当前引擎实际控件
         self._pg_plots = []     # pyqtgraph: PlotItem 列表
+        # 增量更新缓存：记录最近一次全量重建时各子图的 PlotDataItem /
+        # InfiniteLine 与结构签名；实时流式路径结构未变时只 setData 复用，
+        # 避免每 100ms 全量 pi.clear()+重建控件（pyqtgraph 实时绘制卡顿主因）
+        self._pg_cache = None
         self._build_widget()
 
     # ---------------- 引擎控件构建 ----------------
@@ -466,6 +498,9 @@ class ChartPanel(QWidget):
         # （_pg_hover_view 保留：坐标语义一致，数据重放后据此恢复悬停）
         self._pg_hover_vline = None
         self._pg_hover_label = None
+        # 拟合方程文本同理：随旧视口销毁，引用作废
+        self._pg_fit_texts = []
+        self._pg_fit_scatter = []
         self._widget = pg.GraphicsLayoutWidget()
         self._pg_plots = []
         for i in range(self._n_plots):
@@ -490,6 +525,9 @@ class ChartPanel(QWidget):
                 ax = pi.getAxis(loc)
                 ax.setPen(mkPen(fg, width=1))
                 ax.setTextPen(fg)
+        # 拟合开启时按新前景色重画方程文本（同引擎不重建控件，需手动刷新）
+        if self._fit_mode > 0 and self._last is not None:
+            self._draw_pg_fit(self._last)
         self._restore_pg_hover()
 
     # ---------------- pyqtgraph 悬停交互 ----------------
@@ -500,7 +538,7 @@ class ChartPanel(QWidget):
         时间序列（横坐标递增）用二分定位，长序列下鼠标移动不掉帧；
         横坐标非递增时退回线性扫描保证结果正确。
         """
-        if not xs:
+        if len(xs) == 0:
             return None
         if len(xs) > 64 and xs[0] <= xs[-1]:
             k = bisect.bisect_left(xs, x)
@@ -578,13 +616,17 @@ class ChartPanel(QWidget):
         self._pg_hover_view = None
         self._hide_pg_hover()
 
-    def _update_pg_hover(self, index, mouse_x):
-        """在 index 子图上按视图横坐标 mouse_x 定位最近数据点并更新悬停元素。
+    def _update_pg_hover(self, index, mouse_x, spec=None):
+        """在 index 子图上按视图横坐标鼠标定位最近数据点并更新悬停元素。
 
-        鼠标移动与数据重绘后的恢复共用本方法。
+        鼠标移动与数据重绘后的恢复共用本方法。spec 缺省用剔除掩码作用
+        后的可见数据，保证悬停读值与图上显示的曲线一致（被剔除的离群
+        点不参与定位）。
         """
+        if spec is None:
+            spec = self._visible_spec(self._last)
         pi = self._pg_plots[index]
-        sp = self._last[index]
+        sp = spec[index]
         # 每条曲线取横坐标最接近鼠标的数据点；nearest 为全图最近点
         rows, nearest = [], None
         for s in sp['plot']:
@@ -634,7 +676,8 @@ class ChartPanel(QWidget):
             self._pg_hover_view = None
             return
         try:
-            self._update_pg_hover(index, mouse_x)
+            self._update_pg_hover(index, mouse_x,
+                                  self._visible_spec(self._last))
         except Exception:
             # 恢复失败（元素失效等）：丢弃引用，下次鼠标移动时重建
             self._discard_pg_hover()
@@ -724,11 +767,18 @@ class ChartPanel(QWidget):
         self._spec = None
 
     # ---------------- 渲染实现 ----------------
-    def _commit(self, spec):
+    def _commit(self, spec, force_autorange=False):
+        """渲染提交的事务。
+
+        force_autorange（仅 pyqtgraph）：True 时立即同步重算自动量程
+        （用户显式操作如切回整范围、首次渲染时用）；实时提交路径保持
+        False，交给 pyqtgraph 的延迟 autoRange（合并到重绘帧，避免每次
+        采集都同步 O(N) 计算拖慢刷新）。
+        """
         if self._engine is None:      # 占位模式：仅记录事务，不渲染
             return
         if self._engine == 'pyqtgraph':
-            self._commit_pg(spec)
+            self._commit_pg(spec, force_autorange=force_autorange)
         else:
             self._commit_mpl(spec)
 
@@ -767,35 +817,62 @@ class ChartPanel(QWidget):
         self.figure.tight_layout()
         self._widget.draw()
 
-    def _commit_pg(self, spec):
+    def _commit_pg(self, spec, force_autorange=False):
         import pyqtgraph as pg
         from pyqtgraph import mkPen
+        # 离群点剔除掩码：渲染前把第一曲线按掩码过滤（只影响显示结果，
+        # _last 保持原始数据，撤销/引擎重放都从这里重新过滤）
+        spec = self._visible_spec(spec)
+        # 实时流式路径：结构未变（曲线/参考线数量、图例、轴模式一致）时
+        # 只 setData 复用已有控件，避开每帧全量 pi.clear()+重建 PlotDataItem
+        # 的控件抖动——pyqtgraph 大流量实时绘制卡顿的主因之一。拟合开启时
+        # 散点/拟合曲线每帧重建，不走增量。
+        if (not force_autorange and self._fit_mode <= 0
+                and self._pg_incremental_ok(spec)):
+            self._incremental_pg(spec)
+            self._restore_pg_hover()
+            self._draw_pg_fit(spec)      # 拟合关闭时为快速空操作
+            self._update_view_window(spec)
+            return
         # 注意：pi.clear() 会把悬停元素移出场景，但不销毁——重绘完成后由
         # _restore_pg_hover() 按记录位置重新加回并定位。高频实时更新下
         # 悬停标签持续显示且数值跟随最新数据，不会随重绘闪烁消失。
         pen_style = {'dash': Qt.PenStyle.DashLine,
                      'dot': Qt.PenStyle.DotLine,
                      'solid': Qt.PenStyle.SolidLine}
+        cache = []
         for pi, sp in zip(self._pg_plots, spec):
             pi.clear()
             # 显式清空上一轮图例条目：旧版 pyqtgraph 的 pi.clear() 不清图例，
             # 每次重绘（含实时数据更新）都会累积条目直至撑爆图表
             if pi.legend is not None:
                 pi.legend.clear()
-            legend = None
-            if sp['legend'] and any(
-                    s['label'] for s in sp['plot'] + sp['hline']):
-                legend = pi.addLegend()
+            legend_on = bool(sp['legend'] and any(
+                s['label'] for s in sp['plot'] + sp['hline']))
+            legend = pi.addLegend() if legend_on else None
+            curves, hlines = [], []
             for s in sp['plot']:
                 pen = mkPen(s['color'], width=s['width'])
-                pi.plot(s['x'], s['y'], pen=pen,
-                        name=s['label'] if sp['legend'] else None)
+                curve = pi.plot(s['x'], s['y'], pen=pen,
+                                name=s['label'] if sp['legend'] else None)
+                # 大数据实时优化：峰值降采样（视图内保留峰值形状）+ 只画
+                # 可见区域 + 跳过有限性检查。pyqtgraph 自动选择采样率，
+                # 点少时退化为全量绘制，不影响数据与拟合/悬停逻辑。
+                # 0.14 把 mode 参数改名为 method，跨版本兼容处理
+                try:
+                    curve.setDownsampling(None, True, method='peak')
+                except TypeError:
+                    curve.setDownsampling(None, True, mode='peak')
+                curve.setClipToView(True)
+                curve.setSkipFiniteCheck(True)
+                curves.append(curve)
             for h in sp['hline']:
                 c = QColor(h['color'])
                 c.setAlpha(int(h['alpha'] * 255))
                 pen = mkPen(c, width=h['width'], style=pen_style[h['style']])
                 ln = pg.InfiniteLine(pos=h['y'], angle=0, pen=pen)
                 pi.addItem(ln)
+                hlines.append(ln)
                 if legend is not None and h['label']:
                     # InfiniteLine 无 opts 属性，旧版 pyqtgraph 的图例
                     # 绘制（ItemSample.paint）会直接崩溃并拖垮整棵控件树
@@ -808,12 +885,97 @@ class ChartPanel(QWidget):
                 pi.setXRange(*sp['xlim'], padding=0)
             else:
                 pi.enableAutoRange(x=True)
+                # enableAutoRange 是「打开开关+延迟生效」，实际重算要等下次
+                # 重绘；仅用户显式操作（切回整范围等）时强制立即重算，
+                # 实时提交路径交由 pyqtgraph 延迟到重绘帧自动算，避免
+                # 每次采集同步 O(N) 范围计算拖慢刷新
+                if force_autorange:
+                    pi.vb.updateAutoRange()
             if sp['ylim']:
                 pi.setYRange(*sp['ylim'], padding=0)
             else:
                 pi.enableAutoRange(y=True)
+                if force_autorange:
+                    pi.vb.updateAutoRange()
+            cache.append({'curves': curves, 'hlines': hlines,
+                          'n_plot': len(curves), 'n_hline': len(hlines),
+                          'legend': legend_on,
+                          'xlim': bool(sp['xlim']), 'ylim': bool(sp['ylim'])})
+        self._pg_cache = cache
         # 重绘完成：若鼠标正悬停在图表上，按记录位置恢复悬停（数值已更新）
         self._restore_pg_hover()
+        # 拟合开启时在最新数据上重画拟合曲线（实时采集自动跟随更新）
+        self._draw_pg_fit(spec)
+        # 滚动窗口模式：覆盖提交时恢复的自动量程，把 x 轴锁定为最近 N 秒
+        # （传当次 spec 而非 _last：end() 在提交后才写 _last，用 _last 会落后一拍）
+        self._update_view_window(spec)
+
+    def _pg_incremental_ok(self, spec):
+        """增量复用判断：结构与最近一次全量重建一致时返回 True。
+
+        结构 = 子图数、每子图曲线/参考线数量、图例开关、显式轴范围开关。
+        任何一项变化（模块切换曲线、单位切换增删参考线、拟合开关等）
+        都会导致不匹配，退回全量重建。
+        """
+        c = self._pg_cache
+        if c is None or len(c) != len(spec):
+            return False
+        for sp, e in zip(spec, c):
+            if len(sp['plot']) != e['n_plot'] or len(sp['hline']) != e['n_hline']:
+                return False
+            if bool(sp['legend'] and any(
+                    s['label'] for s in sp['plot'] + sp['hline'])) != e['legend']:
+                return False
+            if bool(sp['xlim']) != e['xlim'] or bool(sp['ylim']) != e['ylim']:
+                return False
+        return True
+
+    def _incremental_pg(self, spec):
+        """增量更新：复用缓存中的曲线/参考线控件，只 setData 刷数据。
+
+        调用前已用 _pg_incremental_ok 确认结构与缓存一致。曲线/参考线
+        setData / setValue / setPen 都不重建对象，图例、轴、标题为廉价
+        操作每帧照刷，悬停元素因不执行 pi.clear() 而原地保留不抖动。
+        """
+        import pyqtgraph as pg
+        from pyqtgraph import mkPen
+        pen_style = {'dash': Qt.PenStyle.DashLine,
+                     'dot': Qt.PenStyle.DotLine,
+                     'solid': Qt.PenStyle.SolidLine}
+        for pi, sp, e in zip(self._pg_plots, spec, self._pg_cache):
+            for curve, s in zip(e['curves'], sp['plot']):
+                curve.setData(s['x'], s['y'])
+                curve.setPen(mkPen(s['color'], width=s['width']))
+            for ln, h in zip(e['hlines'], sp['hline']):
+                c = QColor(h['color'])
+                c.setAlpha(int(h['alpha'] * 255))
+                ln.setValue(h['y'])
+                ln.setPen(mkPen(c, width=h['width'], style=pen_style[h['style']]))
+            if e['legend']:
+                legend = pi.legend if pi.legend is not None else pi.addLegend()
+                legend.clear()
+                for curve, s in zip(e['curves'], sp['plot']):
+                    legend.addItem(curve, s['label'])
+                for h in sp['hline']:
+                    if h['label']:
+                        c = QColor(h['color'])
+                        c.setAlpha(int(h['alpha'] * 255))
+                        legend.addItem(pg.PlotDataItem(pen=mkPen(
+                            c, width=h['width'],
+                            style=pen_style[h['style']])), h['label'])
+            pi.setLabel('bottom', sp['xlabel'])
+            pi.setLabel('left', sp['ylabel'])
+            pi.setTitle(sp['title'])
+            # 轴范围与全量路径一致：显式范围跟随模块设定，自动范围保持开启
+            # （增量路径不强制同步重算，交由 pyqtgraph 在 setData 后按需扩展）
+            if sp['xlim']:
+                pi.setXRange(*sp['xlim'], padding=0)
+            else:
+                pi.enableAutoRange(x=True)
+            if sp['ylim']:
+                pi.setYRange(*sp['ylim'], padding=0)
+            else:
+                pi.enableAutoRange(y=True)
 
     # ---------------- 引擎 / 主题 / 清空 ----------------
     def _rebuild_widget(self):
@@ -821,6 +983,11 @@ class ChartPanel(QWidget):
         old = self._widget
         self._widget = None
         self._pg_plots = []
+        # 拟合文本/散点随旧场景销毁，引用作废（引擎切换后重建）
+        self._pg_fit_texts = []
+        self._pg_fit_scatter = []
+        # 增量缓存指向旧场景控件，随控件一起作废
+        self._pg_cache = None
         if old is not None:
             self._lay.removeWidget(old)
             old.setParent(None)
@@ -838,6 +1005,7 @@ class ChartPanel(QWidget):
             return
         self._engine = engine
         self._rebuild_widget()
+        self._sync_view_window_visibility()
 
     def apply_chart_theme(self, dark):
         """亮/暗主题切换（由各模块 apply_theme 调用）。"""
@@ -860,11 +1028,626 @@ class ChartPanel(QWidget):
             # 清数据同时清除悬停记录，避免恢复逻辑定位到已清空的图
             self._pg_hover_view = None
             self._hide_pg_hover()
+            self._remove_pg_fit_texts()
+            self._pg_fit_scatter = []   # 散点随 pi.clear() 移除，仅清引用
+            # 增量缓存指向被清空的控件，作废（下次提交走全量重建重建缓存）
+            self._pg_cache = None
+            # 新数据到来散点恢复显示（清除状态不跨数据段）
+            self._scatter_hidden = False
+            # 离群点剔除状态一并重置（掩码/撤销栈/计数）
+            self._reset_outlier_state()
+            self._reset_clear_confirm()
             for pi in self._pg_plots:
                 pi.clear()
         else:
             self.figure.clear()
             self._widget.draw()
+
+    # ------------ 视图窗口控制 + 曲线拟合 + 离群点剔除（仅 pyqtgraph） ------------
+    def get_analysis_panel(self):
+        """返回紧凑纵向的图表分析面板（视图窗口 + 拟合 + 离群点剔除）。
+
+        模块把该面板放进图表卡左侧栏（数据记录下方）即可；仅 pyqtgraph
+        引擎下可见可用，matplotlib / 占位模式下自动隐藏（隐藏后不占布局
+        空间）。懒创建：同一 ChartPanel 多次调用返回同一控件实例。
+        """
+        if self._analysis_panel is None:
+            self._build_view_window_widget()
+        return self._analysis_panel
+
+    def _build_view_window_widget(self):
+        """构建紧凑纵向的图表分析面板：视图窗口 + 曲线拟合 + 离群点剔除。
+
+        面向图表卡左侧栏（窄列）排布：每个控件独占一行、按钮全宽紧凑，
+        拟合注解用 CaptionLabel 自动换行，说明该方式的公式与数据要求
+        （如定义域），用户无需查文档即可选对拟合类型。
+
+        SwitchButton 的 on/off 文字必须用 setOnText/setOffText 指定中文：
+        构造参数传入的文字会在 setChecked 时被默认的英文 On/Off 覆盖
+        （无中文翻译器环境下）。
+        """
+        box = QWidget()
+        box.setMinimumWidth(180)
+        vlay = QVBoxLayout(box)
+        vlay.setContentsMargins(0, 0, 0, 0)
+        vlay.setSpacing(8)
+
+        self._win_switch = SwitchButton()
+        self._win_switch.setOnText("显示整个范围")   # 勾选=显示全部数据
+        self._win_switch.setOffText("滚动窗口")       # 取消=最近 N 秒
+        self._win_switch.setChecked(True)          # 默认勾选＝现有自动量程行为
+        self._win_switch.checkedChanged.connect(self._on_win_switch_changed)
+
+        self._win_spin = DoubleSpinBox()
+        self._win_spin.setRange(0.1, 10800.0)      # 0.1 秒 ~ 3 小时，支持小数
+        self._win_spin.setDecimals(1)
+        self._win_spin.setValue(self._win_seconds)
+        self._win_spin.setSuffix(" 秒")
+        self._win_spin.setMinimumWidth(96)
+        self._win_spin.setEnabled(False)            # 整范围模式下输入框不可用
+        self._win_spin.valueChanged.connect(self._on_win_seconds_changed)
+
+        self._fit_combo = ComboBox()
+        self._fit_combo.addItems(["无拟合", "线性拟合", "二次拟合", "三次拟合",
+                                  "对数拟合", "幂函数拟合"])
+        self._fit_combo.setCurrentIndex(0)
+        self._fit_combo.setMinimumWidth(120)
+        self._fit_combo.currentIndexChanged.connect(self._on_fit_type_changed)
+
+        row_win = QWidget()
+        lay_win = QHBoxLayout(row_win)
+        lay_win.setContentsMargins(0, 0, 0, 0)
+        lay_win.setSpacing(8)
+        lay_win.addWidget(BodyLabel("最近"))
+        lay_win.addWidget(self._win_spin)
+        lay_win.addStretch(1)
+
+        row_fit = QWidget()
+        lay_fit = QHBoxLayout(row_fit)
+        lay_fit.setContentsMargins(0, 0, 0, 0)
+        lay_fit.setSpacing(8)
+        lay_fit.addWidget(BodyLabel("拟合"))
+        lay_fit.addWidget(self._fit_combo)
+        lay_fit.addStretch(1)
+
+        # 清除离散点：二次点击确认，防止误触删掉拟合时的原始散点。
+        # 第一次点击进入确认态（文字变为「再次点击确认清除」+ 红色强调），
+        # 3 秒内再次点击才真正清除；超时自动复位。
+        self._clear_btn = PushButton("清除离散点")
+        self._clear_btn.setFixedHeight(32)
+        self._clear_btn.clicked.connect(self._on_clear_btn_clicked)
+        self._clear_btn.setEnabled(False)   # 拟合未开启时不可用
+        self._clear_timer = QTimer(self)
+        self._clear_timer.setSingleShot(True)
+        self._clear_timer.setInterval(3000)
+        self._clear_timer.timeout.connect(self._reset_clear_confirm)
+
+        # 离群点剔除：残差比例法。比例输入 + 剔除按钮 + 多级撤销 + 计数。
+        # 仅拟合开启时可用（需要拟合曲线算残差）；剔除对显示曲线/散点/拟合/
+        # R²/悬停/视图范围生效，不影响模块原始数据（见 _visible_spec）。
+        self._outlier_spin = DoubleSpinBox()
+        self._outlier_spin.setRange(0.5, 50.0)
+        self._outlier_spin.setDecimals(1)
+        self._outlier_spin.setValue(5.0)
+        self._outlier_spin.setSuffix(" %")
+        self._outlier_spin.setMinimumWidth(80)
+        self._outlier_spin.setEnabled(False)
+        self._outlier_spin.valueChanged.connect(self._sync_outlier_btn_state)
+
+        self._outlier_btn = PushButton("剔除离群点")
+        self._outlier_btn.setFixedHeight(32)
+        self._outlier_btn.setEnabled(False)
+        self._outlier_btn.clicked.connect(self._on_outlier_remove_clicked)
+
+        self._outlier_undo_btn = PushButton("撤销")
+        self._outlier_undo_btn.setFixedHeight(32)
+        self._outlier_undo_btn.setEnabled(False)
+        self._outlier_undo_btn.clicked.connect(self._on_outlier_undo_clicked)
+
+        self._outlier_label = CaptionLabel("已移除 0 点")
+        self._outlier_label.setFixedHeight(28)
+
+        row_pct = QWidget()
+        lay_pct = QHBoxLayout(row_pct)
+        lay_pct.setContentsMargins(0, 0, 0, 0)
+        lay_pct.setSpacing(8)
+        lay_pct.addWidget(BodyLabel("剔除比例"))
+        lay_pct.addWidget(self._outlier_spin)
+        lay_pct.addStretch(1)
+
+        row_undo = QWidget()
+        lay_undo = QHBoxLayout(row_undo)
+        lay_undo.setContentsMargins(0, 0, 0, 0)
+        lay_undo.setSpacing(8)
+        lay_undo.addWidget(self._outlier_undo_btn)
+        lay_undo.addWidget(self._outlier_label)
+        lay_undo.addStretch(1)
+
+        # 拟合方式注解：次要说明文字，CaptionLabel 主题自适应（不设硬编码色）
+        self._fit_hint = CaptionLabel()
+        self._fit_hint.setWordWrap(True)
+        self._update_fit_hint()
+
+        vlay.addWidget(self._win_switch)
+        vlay.addWidget(row_win)
+        vlay.addWidget(row_fit)
+        vlay.addWidget(self._clear_btn)
+        vlay.addWidget(row_pct)
+        vlay.addWidget(self._outlier_btn)
+        vlay.addWidget(row_undo)
+        vlay.addWidget(self._fit_hint)
+
+        self._analysis_panel = box
+        self._sync_view_window_visibility()
+
+    def _on_win_switch_changed(self, checked):
+        """勾选=显示整个范围（恢复自动量程/模块 xlim）；取消勾选=启用滚动窗口。"""
+        self._win_full_range = checked
+        if self._win_spin is not None:
+            self._win_spin.setEnabled(not checked)
+        self._apply_view_window()
+
+    def _on_win_seconds_changed(self, value):
+        """窗口秒数变化：滚动窗口模式下即时生效。"""
+        self._win_seconds = value
+        if not self._win_full_range:
+            self._update_view_window()
+
+    def _apply_view_window(self):
+        """按开关状态应用视图范围（仅 pyqtgraph 生效）。"""
+        if self._engine != 'pyqtgraph':
+            return
+        if self._win_full_range:
+            # 回到整范围：重放最近一次事务，恢复模块设定的 xlim / 自动量程
+            # （用户显式操作，强制立即重算量程，视图即时正确）
+            if self._last is not None:
+                self._commit(self._last, force_autorange=True)
+            else:
+                for pi in self._pg_plots:
+                    pi.enableAutoRange(x=True)
+                    pi.vb.updateAutoRange()
+            return
+        self._update_view_window()
+
+    def _update_view_window(self, spec=None):
+        """滚动窗口：把每个子图的 x 轴锁定为最近 N 秒。
+
+        右边缘取该子图各曲线的最新横坐标，左边缘为「右边缘 - N 秒」；
+        数据不足 N 秒时左边缘让位到最早数据点，不显示大片空白区。
+        spec 缺省用最近一次已提交事务；数据提交路径（_commit_pg）传当次
+        事务，保证窗口右边缘跟踪最新数据而非上一次事务。
+        """
+        if spec is None:
+            spec = self._visible_spec(self._last)
+        if (self._engine != 'pyqtgraph' or self._win_full_range
+                or spec is None):
+            return
+        for pi, sp in zip(self._pg_plots, spec):
+            x_first = x_last = None
+            for s in sp['plot']:
+                if not len(s['x']):
+                    continue
+                x0, x1 = s['x'][0], s['x'][-1]
+                x_first = x0 if x_first is None else min(x_first, x0)
+                x_last = x1 if x_last is None else max(x_last, x1)
+            if x_last is None:              # 该子图暂无数据：回退自动量程
+                pi.enableAutoRange(x=True)
+                pi.vb.updateAutoRange()
+                continue
+            x_left = x_last - self._win_seconds
+            if x_first is not None and x_left < x_first:
+                x_left = x_first
+            pi.setXRange(x_left, x_last, padding=0)
+
+    def _sync_view_window_visibility(self):
+        """分析面板仅在 pyqtgraph 引擎下显示。"""
+        if self._analysis_panel is not None:
+            self._analysis_panel.setVisible(self._engine == 'pyqtgraph')
+        self._sync_clear_btn_state()
+        self._sync_outlier_btn_state()
+
+    # ---------------- 离群点剔除（残差比例法 + 多级撤销） ----------------
+    def _visible_spec(self, spec):
+        """返回剔除掩码作用后的可见事务副本。
+
+        掩码只作用于每个子图的第一条曲线（拟合/剔除的对象曲线），其余
+        曲线原样保留。无掩码时直接返回原对象（零开销，实时路径不触发
+        复制）。掩码长度不足当前数据时按 True 补齐——新采集到的点
+        不在掩码范围内，默认保留。
+        """
+        masks = self._outlier_masks
+        if masks is None or spec is None:
+            return spec
+        import numpy as np
+        out, changed = [], False
+        for i, sp in enumerate(spec):
+            m = masks[i] if i < len(masks) else None
+            if m is None or not sp['plot']:
+                out.append(sp)
+                continue
+            s = sp['plot'][0]
+            x, y = s['x'], s['y']
+            if not len(x):
+                out.append(sp)
+                continue
+            m = np.asarray(m[:len(x)], dtype=bool)
+            if len(m) < len(x):          # 新追加的点不在掩码内 → 保留
+                m = np.concatenate([m, np.ones(len(x) - len(m), dtype=bool)])
+            if bool(m.all()):
+                out.append(sp)
+                continue
+            ns = dict(sp)
+            ns['plot'] = [dict(s, x=np.asarray(x)[m], y=np.asarray(y)[m]),
+                          *sp['plot'][1:]]
+            out.append(ns)
+            changed = True
+        return out if changed else spec
+
+    def _outlier_residuals(self, x, y):
+        """当前拟合方式下每个点的 |残差|；定义域外的点返回 nan（不参与剔除）。
+
+        与 _fit_points 使用同一套拟合定义：多项式对全部点、对数要求
+        x>0、幂函数要求 x>0 且 y>0——定义域外的点只是不参与拟合，
+        不应被当作离群点剔除，故标记为 nan。
+        """
+        import numpy as np
+        mode = self._fit_mode
+        if mode in (1, 2, 3):
+            if len(x) < mode + 1:
+                return None
+            try:
+                coef = np.polyfit(x, y, mode)
+            except Exception:
+                return None
+            return np.abs(y - np.polyval(coef, x))
+        if mode == 4:                    # 对数 y = a·ln(x) + b
+            idx = np.flatnonzero(x > 0)
+            if len(idx) < 2:
+                return None
+            try:
+                a, b = np.polyfit(np.log(x[idx]), y[idx], 1)
+            except Exception:
+                return None
+            res = np.full(len(x), np.nan)
+            res[idx] = np.abs(y[idx] - (a * np.log(x[idx]) + b))
+            return res
+        if mode == 5:                    # 幂函数 y = a·x^b
+            idx = np.flatnonzero((x > 0) & (y > 0))
+            if len(idx) < 2:
+                return None
+            try:
+                b_, ln_a = np.polyfit(np.log(x[idx]), np.log(y[idx]), 1)
+                a = float(np.exp(ln_a))
+            except Exception:
+                return None
+            res = np.full(len(x), np.nan)
+            res[idx] = np.abs(y[idx] - a * x[idx] ** b_)
+            return res
+        return None
+
+    def _on_outlier_remove_clicked(self):
+        """「剔除离群点」：对当前剩余数据重拟合，移除残差最大的前 x% 点。
+
+        每次点击都在**当前剩余数据**上剔除（多次点击可反复剔除）；
+        剔除前把当前掩码压入撤销栈，供多级撤销。保证剩余点数满足
+        当前拟合的最低要求（多项式 deg+1，对数/幂至少 2 点）。
+        """
+        if (self._engine != 'pyqtgraph' or self._fit_mode <= 0
+                or self._last is None):
+            return
+        import numpy as np
+        pct = self._outlier_spin.value() if self._outlier_spin else 5.0
+        min_keep = self._fit_mode + 1 if self._fit_mode in (1, 2, 3) else 2
+        old_masks = self._outlier_masks
+        new_masks, removed_total = [], 0
+        for sp in self._last:
+            if not sp['plot'] or not len(sp['plot'][0]['x']):
+                new_masks.append(old_masks[len(new_masks)]
+                                 if old_masks and len(new_masks) < len(old_masks)
+                                 else None)
+                continue
+            s = sp['plot'][0]
+            x = np.asarray(s['x'], dtype=float)
+            y = np.asarray(s['y'], dtype=float)
+            # 当前可见数据的掩码（含 True 补齐），剔除只作用于可见点
+            cur = old_masks[len(new_masks)] if (old_masks
+                    and len(new_masks) < len(old_masks)) else None
+            keep = None
+            if cur is not None:
+                # np.array() 强制拷贝：np.asarray(bool切片, dtype=bool) 会返回
+                # 原掩码的视图，后续 keep[...] = False 会就地改掉栈里已保存的
+                # 旧掩码，导致撤销失效（多级撤销链被上一帧污染）。
+                keep = np.array(cur[:len(x)], dtype=bool, copy=True)
+                if len(keep) < len(x):
+                    keep = np.concatenate(
+                        [keep, np.ones(len(x) - len(keep), dtype=bool)])
+            vx = x if keep is None else x[keep]
+            vy = y if keep is None else y[keep]
+            res = self._outlier_residuals(vx, vy)
+            if res is None:
+                new_masks.append(cur)
+                continue
+            valid = np.flatnonzero(~np.isnan(res))   # 定义域内的候选点
+            n_rem = max(1, int(round(len(valid) * pct / 100.0)))
+            n_rem = min(n_rem, max(0, len(valid) - min_keep))
+            if n_rem <= 0:
+                new_masks.append(cur)
+                continue
+            order = valid[np.argsort(res[valid])[::-1]][:n_rem]  # 残差最大者
+            if keep is None:
+                keep = np.ones(len(x), dtype=bool)
+            remove_orig = np.flatnonzero(keep)[order]            # 映射回原始下标
+            keep[remove_orig] = False
+            new_masks.append(keep)
+            removed_total += int(n_rem)
+        if removed_total == 0:
+            return
+        # 压栈（多级撤销）+ 应用新掩码 + 重绘
+        self._outlier_stack.append(old_masks)
+        self._outlier_masks = new_masks
+        self._sync_outlier_btn_state()
+        self._commit(self._last)
+
+    def _on_outlier_undo_clicked(self):
+        """「撤销」：回退到上一次剔除前的掩码（一步步恢复，退到底即全部恢复）。"""
+        if self._outlier_stack:
+            self._outlier_masks = self._outlier_stack.pop()
+            self._sync_outlier_btn_state()
+            if self._last is not None:
+                self._commit(self._last)
+
+    def _reset_outlier_state(self):
+        """清空剔除状态（clear_chart 调用）：掩码、撤销栈、计数全部复位。"""
+        self._outlier_masks = None
+        self._outlier_stack = []
+        self._sync_outlier_btn_state()
+
+    def _update_outlier_label(self):
+        """刷新「已移除 N 点」计数（按各子图掩码里的 False 数累加）。"""
+        if self._outlier_label is None:
+            return
+        total = 0
+        if self._outlier_masks is not None:
+            import numpy as np
+            for m in self._outlier_masks:
+                if m is not None and m.size:
+                    total += int(m.size - np.asarray(m, dtype=bool).sum())
+        self._outlier_label.setText(f"已移除 {total} 点")
+
+    def _sync_outlier_btn_state(self, *_args):
+        """剔除控件可用性：仅 pyqtgraph + 拟合开启且有待处理数据时可用；
+        撤销按钮有栈可退时可用；计数随掩码变化实时更新。"""
+        if self._outlier_btn is None:
+            return
+        active = self._engine == 'pyqtgraph' and self._fit_mode > 0
+        has_data = False
+        if self._last is not None:
+            has_data = any(
+                sp['plot'] and len(sp['plot'][0]['x']) >= 2 for sp in self._last)
+        if self._outlier_spin is not None:
+            self._outlier_spin.setEnabled(active)
+        self._outlier_btn.setEnabled(active and has_data)
+        if self._outlier_undo_btn is not None:
+            self._outlier_undo_btn.setEnabled(bool(self._outlier_stack))
+        self._update_outlier_label()
+
+    # ---------------- 曲线拟合（仅 pyqtgraph） ----------------
+    # 拟合方式注解文案（索引与 _fit_combo / _fit_mode 一致）
+    _FIT_HINTS = (
+        "拟合：选择拟合方式后，在曲线上叠加同色虚线拟合曲线，并显示方程与 R²（越接近 1 拟合越好）。",
+        "线性拟合 y = a·x + b：直线趋势，适合匀速变化的数据。",
+        "二次拟合 y = a·x² + b·x + c：抛物线趋势，适合匀加速变化（如自由落体位移）。",
+        "三次拟合 y = a·x³ + b·x² + c·x + d：S 形趋势，适合更复杂的变化。",
+        "对数拟合 y = a·ln(x) + b：先快后缓并趋于平稳的趋势，要求数据 x > 0（x ≤ 0 的点自动剔除）。",
+        "幂函数拟合 y = a·x^b：按比例缩放的关系（b=2 面积、b=3 体积类规律），要求数据 x > 0 且 y > 0。",
+    )
+
+    def _update_fit_hint(self):
+        """按当前拟合方式刷新注解文字（选择变化时调用）。"""
+        if self._fit_hint is not None:
+            idx = self._fit_mode if self._fit_mode is not None else 0
+            self._fit_hint.setText(self._FIT_HINTS[idx])
+
+    def _on_fit_type_changed(self, index):
+        """拟合方式切换：更新注解，重放最近一次事务叠加/移除拟合曲线。"""
+        self._fit_mode = index    # 0=无拟合，1~3=多项式次数，4=对数，5=幂函数
+        # 拟合状态属于结构：开关变化会使缓存中的结构签名失配，作废缓存
+        # 强制下次提交走全量重建（顺带清掉旧拟合曲线/散点的场景残留）
+        self._pg_cache = None
+        # 重新选择拟合方式 → 散点恢复显示（清除状态只针对上一次选择）
+        self._scatter_hidden = False
+        self._update_fit_hint()
+        self._sync_clear_btn_state()
+        self._sync_outlier_btn_state()
+        if self._last is not None:
+            self._commit(self._last)
+
+    def _on_clear_btn_clicked(self):
+        """「清除离散点」按钮：二次点击才真正清除（防误触）。
+
+        第一次点击进入确认态（按钮文字变警告提示 + 启动 3 秒定时器），
+        3 秒内第二次点击才执行清除；超时自动复位。
+        """
+        if self._scatter_hidden or self._fit_mode <= 0:
+            return
+        if (self._clear_btn is not None
+                and self._clear_btn.text() == "再次点击确认清除"):
+            # 第二次点击：确认清除散点
+            self._scatter_hidden = True
+            self._pg_fit_scatter = []   # 引用作废（散点 item 随重绘 pi.clear 移除）
+            self._reset_clear_confirm()
+            self._sync_clear_btn_state()
+            if self._last is not None:
+                self._commit(self._last)   # 重绘：_draw_pg_fit 不再画散点
+        else:
+            # 第一次点击：进入确认态
+            if self._clear_btn is not None:
+                self._clear_btn.setText("再次点击确认清除")
+            if self._clear_timer is not None:
+                self._clear_timer.start()
+
+    def _reset_clear_confirm(self):
+        """退出确认态（清除完成或超时）：复位按钮文字与定时器。"""
+        if self._clear_timer is not None and self._clear_timer.isActive():
+            self._clear_timer.stop()
+        if self._clear_btn is not None:
+            self._clear_btn.setText("清除离散点")
+
+    def _sync_clear_btn_state(self):
+        """清除离散点按钮仅 pyqtgraph + 拟合开启 + 散点未被清除时可用。"""
+        if self._clear_btn is not None:
+            self._clear_btn.setEnabled(
+                self._engine == 'pyqtgraph' and self._fit_mode > 0
+                and not self._scatter_hidden)
+
+    def _remove_pg_fit_texts(self):
+        """从视口移除拟合方程文本（pi.clear() 不会移除，需手动清理）。"""
+        for ti in self._pg_fit_texts:
+            if ti.scene() is not None:
+                ti.setParent(None)
+        self._pg_fit_texts = []
+
+    def _draw_pg_fit(self, spec):
+        """对每个子图的第一条曲线做拟合并叠加显示。
+
+        拟合曲线用同色虚线绘制，原始数据点以半透明散点叠加，便于直观
+        对比数据分布与拟合贴合度；方程与 R² 以 TextItem 锚定视口左上角
+        （跟随视口而非数据坐标，缩放/滚动窗口时位置稳定）。
+        各模式共用本渲染骨架，数值计算见 _fit_points。
+        """
+        from pyqtgraph import mkPen, TextItem
+        import numpy as np
+        self._remove_pg_fit_texts()
+        self._pg_fit_scatter = []         # 散点随 pi.clear() 移除，仅清引用
+        if self._engine != 'pyqtgraph' or self._fit_mode <= 0:
+            return
+        fg = '#e0e0e0' if self._dark else '#1a1a1a'
+        for pi, sp in zip(self._pg_plots, spec):
+            if not sp['plot'] or not len(sp['plot'][0]['x']):
+                continue
+            s = sp['plot'][0]             # 拟合第一条曲线（模块主数据曲线）
+            x = np.asarray(s['x'], dtype=float)
+            y = np.asarray(s['y'], dtype=float)
+            # 原始数据散点层：半透明小圆点（数据量过大时省略防卡顿；
+            # 用户经「清除离散点」二次确认清除后不再绘制）
+            if len(x) <= 3000 and not self._scatter_hidden:
+                br = QColor(s['color']); br.setAlpha(90)
+                pn = QColor(s['color']); pn.setAlpha(160)
+                sc = pi.plot(x, y, pen=None, symbol='o', symbolSize=5,
+                             symbolBrush=br, symbolPen=mkPen(pn, width=1))
+                self._pg_fit_scatter.append(sc)
+            fit = self._fit_points(x, y)
+            if fit is None:               # 点数不足/定义域不满足：静默跳过
+                continue
+            xs, ys, text = fit
+            # 拟合曲线：数据范围内 200 点虚线（颜色与原曲线一致）
+            pen = mkPen(s['color'], width=2,
+                        style=Qt.PenStyle.DashLine)
+            pi.plot(xs, ys, pen=pen)
+            # 方程文本：锚定视口左上角（视口本地坐标，不随数据缩放变化；
+            # anchor=(0,0) 表示文本框左上角对齐 setPos 位置，pyqtgraph 0.14
+            # 的 anchor 是构造参数/属性而非旧版锚定方法）
+            ti = TextItem(text, color=fg, anchor=(0, 0))
+            ti.setParentItem(pi.getViewBox())
+            ti.setPos(8, 8)
+            self._pg_fit_texts.append(ti)
+
+    def _fit_points(self, x, y):
+        """按当前拟合方式计算拟合曲线与方程文本。
+
+        返回 (xs, ys, equation_text) 或 None（点数不足、数据不在函数
+        定义域内、或拟合数值失败时静默跳过该子图）。
+
+        各模式：
+        - 1~3 多项式：y = aₙxⁿ + ... + a₀，np.polyfit 直接最小二乘
+        - 4 对数：y = a·ln(x) + b，要求 x > 0（非正点剔除后拟合）
+        - 5 幂函数：y = a·x^b，要求 x > 0 且 y > 0；对数线性化
+          （ln y = b·ln x + ln a）求参，R² 按原始 y 尺度报告
+        """
+        import numpy as np
+        mode = self._fit_mode
+        if mode in (1, 2, 3):            # ---- 多项式 ----
+            if len(x) < mode + 1:
+                return None
+            try:
+                coef = np.polyfit(x, y, mode)
+            except Exception:
+                return None
+            r2 = self._r_squared(y, np.polyval(coef, x))
+            xs = np.linspace(float(x.min()), float(x.max()), 200)
+            return xs, np.polyval(coef, xs), self._format_poly_equation(coef, r2)
+        if mode == 4:                    # ---- 对数 y = a·ln(x) + b ----
+            mask = x > 0                 # ln(x) 仅正数有定义
+            if int(mask.sum()) < 2:
+                return None
+            xv, yv = x[mask], y[mask]
+            try:
+                a, b = np.polyfit(np.log(xv), yv, 1)
+            except Exception:
+                return None
+            r2 = self._r_squared(yv, a * np.log(xv) + b)
+            xs = np.linspace(float(xv.min()), float(xv.max()), 200)
+            text = self._format_log_power_equation('log', float(a), float(b), r2)
+            return xs, a * np.log(xs) + b, text
+        if mode == 5:                    # ---- 幂函数 y = a·x^b ----
+            mask = (x > 0) & (y > 0)     # 双对数线性化要求全为正
+            if int(mask.sum()) < 2:
+                return None
+            xv, yv = x[mask], y[mask]
+            try:
+                b, ln_a = np.polyfit(np.log(xv), np.log(yv), 1)
+            except Exception:
+                return None
+            a = float(np.exp(ln_a))
+            r2 = self._r_squared(yv, a * xv ** b)
+            xs = np.linspace(float(xv.min()), float(xv.max()), 200)
+            text = self._format_log_power_equation('power', a, float(b), r2)
+            return xs, a * xs ** b, text
+        return None
+
+    @staticmethod
+    def _r_squared(y, y_pred):
+        """决定系数 R² = 1 − SS_res / SS_tot（SS_tot 为 0 时返回 1）。"""
+        import numpy as np
+        ss_res = float(np.sum((y - y_pred) ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+        return 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+
+    @staticmethod
+    def _format_poly_equation(coef, r2):
+        """多项式方程文本：y = aₙxⁿ + ... + a₁x + a₀（4 位有效数字）。"""
+        deg = len(coef) - 1
+        sup = {1: '', 2: '²', 3: '³'}
+        text = 'y = '
+        for k, c in enumerate(coef):
+            p = deg - k
+            if k > 0:
+                text += ' − ' if c < 0 else ' + '
+            elif c < 0:
+                text += '−'
+            text += f"{abs(c):.4g}"
+            if p > 0:
+                text += 'x' + sup.get(p, f'^{p}')
+        text += f"\nR² = {r2:.4f}"
+        return text
+
+    @staticmethod
+    def _format_log_power_equation(kind, a, b, r2):
+        """对数/幂函数方程文本（4 位有效数字，负号用 Unicode −）。
+
+        kind='log'   → y = a·ln(x) + b
+        kind='power' → y = a·x^b
+        """
+        if kind == 'log':
+            sa = '−' if a < 0 else ''
+            sb = ' − ' if b < 0 else ' + '
+            text = f"y = {sa}{abs(a):.4g}·ln(x){sb}{abs(b):.4g}"
+        else:
+            sa = '−' if a < 0 else ''
+            sb = '−' if b < 0 else ''
+            text = f"y = {sa}{abs(a):.4g}·x^{sb}{abs(b):.4g}"
+        text += f"\nR² = {r2:.4f}"
+        return text
 
 
 # ============================================================
@@ -1259,10 +2042,12 @@ class FloatingDataPanel(QWidget):
 
     MAX_SUMMARY_LEN = 50
 
-    def __init__(self, content_widget, summary_widget=None, title="数据记录", parent=None):
+    def __init__(self, content_widget, summary_widget=None, title="数据记录",
+                 footer_widget=None, parent=None):
         super().__init__(parent)
         self._content_widget = content_widget
         self._summary_widget = summary_widget
+        self._footer_widget = footer_widget
         self._collapsed = False
         self._dragging = False
         self._drag_offset = QPoint()
@@ -1303,6 +2088,10 @@ class FloatingDataPanel(QWidget):
         self._content_widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         main_layout.addWidget(self._content_widget, 1)
+
+        # 底部常驻控件：折叠内容后仍可见（如开始/停止按钮）
+        if self._footer_widget is not None:
+            main_layout.addWidget(self._footer_widget)
 
         # 定时刷新折叠态摘要文本（实时值在持续更新）
         self._summary_timer = QTimer(self)
@@ -1347,6 +2136,19 @@ class FloatingDataPanel(QWidget):
             widget = self._content_widget
             self._content_widget = None
             return widget
+        return None
+
+    def release_footer(self):
+        """把底部常驻控件从面板布局中移出并返回，避免它随面板销毁。
+
+        退出全屏后模块仍持有该控件（如开始/停止按钮），再次全屏复用。
+        """
+        if self._footer_widget is not None:
+            self.layout().removeWidget(self._footer_widget)
+            self._footer_widget.setParent(None)
+            w = self._footer_widget
+            self._footer_widget = None
+            return w
         return None
 
     def paintEvent(self, e):
@@ -1476,10 +2278,9 @@ class CollapsibleCard(QWidget):
         # 全屏浮动面板相关
         self._overlay_content_widget = None   # 全屏时浮于图表上方的控件（如数据记录区）
         self._overlay_summary_widget = None   # 折叠态显示的摘要标签（如实时值）
-        self._overlay_orig_parent = None      # 浮动控件的原父控件
-        self._overlay_orig_layout = None      # 浮动控件的原布局
-        self._overlay_orig_index = -1         # 浮动控件在原布局中的索引
-        self._overlay_orig_stretch = 0        # 浮动控件在原布局中的 stretch
+        self._overlay_extra_widgets = []      # 一并浮起的附加控件（如拟合分析面板）
+        self._overlay_footer_widget = None    # 浮动栏底部常驻控件（折叠时也可见）
+        self._overlay_orig_records = []       # 每个浮动控件的 (控件, 原父, 布局, 索引, stretch)
         self._floating_panel = None           # 全屏时的 FloatingDataPanel 实例
         self._fullscreen_hidden_widgets = []  # 全屏时需隐藏的控件
         self._chart_min_height = 0            # 图表内容区最小高度（0 表示不限制）
@@ -1632,7 +2433,8 @@ class CollapsibleCard(QWidget):
             self._exit_fullscreen()
 
     # ---------- 全屏浮动面板接口 ----------
-    def set_fullscreen_overlay(self, content_widget, summary_widget=None):
+    def set_fullscreen_overlay(self, content_widget, summary_widget=None,
+                               extra_widgets=None, footer_widget=None):
         """设置全屏时浮动面板的内容控件。
 
         Args:
@@ -1640,44 +2442,52 @@ class CollapsibleCard(QWidget):
                             全屏时该控件会被移入可拖动、可折叠的浮动面板；
                             退出全屏时自动恢复到原布局原位置。
             summary_widget: 折叠态显示的摘要标签（如实时值标签，可选）
+            extra_widgets: 一并浮起的附加控件列表（如拟合分析面板，可选）
+            footer_widget: 浮动栏底部常驻控件，折叠时也可见
+                           （如开始/停止按钮，可选）
         """
         self._overlay_content_widget = content_widget
         self._overlay_summary_widget = summary_widget
+        self._overlay_extra_widgets = list(extra_widgets or [])
+        self._overlay_footer_widget = footer_widget
 
     def add_fullscreen_hidden_widget(self, widget):
         """注册全屏时需隐藏的控件"""
         self._fullscreen_hidden_widgets.append(widget)
 
-    def _detach_overlay_widget(self):
-        """从原布局中移除浮动内容控件，并记录原位置以便恢复。
+    def _detach_overlay_widgets(self):
+        """从原布局中移除全部浮动内容控件，并记录原位置以便恢复。
 
-        Returns: 被移除的控件（成功时）或 None
+        Returns: 被移除的控件列表（可能为空）
         """
-        widget = self._overlay_content_widget
-        if widget is None:
-            return None
-        self._overlay_orig_parent = widget.parentWidget()
-        # 在父控件的布局树中递归查找包含该 widget 的布局及索引
-        self._overlay_orig_layout = None
-        self._overlay_orig_index = -1
-        self._overlay_orig_stretch = 0
-        if self._overlay_orig_parent is not None:
-            result = self._find_widget_in_layout_tree(
-                self._overlay_orig_parent.layout(), widget)
-            if result is not None:
-                self._overlay_orig_layout, self._overlay_orig_index = result
-        if self._overlay_orig_layout is not None:
-            # 记录 stretch factor
-            item = self._overlay_orig_layout.itemAt(self._overlay_orig_index)
-            if item is not None:
-                # QBoxLayout / QGridLayout 等支持 stretch
-                try:
-                    self._overlay_orig_stretch = self._overlay_orig_layout.stretch(self._overlay_orig_index)
-                except Exception:
-                    self._overlay_orig_stretch = 0
-            self._overlay_orig_layout.removeWidget(widget)
-        widget.setParent(None)
-        return widget
+        widgets = [self._overlay_content_widget, *self._overlay_extra_widgets]
+        self._overlay_orig_records = []
+        detached = []
+        for widget in widgets:
+            if widget is None:
+                continue
+            orig_parent = widget.parentWidget()
+            orig_layout, orig_index, orig_stretch = None, -1, 0
+            if orig_parent is not None:
+                # 在父控件的布局树中递归查找包含该 widget 的布局及索引
+                result = self._find_widget_in_layout_tree(
+                    orig_parent.layout(), widget)
+                if result is not None:
+                    orig_layout, orig_index = result
+            if orig_layout is not None:
+                # 记录 stretch factor
+                item = orig_layout.itemAt(orig_index)
+                if item is not None:
+                    try:
+                        orig_stretch = orig_layout.stretch(orig_index)
+                    except Exception:
+                        orig_stretch = 0
+                orig_layout.removeWidget(widget)
+            widget.setParent(None)
+            self._overlay_orig_records.append(
+                (widget, orig_parent, orig_layout, orig_index, orig_stretch))
+            detached.append(widget)
+        return detached
 
     @staticmethod
     def _find_widget_in_layout_tree(layout, target):
@@ -1697,17 +2507,26 @@ class CollapsibleCard(QWidget):
                     return r
         return None
 
-    def _restore_overlay_widget(self):
-        """将浮动内容控件恢复到原布局原位置"""
-        widget = self._overlay_content_widget
-        if widget is None or self._overlay_orig_layout is None:
-            return
-        widget.setParent(self._overlay_orig_parent)
-        if self._overlay_orig_index >= 0:
-            self._overlay_orig_layout.insertWidget(self._overlay_orig_index, widget, self._overlay_orig_stretch)
-        else:
-            self._overlay_orig_layout.addWidget(widget, self._overlay_orig_stretch)
-        widget.show()
+    def _restore_overlay_widgets(self):
+        """将浮动内容控件恢复到原布局原位置。
+
+        按原索引升序恢复同一布局内的多个控件，保持相对顺序正确。
+        Returns: 已恢复的控件列表
+        """
+        restored = []
+        for widget, orig_parent, orig_layout, orig_index, orig_stretch in sorted(
+                self._overlay_orig_records, key=lambda r: r[3]):
+            if orig_layout is None:
+                continue
+            widget.setParent(orig_parent)
+            if orig_index >= 0:
+                orig_layout.insertWidget(orig_index, widget, orig_stretch)
+            else:
+                orig_layout.addWidget(widget, orig_stretch)
+            widget.show()
+            restored.append(widget)
+        self._overlay_orig_records = []
+        return restored
 
     def _find_content_host(self):
         """向上查找适合作为全屏宿主的滚动区 viewport。
@@ -1796,16 +2615,25 @@ class CollapsibleCard(QWidget):
         if self.layout() is not None:
             self.layout().activate()
 
-        # 创建浮动数据面板：将数据记录区控件浮于图表上方
+        # 创建浮动数据面板：将数据记录区与分析控件浮于图表上方
         if self._overlay_content_widget is not None:
-            overlay_content = self._detach_overlay_widget()
-            if overlay_content is not None:
+            detached = self._detach_overlay_widgets()
+            if detached:
                 # 嵌入模式：隐藏 data_text 自身标题栏，避免与浮动面板标题重复
-                if hasattr(overlay_content, 'set_embedded_mode'):
-                    overlay_content.set_embedded_mode(True)
+                for w in detached:
+                    if hasattr(w, 'set_embedded_mode'):
+                        w.set_embedded_mode(True)
+                # 多个浮动控件（如数据记录区 + 拟合分析面板）纵向堆叠进一个容器
+                overlay_box = QWidget()
+                box_lay = QVBoxLayout(overlay_box)
+                box_lay.setContentsMargins(0, 0, 0, 0)
+                box_lay.setSpacing(10)
+                for w in detached:
+                    box_lay.addWidget(w)
                 self._floating_panel = FloatingDataPanel(
-                    overlay_content,
+                    overlay_box,
                     summary_widget=self._overlay_summary_widget,
+                    footer_widget=self._overlay_footer_widget,
                     parent=self,
                 )
                 self._floating_panel.move(16, 16)
@@ -1862,12 +2690,16 @@ class CollapsibleCard(QWidget):
         # 销毁浮动数据面板，恢复内容控件到原布局
         if self._floating_panel is not None:
             released = self._floating_panel.release_content()
+            self._floating_panel.release_footer()
             self._floating_panel.deleteLater()
             self._floating_panel = None
-            self._restore_overlay_widget()
             # 关闭嵌入模式，恢复 data_text 自身标题栏
-            if released is not None and hasattr(released, 'set_embedded_mode'):
-                released.set_embedded_mode(False)
+            for w in self._restore_overlay_widgets():
+                if hasattr(w, 'set_embedded_mode'):
+                    w.set_embedded_mode(False)
+            # released 是临时容器，子控件已恢复回原布局，直接销毁
+            if released is not None:
+                released.deleteLater()
 
         # 恢复全屏时隐藏的控件
         for w in self._fullscreen_hidden_widgets:

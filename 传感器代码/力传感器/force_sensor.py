@@ -75,6 +75,7 @@ class ForceSensorWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.serial_thread = None
+        self._collecting = False  # 当前是否在采集（合并开始/停止按钮状态）
         self.ble_thread = None
         self.flask_server = None
         self.force_data = []
@@ -374,19 +375,33 @@ class ForceSensorWidget(QWidget):
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
 
-        # 左侧：数据记录（可展开/收起）
+        # 左侧栏：数据记录 + 图表分析（视图窗口/拟合/离群点，紧凑纵向排布）
+        left_col = QVBoxLayout()
+        left_col.setSpacing(10)
         self.data_text = ExpandableTextEdit()
-        content_row.addWidget(self.data_text, stretch=0)
+        left_col.addWidget(self.data_text)
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
-        content_row.addWidget(self.chart, stretch=2)
+        # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
+        left_col.addWidget(self.chart.get_analysis_panel())
+        content_row.addLayout(left_col, stretch=0)
 
+        content_row.addWidget(self.chart, stretch=2)
         chart_card_layout.addLayout(content_row, 1)
         card_chart = CollapsibleCard("力-时间曲线", card_chart_content, expanded=True, fullscreen=True)
         # 图表卡片加高为原来的 2 倍（内容区最小 400px），页面滚动查看
         card_chart.set_chart_min_height(400)
-        card_chart.set_fullscreen_overlay(self.data_text, self.current_force_label)
+        # 全屏浮动栏：合并的开始/停止按钮（与操作按钮卡的 collect_btn 同步状态）
+        self.float_collect_btn = PrimaryPushButton("开始采集")
+        self.float_collect_btn.setFixedHeight(34)
+        self.float_collect_btn.clicked.connect(self.toggle_collection)
+        self.float_collect_btn.setEnabled(False)
+        # 全屏时：数据记录 + 拟合分析面板浮于图表上方，浮动栏底部可控制开始/停止
+        card_chart.set_fullscreen_overlay(
+            self.data_text, self.current_force_label,
+            extra_widgets=[self.chart.get_analysis_panel()],
+            footer_widget=self.float_collect_btn)
         layout.addWidget(card_chart)
 
         # ========== 卡片5：操作按钮（可折叠） ==========
@@ -397,17 +412,14 @@ class ForceSensorWidget(QWidget):
         actions_layout.setContentsMargins(20, 4, 20, 12)
         actions_layout.setSpacing(10)
 
-        self.start_btn = PrimaryPushButton("开始采集")
-        self.start_btn.setFixedHeight(38)
-        self.start_btn.clicked.connect(self.start_collection)
-        self.start_btn.setEnabled(False)
-        actions_layout.addWidget(self.start_btn)
+        # 开始/停止合并为单按钮：文案随采集状态切换（停止采集/开始采集）
+        self.collect_btn = PrimaryPushButton("开始采集")
+        self.collect_btn.setFixedHeight(38)
+        self.collect_btn.clicked.connect(self.toggle_collection)
+        self.collect_btn.setEnabled(False)
+        actions_layout.addWidget(self.collect_btn)
 
-        self.stop_btn = PushButton("停止采集")
-        self.stop_btn.setFixedHeight(38)
-        self.stop_btn.clicked.connect(self.stop_collection)
-        self.stop_btn.setEnabled(False)
-        actions_layout.addWidget(self.stop_btn)
+        
 
         self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
@@ -523,7 +535,7 @@ class ForceSensorWidget(QWidget):
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
             self.connect_btn.setText("断开")
-            self.start_btn.setEnabled(True)
+            self._set_collect_enabled(True)
             self.tare_btn.setEnabled(True)
             self.calibrate_btn.setEnabled(True)
             self.current_force_label.setText("力/质量: 模拟器等待数据...")
@@ -544,7 +556,7 @@ class ForceSensorWidget(QWidget):
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
             self.connect_btn.setText("断开")
-            self.start_btn.setEnabled(True)
+            self._set_collect_enabled(True)
             self.tare_btn.setEnabled(True)
             self.calibrate_btn.setEnabled(True)
             self.current_force_label.setText("力/质量: 等待数据...")
@@ -574,7 +586,7 @@ class ForceSensorWidget(QWidget):
             self.ble_thread.connection_status.connect(self.on_ble_status)
             self.ble_thread.start()
             self.connect_btn.setText("断开")
-            self.start_btn.setEnabled(True)
+            self._set_collect_enabled(True)
             self.tare_btn.setEnabled(True)
             self.calibrate_btn.setEnabled(True)
             self.current_force_label.setText("力/质量: BLE连接中...")
@@ -598,8 +610,7 @@ class ForceSensorWidget(QWidget):
             self.ble_thread = None
 
         self.connect_btn.setText("连接")
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(False)
+        self._set_collect_enabled(False)
         self.tare_btn.setEnabled(False)
         self.calibrate_btn.setEnabled(False)
         self.current_force_label.setText("力/质量: --.-")
@@ -695,6 +706,24 @@ class ForceSensorWidget(QWidget):
             self.calibrate_btn.setText("校准（CALIBRATE）")
             self.calibrate_btn.setStyleSheet(self.CARD_BTN_STYLE)
 
+    def toggle_collection(self):
+        """合并的开始/停止按钮：按当前采集状态切换。"""
+        if self._collecting:
+            self.stop_collection()
+        else:
+            self.start_collection()
+
+    def _set_collect_enabled(self, enabled):
+        """连接/断开时同步合并按钮与浮动栏按钮的可用性。"""
+        self.collect_btn.setEnabled(enabled)
+        self.float_collect_btn.setEnabled(enabled)
+
+    def _refresh_collect_btn(self):
+        """合并按钮与浮动栏按钮：文案随采集状态切换（停止采集/开始采集）。"""
+        text = "停止采集" if self._collecting else "开始采集"
+        self.collect_btn.setText(text)
+        self.float_collect_btn.setText(text)
+
     def start_collection(self):
         self.force_data.clear()
         self.time_data.clear()
@@ -702,16 +731,16 @@ class ForceSensorWidget(QWidget):
         self.data_text.clear()
         self.last_sample_time_ms = 0  # 重置采样时间
 
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
+        self._collecting = True
+        self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
 
         self.current_force_label.setText("力/质量: 采集中...")
         self.current_raw_label.setText("原始ADC: 采集中...")
 
     def stop_collection(self):
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        self._collecting = False
+        self._refresh_collect_btn()
         self.save_btn.setEnabled(len(self.force_data) > 0)
 
         if len(self.force_data) > 0:
@@ -744,7 +773,7 @@ class ForceSensorWidget(QWidget):
             self.current_force_label.setText("力/质量: 请放置已知质量砝码")
             return
 
-        if not self.stop_btn.isEnabled():
+        if not self._collecting:
             try:
                 if "," in data:
                     parts = data.split(",")
@@ -841,6 +870,8 @@ class ForceSensorWidget(QWidget):
             self.stats_label.setText(stats_text)
 
     def update_chart(self):
+        if not self.isVisible():
+            return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
         if len(self.force_data) > 0:
             ylabel = self.get_chart_ylabel()
             if self.calibrated:
