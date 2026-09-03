@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
     QApplication,
 )
-from PySide6.QtCore import Qt, Signal, QThread, QPoint, QTimer
+from PySide6.QtCore import Qt, Signal, QThread, QPoint, QTimer, QAbstractNativeEventFilter
 from PySide6.QtGui import (
     QFont, QColor, QPainter, QPen, QBrush, QPainterPath,
     QFontMetrics, QTextOption,
@@ -121,6 +121,22 @@ def resolve_chart_engine(engine):
 # ============================================================
 CONFIG_FILENAME = 'sensor_config.json'
 
+# 应用默认主题色（蓝色）。qfluentwidgets 库默认是青色 #009faa，
+# 本应用统一使用 Fluent Design 标准蓝 #0078d4（与项目强调色一致）。
+DEFAULT_THEME_COLOR = '#0078d4'
+
+# app_config.json 默认值（首次启动与「恢复默认设置」共用）
+_APP_CONFIG_DEFAULT = {
+    "Chart": {"Engine": "pyqtgraph"},
+    "General": {"ConfigPersistenceEnabled": True, "ThemeColorMode": "custom"},
+    "QFluentWidgets": {
+        "FontFamilies": ["Segoe UI", "Microsoft YaHei", "PingFang SC"],
+        "ThemeColor": "#ff0078d4",
+        "ThemeMode": "Light",
+    },
+}
+
+
 # 应用自身配置 — 独立文件存放，不受传感器配置开关影响。
 # 开关状态若存进 sensor_config.json 会出现悖论：
 # 「关闭保存」后无人写入 → 下次启动没人记得开关是关的。
@@ -129,6 +145,11 @@ class AppConfig(QConfig):
     # 传感器配置持久化开关：False 时不读取也不写入 sensor_config.json，
     # 所有更改仅本次会话有效（默认开启，保持原有行为）
     configPersistenceEnabled = ConfigItem("General", "ConfigPersistenceEnabled", True)
+    # 主题色模式：system=跟随系统强调色（Windows）/ custom=自定义（默认蓝色）
+    themeColorMode = OptionsConfigItem(
+        "General", "ThemeColorMode", "custom",
+        OptionsValidator(["system", "custom"]),
+    )
     # 图表引擎：pyqtgraph（默认，高性能交互）/ matplotlib（静态美观）
     chartEngine = OptionsConfigItem(
         "Chart", "Engine", "pyqtgraph",
@@ -137,7 +158,19 @@ class AppConfig(QConfig):
 
 
 app_cfg = AppConfig()
-qconfig.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_config.json'), app_cfg)
+
+# 首次启动（app_config.json 不存在）：先写入默认配置再加载，
+# 保证默认主题色为蓝色（qfluentwidgets 库默认是青色 #009faa，不符合项目主题）
+_app_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_config.json')
+if not os.path.exists(_app_config_path):
+    try:
+        with open(_app_config_path, 'w', encoding='utf-8') as _f:
+            json.dump(_APP_CONFIG_DEFAULT, _f, ensure_ascii=False, indent=4)
+        print(f"✓ 已生成默认应用配置：{_app_config_path}")
+    except Exception as _e:
+        print(f"⚠️ 生成默认应用配置失败: {_e}")
+
+qconfig.load(_app_config_path, app_cfg)
 
 
 def _get_config_file_path():
@@ -313,18 +346,6 @@ def clear_sensor_config():
         return False
 
 
-# app_config.json 默认值
-_APP_CONFIG_DEFAULT = {
-    "Chart": {"Engine": "pyqtgraph"},
-    "General": {"ConfigPersistenceEnabled": True},
-    "QFluentWidgets": {
-        "FontFamilies": ["Segoe UI", "Microsoft YaHei", "PingFang SC"],
-        "ThemeColor": "#ff009faa",
-        "ThemeMode": "Light",
-    },
-}
-
-
 def reset_all_config():
     """将 app_config.json 和 sensor_config.json 恢复为默认值。
 
@@ -361,6 +382,73 @@ def reset_all_config():
         pass
 
     return True, "所有设置已恢复默认值，重启后完全生效"
+
+
+# ============================================================
+# 应用主题色：跟随系统强调色（Windows）/ 自定义（默认蓝色）
+# ============================================================
+def system_accent_color():
+    """读取 Windows 系统强调色，返回 '#rrggbb'；失败回退默认蓝色。
+
+    优先读 Explorer 的 AccentColorMenu（任务栏/开始菜单强调色，0x00BBGGRR），
+    缺失时回退 DWM 的 ColorizationColor（标题栏颜色，0xAABBGGRR）——
+    两者低 24 位均为 BBGGRR，统一按该格式解析。
+    """
+    def _read_dword(path, name):
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            value, _ = winreg.QueryValueEx(key, name)
+        return value
+
+    for path, name in (
+        (r'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent', 'AccentColorMenu'),
+        (r'Software\Microsoft\Windows\DWM', 'ColorizationColor'),
+    ):
+        try:
+            value = _read_dword(path, name)
+            if not value:
+                continue
+            r, g, b = value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF
+            if (r | g | b) == 0:      # 全 0 视为无效值
+                continue
+            return '#%02x%02x%02x' % (r, g, b)
+        except Exception:
+            continue
+    return DEFAULT_THEME_COLOR
+
+
+def set_app_theme_color(color, save=True):
+    """设置应用主题色并刷新全部 FluentWidgets 组件。
+
+    save=True 持久化到 app_config.json（QFluentWidgets.ThemeColor）；
+    「跟随系统主题色」模式应传 save=False（系统色不落盘，保留自定义色）。
+    """
+    from PySide6.QtGui import QColor
+    from qfluentwidgets.common.style_sheet import setThemeColor
+    setThemeColor(QColor(color), save=save)
+
+
+class SystemAccentListener(QAbstractNativeEventFilter):
+    """监听 Windows 系统强调色变化（WM_DWMCOLORIZATIONCOLORCHANGED）。
+
+    仅当配置为「跟随系统主题色」时生效：收到系统广播后重读注册表并
+    刷新主题色。非 Windows 平台收不到该消息，无需额外判断。
+    """
+
+    WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320
+
+    def nativeEventFilter(self, eventType, message):
+        try:
+            if eventType == b'windows_generic_MSG' and message:
+                import ctypes
+                from ctypes import wintypes
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == self.WM_DWMCOLORIZATIONCOLORCHANGED:
+                    if app_cfg.themeColorMode.value == 'system':
+                        set_app_theme_color(system_accent_color(), save=False)
+        except Exception:
+            pass
+        return False
 
 
 def fluent_message_box(parent, title, text):
