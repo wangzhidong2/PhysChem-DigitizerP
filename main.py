@@ -66,6 +66,7 @@ from core import (
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
     ChartPanel, chart_engine_available, resolve_chart_engine,
     clear_sensor_config, export_sensor_config, import_sensor_config, reset_all_config,
+    DEFAULT_THEME_COLOR, system_accent_color, set_app_theme_color,
 )
 
 
@@ -853,6 +854,11 @@ class SettingsWidget(QWidget):
         self._theme_mode = "light"
         # 「清除用户设置」程序内开启保存开关时，跳过开启确认框（用户已确认过）
         self._suppress_persistence_confirm = False
+        # 自定义主题色（默认蓝色；「跟随系统主题色」模式下系统色不落盘，此值保留）
+        self._custom_theme_color = qconfig.get(qconfig.themeColor).name()
+        self._theme_color_combo = None   # 主题色模式下拉框（懒创建引用）
+        self._theme_color_preview = None # 当前主题色预览色块
+        self._pick_color_btn = None      # 「选择颜色」按钮
         self.init_ui()
         # 按当前 FluentWidgets 主题同步下拉框选中项
         self._sync_theme_combo_from_current()
@@ -881,6 +887,7 @@ class SettingsWidget(QWidget):
         group_personal = SettingCardGroup("个性化", self._content)
         self._theme_card = self._build_theme_card(group_personal)
         group_personal.addSettingCard(self._theme_card)
+        group_personal.addSettingCard(self._build_theme_color_card())
         group_personal.addSettingCard(self._build_persistence_card())
         group_personal.addSettingCard(self._build_config_management_card())
         group_personal.addSettingCard(self._build_reset_all_card())
@@ -947,6 +954,87 @@ class SettingsWidget(QWidget):
         card.hBoxLayout.addSpacing(16)
         self._theme_combo = combo
         return card
+
+    def _build_theme_color_card(self):
+        """主题色卡片：跟随系统主题色 / 自定义主题色（默认蓝色）。
+
+        - 「跟随系统主题色」：读取并跟随 Windows 系统强调色
+          （任务栏/开始菜单强调色，监听 DWM 广播实时更新；系统色不落盘）
+        - 「自定义主题色」：点击「选择颜色」弹取色器，选择即持久化
+        """
+        card = SettingCard(
+            FIF.PALETTE, "主题色",
+            "跟随系统主题色或自定义（默认蓝色）", None)
+        self._theme_color_combo = ComboBox(card)
+        self._theme_color_combo.addItems(["跟随系统主题色", "自定义主题色"])
+        self._theme_color_combo.setMinimumWidth(150)
+        self._theme_color_combo.setCurrentIndex(
+            0 if app_cfg.themeColorMode.value == "system" else 1)
+        self._theme_color_combo.currentIndexChanged.connect(
+            self._on_theme_color_combo_changed)
+        card.hBoxLayout.addWidget(self._theme_color_combo)
+        card.hBoxLayout.addSpacing(10)
+
+        # 当前主题色预览色块
+        self._theme_color_preview = QLabel()
+        self._theme_color_preview.setFixedSize(24, 20)
+        self._theme_color_preview.setToolTip("当前主题色")
+        card.hBoxLayout.addWidget(self._theme_color_preview)
+
+        # 取色按钮（仅自定义主题色模式下可用）
+        self._pick_color_btn = PushButton("选择颜色", card)
+        self._pick_color_btn.setFixedHeight(30)
+        self._pick_color_btn.clicked.connect(self._on_pick_theme_color)
+        card.hBoxLayout.addWidget(self._pick_color_btn)
+        card.hBoxLayout.addSpacing(16)
+        self._sync_theme_color_controls()
+        return card
+
+    def _sync_theme_color_controls(self):
+        """同步主题色预览色块与取色按钮状态（模式切换/取色后调用）。"""
+        if self._pick_color_btn is not None:
+            self._pick_color_btn.setEnabled(
+                app_cfg.themeColorMode.value != "system")
+        if self._theme_color_preview is not None:
+            color = (system_accent_color()
+                     if app_cfg.themeColorMode.value == "system"
+                     else self._custom_theme_color or DEFAULT_THEME_COLOR)
+            self._theme_color_preview.setStyleSheet(
+                f"background-color: {color}; border-radius: 4px;"
+                " border: 1px solid #808080;")
+
+    def _on_theme_color_combo_changed(self, idx: int):
+        """主题色模式切换：system=读取系统强调色（不落盘）；custom=恢复自定义色。"""
+        mode = "system" if idx == 0 else "custom"
+        if mode == app_cfg.themeColorMode.value:
+            return
+        qconfig.set(app_cfg.themeColorMode, mode)   # 落盘模式
+        if mode == "system":
+            set_app_theme_color(system_accent_color(), save=False)
+        else:
+            set_app_theme_color(
+                self._custom_theme_color or DEFAULT_THEME_COLOR, save=False)
+        self._sync_theme_color_controls()
+
+    def _on_pick_theme_color(self):
+        """自定义主题色取色：弹出 WinUI3 风格取色对话框。"""
+        from qfluentwidgets.components.dialog_box import ColorDialog
+        current = QColor(self._custom_theme_color or DEFAULT_THEME_COLOR)
+        dialog = ColorDialog(current, "选择主题色", self)
+        dialog.colorChanged.connect(self._on_custom_theme_color_changed)
+        dialog.exec()
+
+    def _on_custom_theme_color_changed(self, color: QColor):
+        """取色完成：记录自定义色并切到自定义模式（选择即持久化）。"""
+        self._custom_theme_color = color.name()
+        # ComboBox 同步到「自定义主题色」（blockSignals 防递归）
+        if self._theme_color_combo is not None:
+            self._theme_color_combo.blockSignals(True)
+            self._theme_color_combo.setCurrentIndex(1)
+            self._theme_color_combo.blockSignals(False)
+        qconfig.set(app_cfg.themeColorMode, "custom")
+        set_app_theme_color(self._custom_theme_color, save=True)
+        self._sync_theme_color_controls()
 
     def _build_persistence_card(self):
         """配置持久化开关卡片：FluentWidgets 原生 SwitchSettingCard。
@@ -1639,6 +1727,21 @@ def main():
     app.setWindowIcon(app_icon)
     # 让 ComboBox 展开时箭头朝上（FluentWidgets 默认始终朝下）
     patch_combobox_arrow_flip()
+    # 主题色：「跟随系统主题色」模式读取 Windows 强调色（不落盘）；
+    # 自定义模式沿用配置（默认蓝色）。在窗口创建前应用，组件直接以新色渲染
+    try:
+        if app_cfg.themeColorMode.value == "system":
+            set_app_theme_color(system_accent_color(), save=False)
+    except Exception as e:
+        print(f"⚠️ 应用系统主题色失败: {e}")
+    # 监听 Windows 系统强调色变化（仅「跟随系统主题色」模式生效）；
+    # 引用挂在 app 上防止被垃圾回收
+    try:
+        from core import SystemAccentListener
+        app._system_accent_listener = SystemAccentListener()
+        app.installNativeEventFilter(app._system_accent_listener)
+    except Exception as e:
+        print(f"⚠️ 安装系统强调色监听失败: {e}")
     # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
     window.setWindowIcon(app_icon)
