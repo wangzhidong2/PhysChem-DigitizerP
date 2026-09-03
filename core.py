@@ -450,6 +450,17 @@ class ChartPanel(QWidget):
         self._scatter_hidden = False  # True=散点已被用户清除（重新选拟合方式恢复）
         self._clear_btn = None        # 「清除离散点」按钮（二次点击确认）
         self._clear_timer = None      # 确认态超时复位定时器（防悬置）
+        # 离群点剔除（仅 pyqtgraph）：残差比例法 + 多级撤销栈。
+        # _outlier_masks：每子图一个 bool 掩码（True=保留）或 None（全部保留），
+        # 长度等于该子图第一条曲线在「剔除那一刻」的数据长度；之后新追加的
+        # 数据点不在掩码范围内，默认保留。_outlier_stack 记录每次剔除前的掩码，
+        # 供多级撤销（退到底即全部恢复）。
+        self._outlier_spin = None     # 比例输入（0.5%~50%，默认 5%）
+        self._outlier_btn = None      # 「剔除离群点」按钮
+        self._outlier_undo_btn = None  # 「撤销」按钮
+        self._outlier_label = None    # 已移除点数计数
+        self._outlier_masks = None    # 每子图掩码列表（None=未启用剔除）
+        self._outlier_stack = []      # 撤销栈：每项为上一步的多子图掩码列表
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -605,13 +616,17 @@ class ChartPanel(QWidget):
         self._pg_hover_view = None
         self._hide_pg_hover()
 
-    def _update_pg_hover(self, index, mouse_x):
-        """在 index 子图上按视图横坐标 mouse_x 定位最近数据点并更新悬停元素。
+    def _update_pg_hover(self, index, mouse_x, spec=None):
+        """在 index 子图上按视图横坐标鼠标定位最近数据点并更新悬停元素。
 
-        鼠标移动与数据重绘后的恢复共用本方法。
+        鼠标移动与数据重绘后的恢复共用本方法。spec 缺省用剔除掩码作用
+        后的可见数据，保证悬停读值与图上显示的曲线一致（被剔除的离群
+        点不参与定位）。
         """
+        if spec is None:
+            spec = self._visible_spec(self._last)
         pi = self._pg_plots[index]
-        sp = self._last[index]
+        sp = spec[index]
         # 每条曲线取横坐标最接近鼠标的数据点；nearest 为全图最近点
         rows, nearest = [], None
         for s in sp['plot']:
@@ -661,7 +676,8 @@ class ChartPanel(QWidget):
             self._pg_hover_view = None
             return
         try:
-            self._update_pg_hover(index, mouse_x)
+            self._update_pg_hover(index, mouse_x,
+                                  self._visible_spec(self._last))
         except Exception:
             # 恢复失败（元素失效等）：丢弃引用，下次鼠标移动时重建
             self._discard_pg_hover()
@@ -804,6 +820,9 @@ class ChartPanel(QWidget):
     def _commit_pg(self, spec, force_autorange=False):
         import pyqtgraph as pg
         from pyqtgraph import mkPen
+        # 离群点剔除掩码：渲染前把第一曲线按掩码过滤（只影响显示结果，
+        # _last 保持原始数据，撤销/引擎重放都从这里重新过滤）
+        spec = self._visible_spec(spec)
         # 实时流式路径：结构未变（曲线/参考线数量、图例、轴模式一致）时
         # 只 setData 复用已有控件，避开每帧全量 pi.clear()+重建 PlotDataItem
         # 的控件抖动——pyqtgraph 大流量实时绘制卡顿的主因之一。拟合开启时
@@ -1015,6 +1034,8 @@ class ChartPanel(QWidget):
             self._pg_cache = None
             # 新数据到来散点恢复显示（清除状态不跨数据段）
             self._scatter_hidden = False
+            # 离群点剔除状态一并重置（掩码/撤销栈/计数）
+            self._reset_outlier_state()
             self._reset_clear_confirm()
             for pi in self._pg_plots:
                 pi.clear()
@@ -1099,12 +1120,49 @@ class ChartPanel(QWidget):
         lay.addWidget(self._clear_btn)
         lay.addStretch(1)
 
+        # 离群点剔除：残差比例法。比例输入 + 剔除按钮 + 多级撤销 + 计数。
+        # 仅拟合开启时可用（需要拟合曲线算残差）；剔除对显示曲线/散点/拟合/
+        # R²/悬停/视图范围生效，不影响模块原始数据（见 _visible_spec）。
+        row2 = QWidget()
+        lay2 = QHBoxLayout(row2)
+        lay2.setContentsMargins(0, 0, 0, 0)
+        lay2.setSpacing(6)
+
+        self._outlier_spin = DoubleSpinBox()
+        self._outlier_spin.setRange(0.5, 50.0)
+        self._outlier_spin.setDecimals(1)
+        self._outlier_spin.setValue(5.0)
+        self._outlier_spin.setSuffix(" %")
+        self._outlier_spin.setMinimumWidth(84)
+        self._outlier_spin.setEnabled(False)
+        self._outlier_spin.valueChanged.connect(self._sync_outlier_btn_state)
+
+        self._outlier_btn = PushButton("剔除离群点")
+        self._outlier_btn.setEnabled(False)
+        self._outlier_btn.clicked.connect(self._on_outlier_remove_clicked)
+
+        self._outlier_undo_btn = PushButton("撤销")
+        self._outlier_undo_btn.setEnabled(False)
+        self._outlier_undo_btn.clicked.connect(self._on_outlier_undo_clicked)
+
+        self._outlier_label = CaptionLabel("已移除 0 点")
+        self._outlier_label.setFixedHeight(28)
+
+        lay2.addWidget(BodyLabel("剔除比例"))
+        lay2.addWidget(self._outlier_spin)
+        lay2.addSpacing(4)
+        lay2.addWidget(self._outlier_btn)
+        lay2.addWidget(self._outlier_undo_btn)
+        lay2.addWidget(self._outlier_label)
+        lay2.addStretch(1)
+
         # 拟合方式注解：次要说明文字，CaptionLabel 主题自适应（不设硬编码色）
         self._fit_hint = CaptionLabel()
         self._fit_hint.setWordWrap(True)
         self._update_fit_hint()
 
         vlay.addWidget(row)
+        vlay.addWidget(row2)
         vlay.addWidget(self._fit_hint)
 
         self._view_window_row = box
@@ -1148,7 +1206,7 @@ class ChartPanel(QWidget):
         事务，保证窗口右边缘跟踪最新数据而非上一次事务。
         """
         if spec is None:
-            spec = self._last
+            spec = self._visible_spec(self._last)
         if (self._engine != 'pyqtgraph' or self._win_full_range
                 or spec is None):
             return
@@ -1174,6 +1232,192 @@ class ChartPanel(QWidget):
         if self._view_window_row is not None:
             self._view_window_row.setVisible(self._engine == 'pyqtgraph')
         self._sync_clear_btn_state()
+        self._sync_outlier_btn_state()
+
+    # ---------------- 离群点剔除（残差比例法 + 多级撤销） ----------------
+    def _visible_spec(self, spec):
+        """返回剔除掩码作用后的可见事务副本。
+
+        掩码只作用于每个子图的第一条曲线（拟合/剔除的对象曲线），其余
+        曲线原样保留。无掩码时直接返回原对象（零开销，实时路径不触发
+        复制）。掩码长度不足当前数据时按 True 补齐——新采集到的点
+        不在掩码范围内，默认保留。
+        """
+        masks = self._outlier_masks
+        if masks is None or spec is None:
+            return spec
+        import numpy as np
+        out, changed = [], False
+        for i, sp in enumerate(spec):
+            m = masks[i] if i < len(masks) else None
+            if m is None or not sp['plot']:
+                out.append(sp)
+                continue
+            s = sp['plot'][0]
+            x, y = s['x'], s['y']
+            if not len(x):
+                out.append(sp)
+                continue
+            m = np.asarray(m[:len(x)], dtype=bool)
+            if len(m) < len(x):          # 新追加的点不在掩码内 → 保留
+                m = np.concatenate([m, np.ones(len(x) - len(m), dtype=bool)])
+            if bool(m.all()):
+                out.append(sp)
+                continue
+            ns = dict(sp)
+            ns['plot'] = [dict(s, x=np.asarray(x)[m], y=np.asarray(y)[m]),
+                          *sp['plot'][1:]]
+            out.append(ns)
+            changed = True
+        return out if changed else spec
+
+    def _outlier_residuals(self, x, y):
+        """当前拟合方式下每个点的 |残差|；定义域外的点返回 nan（不参与剔除）。
+
+        与 _fit_points 使用同一套拟合定义：多项式对全部点、对数要求
+        x>0、幂函数要求 x>0 且 y>0——定义域外的点只是不参与拟合，
+        不应被当作离群点剔除，故标记为 nan。
+        """
+        import numpy as np
+        mode = self._fit_mode
+        if mode in (1, 2, 3):
+            if len(x) < mode + 1:
+                return None
+            try:
+                coef = np.polyfit(x, y, mode)
+            except Exception:
+                return None
+            return np.abs(y - np.polyval(coef, x))
+        if mode == 4:                    # 对数 y = a·ln(x) + b
+            idx = np.flatnonzero(x > 0)
+            if len(idx) < 2:
+                return None
+            try:
+                a, b = np.polyfit(np.log(x[idx]), y[idx], 1)
+            except Exception:
+                return None
+            res = np.full(len(x), np.nan)
+            res[idx] = np.abs(y[idx] - (a * np.log(x[idx]) + b))
+            return res
+        if mode == 5:                    # 幂函数 y = a·x^b
+            idx = np.flatnonzero((x > 0) & (y > 0))
+            if len(idx) < 2:
+                return None
+            try:
+                b_, ln_a = np.polyfit(np.log(x[idx]), np.log(y[idx]), 1)
+                a = float(np.exp(ln_a))
+            except Exception:
+                return None
+            res = np.full(len(x), np.nan)
+            res[idx] = np.abs(y[idx] - a * x[idx] ** b_)
+            return res
+        return None
+
+    def _on_outlier_remove_clicked(self):
+        """「剔除离群点」：对当前剩余数据重拟合，移除残差最大的前 x% 点。
+
+        每次点击都在**当前剩余数据**上剔除（多次点击可反复剔除）；
+        剔除前把当前掩码压入撤销栈，供多级撤销。保证剩余点数满足
+        当前拟合的最低要求（多项式 deg+1，对数/幂至少 2 点）。
+        """
+        if (self._engine != 'pyqtgraph' or self._fit_mode <= 0
+                or self._last is None):
+            return
+        import numpy as np
+        pct = self._outlier_spin.value() if self._outlier_spin else 5.0
+        min_keep = self._fit_mode + 1 if self._fit_mode in (1, 2, 3) else 2
+        old_masks = self._outlier_masks
+        new_masks, removed_total = [], 0
+        for sp in self._last:
+            if not sp['plot'] or not len(sp['plot'][0]['x']):
+                new_masks.append(old_masks[len(new_masks)]
+                                 if old_masks and len(new_masks) < len(old_masks)
+                                 else None)
+                continue
+            s = sp['plot'][0]
+            x = np.asarray(s['x'], dtype=float)
+            y = np.asarray(s['y'], dtype=float)
+            # 当前可见数据的掩码（含 True 补齐），剔除只作用于可见点
+            cur = old_masks[len(new_masks)] if (old_masks
+                    and len(new_masks) < len(old_masks)) else None
+            keep = None
+            if cur is not None:
+                # np.array() 强制拷贝：np.asarray(bool切片, dtype=bool) 会返回
+                # 原掩码的视图，后续 keep[...] = False 会就地改掉栈里已保存的
+                # 旧掩码，导致撤销失效（多级撤销链被上一帧污染）。
+                keep = np.array(cur[:len(x)], dtype=bool, copy=True)
+                if len(keep) < len(x):
+                    keep = np.concatenate(
+                        [keep, np.ones(len(x) - len(keep), dtype=bool)])
+            vx = x if keep is None else x[keep]
+            vy = y if keep is None else y[keep]
+            res = self._outlier_residuals(vx, vy)
+            if res is None:
+                new_masks.append(cur)
+                continue
+            valid = np.flatnonzero(~np.isnan(res))   # 定义域内的候选点
+            n_rem = max(1, int(round(len(valid) * pct / 100.0)))
+            n_rem = min(n_rem, max(0, len(valid) - min_keep))
+            if n_rem <= 0:
+                new_masks.append(cur)
+                continue
+            order = valid[np.argsort(res[valid])[::-1]][:n_rem]  # 残差最大者
+            if keep is None:
+                keep = np.ones(len(x), dtype=bool)
+            remove_orig = np.flatnonzero(keep)[order]            # 映射回原始下标
+            keep[remove_orig] = False
+            new_masks.append(keep)
+            removed_total += int(n_rem)
+        if removed_total == 0:
+            return
+        # 压栈（多级撤销）+ 应用新掩码 + 重绘
+        self._outlier_stack.append(old_masks)
+        self._outlier_masks = new_masks
+        self._sync_outlier_btn_state()
+        self._commit(self._last)
+
+    def _on_outlier_undo_clicked(self):
+        """「撤销」：回退到上一次剔除前的掩码（一步步恢复，退到底即全部恢复）。"""
+        if self._outlier_stack:
+            self._outlier_masks = self._outlier_stack.pop()
+            self._sync_outlier_btn_state()
+            if self._last is not None:
+                self._commit(self._last)
+
+    def _reset_outlier_state(self):
+        """清空剔除状态（clear_chart 调用）：掩码、撤销栈、计数全部复位。"""
+        self._outlier_masks = None
+        self._outlier_stack = []
+        self._sync_outlier_btn_state()
+
+    def _update_outlier_label(self):
+        """刷新「已移除 N 点」计数（按各子图掩码里的 False 数累加）。"""
+        if self._outlier_label is None:
+            return
+        total = 0
+        if self._outlier_masks is not None:
+            import numpy as np
+            for m in self._outlier_masks:
+                if m is not None and m.size:
+                    total += int(m.size - np.asarray(m, dtype=bool).sum())
+        self._outlier_label.setText(f"已移除 {total} 点")
+
+    def _sync_outlier_btn_state(self, *_args):
+        """剔除控件可用性：仅 pyqtgraph + 拟合开启且有待处理数据时可用；
+        撤销按钮有栈可退时可用；计数随掩码变化实时更新。"""
+        if self._outlier_btn is None:
+            return
+        active = self._engine == 'pyqtgraph' and self._fit_mode > 0
+        has_data = False
+        if self._last is not None:
+            has_data = any(
+                sp['plot'] and len(sp['plot'][0]['x']) >= 2 for sp in self._last)
+        if self._outlier_spin is not None:
+            self._outlier_spin.setEnabled(active)
+        self._outlier_btn.setEnabled(active and has_data)
+        if self._outlier_undo_btn is not None:
+            self._outlier_undo_btn.setEnabled(bool(self._outlier_stack))
+        self._update_outlier_label()
 
     # ---------------- 曲线拟合（仅 pyqtgraph） ----------------
     # 拟合方式注解文案（索引与 _fit_combo / _fit_mode 一致）
@@ -1202,6 +1446,7 @@ class ChartPanel(QWidget):
         self._scatter_hidden = False
         self._update_fit_hint()
         self._sync_clear_btn_state()
+        self._sync_outlier_btn_state()
         if self._last is not None:
             self._commit(self._last)
 
