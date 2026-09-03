@@ -434,8 +434,8 @@ class ChartPanel(QWidget):
         self._pg_hover_vline = None   # pyqtgraph 悬停指示线（懒创建）
         self._pg_hover_label = None   # pyqtgraph 悬停数据标签（懒创建）
         self._pg_hover_view = None    # 最近悬停位置 (子图索引, 视图x)，重绘后据此恢复
-        # 视图窗口控制 + 曲线拟合（仅 pyqtgraph）：同一控制行
-        self._view_window_row = None  # 控制行控件（懒创建，模块嵌入图表卡顶部）
+        # 视图窗口控制 + 曲线拟合 + 离群点剔除（仅 pyqtgraph）：紧凑分析面板
+        self._analysis_panel = None   # 面板控件（懒创建，模块嵌入图表卡左侧栏）
         self._win_switch = None       # SwitchButton「显示整个范围」
         self._win_spin = None         # DoubleSpinBox 窗口秒数（支持小数）
         self._win_full_range = True   # True=整个范围（默认），False=最近 N 秒
@@ -538,7 +538,7 @@ class ChartPanel(QWidget):
         时间序列（横坐标递增）用二分定位，长序列下鼠标移动不掉帧；
         横坐标非递增时退回线性扫描保证结果正确。
         """
-        if not xs:
+        if len(xs) == 0:
             return None
         if len(xs) > 64 and xs[0] <= xs[-1]:
             k = bisect.bisect_left(xs, x)
@@ -1043,38 +1043,34 @@ class ChartPanel(QWidget):
             self.figure.clear()
             self._widget.draw()
 
-    # ---------------- 视图窗口控制 + 曲线拟合（仅 pyqtgraph） ----------------
-    def get_view_window_widget(self):
-        """返回「显示整个范围 / 最近 N 秒 + 拟合」控制行，模块插入图表卡顶部即可。
+    # ------------ 视图窗口控制 + 曲线拟合 + 离群点剔除（仅 pyqtgraph） ------------
+    def get_analysis_panel(self):
+        """返回紧凑纵向的图表分析面板（视图窗口 + 拟合 + 离群点剔除）。
 
-        仅 pyqtgraph 引擎下可见可用；matplotlib / 占位模式下该行自动隐藏
-        （隐藏后不占布局空间，其余功能不受影响）。
-        懒创建：同一 ChartPanel 多次调用返回同一控件实例。
+        模块把该面板放进图表卡左侧栏（数据记录下方）即可；仅 pyqtgraph
+        引擎下可见可用，matplotlib / 占位模式下自动隐藏（隐藏后不占布局
+        空间）。懒创建：同一 ChartPanel 多次调用返回同一控件实例。
         """
-        if self._view_window_row is None:
+        if self._analysis_panel is None:
             self._build_view_window_widget()
-        return self._view_window_row
+        return self._analysis_panel
 
     def _build_view_window_widget(self):
-        """构建图表分析控制区：视图窗口（开关+秒数）+ 拟合（方式+注解）。
+        """构建紧凑纵向的图表分析面板：视图窗口 + 曲线拟合 + 离群点剔除。
 
-        外层纵向两行：第一行是控件（开关/秒数/拟合下拉），第二行是
-        CaptionLabel 注解——随拟合选择动态更新，说明该方式的公式与
-        数据要求（如定义域），用户无需查文档即可选对拟合类型。
+        面向图表卡左侧栏（窄列）排布：每个控件独占一行、按钮全宽紧凑，
+        拟合注解用 CaptionLabel 自动换行，说明该方式的公式与数据要求
+        （如定义域），用户无需查文档即可选对拟合类型。
 
         SwitchButton 的 on/off 文字必须用 setOnText/setOffText 指定中文：
         构造参数传入的文字会在 setChecked 时被默认的英文 On/Off 覆盖
         （无中文翻译器环境下）。
         """
         box = QWidget()
+        box.setMinimumWidth(180)
         vlay = QVBoxLayout(box)
         vlay.setContentsMargins(0, 0, 0, 0)
-        vlay.setSpacing(2)
-
-        row = QWidget()
-        lay = QHBoxLayout(row)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(10)
+        vlay.setSpacing(8)
 
         self._win_switch = SwitchButton()
         self._win_switch.setOnText("显示整个范围")   # 勾选=显示全部数据
@@ -1087,7 +1083,7 @@ class ChartPanel(QWidget):
         self._win_spin.setDecimals(1)
         self._win_spin.setValue(self._win_seconds)
         self._win_spin.setSuffix(" 秒")
-        self._win_spin.setMinimumWidth(110)
+        self._win_spin.setMinimumWidth(96)
         self._win_spin.setEnabled(False)            # 整范围模式下输入框不可用
         self._win_spin.valueChanged.connect(self._on_win_seconds_changed)
 
@@ -1095,21 +1091,30 @@ class ChartPanel(QWidget):
         self._fit_combo.addItems(["无拟合", "线性拟合", "二次拟合", "三次拟合",
                                   "对数拟合", "幂函数拟合"])
         self._fit_combo.setCurrentIndex(0)
-        self._fit_combo.setMinimumWidth(110)
+        self._fit_combo.setMinimumWidth(120)
         self._fit_combo.currentIndexChanged.connect(self._on_fit_type_changed)
 
-        lay.addWidget(self._win_switch)
-        lay.addWidget(BodyLabel("最近"))
-        lay.addWidget(self._win_spin)
-        lay.addSpacing(8)
-        lay.addWidget(BodyLabel("拟合"))
-        lay.addWidget(self._fit_combo)
-        lay.addSpacing(8)
+        row_win = QWidget()
+        lay_win = QHBoxLayout(row_win)
+        lay_win.setContentsMargins(0, 0, 0, 0)
+        lay_win.setSpacing(8)
+        lay_win.addWidget(BodyLabel("最近"))
+        lay_win.addWidget(self._win_spin)
+        lay_win.addStretch(1)
+
+        row_fit = QWidget()
+        lay_fit = QHBoxLayout(row_fit)
+        lay_fit.setContentsMargins(0, 0, 0, 0)
+        lay_fit.setSpacing(8)
+        lay_fit.addWidget(BodyLabel("拟合"))
+        lay_fit.addWidget(self._fit_combo)
+        lay_fit.addStretch(1)
 
         # 清除离散点：二次点击确认，防止误触删掉拟合时的原始散点。
         # 第一次点击进入确认态（文字变为「再次点击确认清除」+ 红色强调），
         # 3 秒内再次点击才真正清除；超时自动复位。
         self._clear_btn = PushButton("清除离散点")
+        self._clear_btn.setFixedHeight(32)
         self._clear_btn.clicked.connect(self._on_clear_btn_clicked)
         self._clear_btn.setEnabled(False)   # 拟合未开启时不可用
         self._clear_timer = QTimer(self)
@@ -1117,55 +1122,62 @@ class ChartPanel(QWidget):
         self._clear_timer.setInterval(3000)
         self._clear_timer.timeout.connect(self._reset_clear_confirm)
 
-        lay.addWidget(self._clear_btn)
-        lay.addStretch(1)
-
         # 离群点剔除：残差比例法。比例输入 + 剔除按钮 + 多级撤销 + 计数。
         # 仅拟合开启时可用（需要拟合曲线算残差）；剔除对显示曲线/散点/拟合/
         # R²/悬停/视图范围生效，不影响模块原始数据（见 _visible_spec）。
-        row2 = QWidget()
-        lay2 = QHBoxLayout(row2)
-        lay2.setContentsMargins(0, 0, 0, 0)
-        lay2.setSpacing(6)
-
         self._outlier_spin = DoubleSpinBox()
         self._outlier_spin.setRange(0.5, 50.0)
         self._outlier_spin.setDecimals(1)
         self._outlier_spin.setValue(5.0)
         self._outlier_spin.setSuffix(" %")
-        self._outlier_spin.setMinimumWidth(84)
+        self._outlier_spin.setMinimumWidth(80)
         self._outlier_spin.setEnabled(False)
         self._outlier_spin.valueChanged.connect(self._sync_outlier_btn_state)
 
         self._outlier_btn = PushButton("剔除离群点")
+        self._outlier_btn.setFixedHeight(32)
         self._outlier_btn.setEnabled(False)
         self._outlier_btn.clicked.connect(self._on_outlier_remove_clicked)
 
         self._outlier_undo_btn = PushButton("撤销")
+        self._outlier_undo_btn.setFixedHeight(32)
         self._outlier_undo_btn.setEnabled(False)
         self._outlier_undo_btn.clicked.connect(self._on_outlier_undo_clicked)
 
         self._outlier_label = CaptionLabel("已移除 0 点")
         self._outlier_label.setFixedHeight(28)
 
-        lay2.addWidget(BodyLabel("剔除比例"))
-        lay2.addWidget(self._outlier_spin)
-        lay2.addSpacing(4)
-        lay2.addWidget(self._outlier_btn)
-        lay2.addWidget(self._outlier_undo_btn)
-        lay2.addWidget(self._outlier_label)
-        lay2.addStretch(1)
+        row_pct = QWidget()
+        lay_pct = QHBoxLayout(row_pct)
+        lay_pct.setContentsMargins(0, 0, 0, 0)
+        lay_pct.setSpacing(8)
+        lay_pct.addWidget(BodyLabel("剔除比例"))
+        lay_pct.addWidget(self._outlier_spin)
+        lay_pct.addStretch(1)
+
+        row_undo = QWidget()
+        lay_undo = QHBoxLayout(row_undo)
+        lay_undo.setContentsMargins(0, 0, 0, 0)
+        lay_undo.setSpacing(8)
+        lay_undo.addWidget(self._outlier_undo_btn)
+        lay_undo.addWidget(self._outlier_label)
+        lay_undo.addStretch(1)
 
         # 拟合方式注解：次要说明文字，CaptionLabel 主题自适应（不设硬编码色）
         self._fit_hint = CaptionLabel()
         self._fit_hint.setWordWrap(True)
         self._update_fit_hint()
 
-        vlay.addWidget(row)
-        vlay.addWidget(row2)
+        vlay.addWidget(self._win_switch)
+        vlay.addWidget(row_win)
+        vlay.addWidget(row_fit)
+        vlay.addWidget(self._clear_btn)
+        vlay.addWidget(row_pct)
+        vlay.addWidget(self._outlier_btn)
+        vlay.addWidget(row_undo)
         vlay.addWidget(self._fit_hint)
 
-        self._view_window_row = box
+        self._analysis_panel = box
         self._sync_view_window_visibility()
 
     def _on_win_switch_changed(self, checked):
@@ -1228,9 +1240,9 @@ class ChartPanel(QWidget):
             pi.setXRange(x_left, x_last, padding=0)
 
     def _sync_view_window_visibility(self):
-        """视图窗口控制行仅在 pyqtgraph 引擎下显示。"""
-        if self._view_window_row is not None:
-            self._view_window_row.setVisible(self._engine == 'pyqtgraph')
+        """分析面板仅在 pyqtgraph 引擎下显示。"""
+        if self._analysis_panel is not None:
+            self._analysis_panel.setVisible(self._engine == 'pyqtgraph')
         self._sync_clear_btn_state()
         self._sync_outlier_btn_state()
 
@@ -2030,10 +2042,12 @@ class FloatingDataPanel(QWidget):
 
     MAX_SUMMARY_LEN = 50
 
-    def __init__(self, content_widget, summary_widget=None, title="数据记录", parent=None):
+    def __init__(self, content_widget, summary_widget=None, title="数据记录",
+                 footer_widget=None, parent=None):
         super().__init__(parent)
         self._content_widget = content_widget
         self._summary_widget = summary_widget
+        self._footer_widget = footer_widget
         self._collapsed = False
         self._dragging = False
         self._drag_offset = QPoint()
@@ -2074,6 +2088,10 @@ class FloatingDataPanel(QWidget):
         self._content_widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         main_layout.addWidget(self._content_widget, 1)
+
+        # 底部常驻控件：折叠内容后仍可见（如开始/停止按钮）
+        if self._footer_widget is not None:
+            main_layout.addWidget(self._footer_widget)
 
         # 定时刷新折叠态摘要文本（实时值在持续更新）
         self._summary_timer = QTimer(self)
@@ -2118,6 +2136,19 @@ class FloatingDataPanel(QWidget):
             widget = self._content_widget
             self._content_widget = None
             return widget
+        return None
+
+    def release_footer(self):
+        """把底部常驻控件从面板布局中移出并返回，避免它随面板销毁。
+
+        退出全屏后模块仍持有该控件（如开始/停止按钮），再次全屏复用。
+        """
+        if self._footer_widget is not None:
+            self.layout().removeWidget(self._footer_widget)
+            self._footer_widget.setParent(None)
+            w = self._footer_widget
+            self._footer_widget = None
+            return w
         return None
 
     def paintEvent(self, e):
@@ -2247,10 +2278,9 @@ class CollapsibleCard(QWidget):
         # 全屏浮动面板相关
         self._overlay_content_widget = None   # 全屏时浮于图表上方的控件（如数据记录区）
         self._overlay_summary_widget = None   # 折叠态显示的摘要标签（如实时值）
-        self._overlay_orig_parent = None      # 浮动控件的原父控件
-        self._overlay_orig_layout = None      # 浮动控件的原布局
-        self._overlay_orig_index = -1         # 浮动控件在原布局中的索引
-        self._overlay_orig_stretch = 0        # 浮动控件在原布局中的 stretch
+        self._overlay_extra_widgets = []      # 一并浮起的附加控件（如拟合分析面板）
+        self._overlay_footer_widget = None    # 浮动栏底部常驻控件（折叠时也可见）
+        self._overlay_orig_records = []       # 每个浮动控件的 (控件, 原父, 布局, 索引, stretch)
         self._floating_panel = None           # 全屏时的 FloatingDataPanel 实例
         self._fullscreen_hidden_widgets = []  # 全屏时需隐藏的控件
         self._chart_min_height = 0            # 图表内容区最小高度（0 表示不限制）
@@ -2403,7 +2433,8 @@ class CollapsibleCard(QWidget):
             self._exit_fullscreen()
 
     # ---------- 全屏浮动面板接口 ----------
-    def set_fullscreen_overlay(self, content_widget, summary_widget=None):
+    def set_fullscreen_overlay(self, content_widget, summary_widget=None,
+                               extra_widgets=None, footer_widget=None):
         """设置全屏时浮动面板的内容控件。
 
         Args:
@@ -2411,44 +2442,52 @@ class CollapsibleCard(QWidget):
                             全屏时该控件会被移入可拖动、可折叠的浮动面板；
                             退出全屏时自动恢复到原布局原位置。
             summary_widget: 折叠态显示的摘要标签（如实时值标签，可选）
+            extra_widgets: 一并浮起的附加控件列表（如拟合分析面板，可选）
+            footer_widget: 浮动栏底部常驻控件，折叠时也可见
+                           （如开始/停止按钮，可选）
         """
         self._overlay_content_widget = content_widget
         self._overlay_summary_widget = summary_widget
+        self._overlay_extra_widgets = list(extra_widgets or [])
+        self._overlay_footer_widget = footer_widget
 
     def add_fullscreen_hidden_widget(self, widget):
         """注册全屏时需隐藏的控件"""
         self._fullscreen_hidden_widgets.append(widget)
 
-    def _detach_overlay_widget(self):
-        """从原布局中移除浮动内容控件，并记录原位置以便恢复。
+    def _detach_overlay_widgets(self):
+        """从原布局中移除全部浮动内容控件，并记录原位置以便恢复。
 
-        Returns: 被移除的控件（成功时）或 None
+        Returns: 被移除的控件列表（可能为空）
         """
-        widget = self._overlay_content_widget
-        if widget is None:
-            return None
-        self._overlay_orig_parent = widget.parentWidget()
-        # 在父控件的布局树中递归查找包含该 widget 的布局及索引
-        self._overlay_orig_layout = None
-        self._overlay_orig_index = -1
-        self._overlay_orig_stretch = 0
-        if self._overlay_orig_parent is not None:
-            result = self._find_widget_in_layout_tree(
-                self._overlay_orig_parent.layout(), widget)
-            if result is not None:
-                self._overlay_orig_layout, self._overlay_orig_index = result
-        if self._overlay_orig_layout is not None:
-            # 记录 stretch factor
-            item = self._overlay_orig_layout.itemAt(self._overlay_orig_index)
-            if item is not None:
-                # QBoxLayout / QGridLayout 等支持 stretch
-                try:
-                    self._overlay_orig_stretch = self._overlay_orig_layout.stretch(self._overlay_orig_index)
-                except Exception:
-                    self._overlay_orig_stretch = 0
-            self._overlay_orig_layout.removeWidget(widget)
-        widget.setParent(None)
-        return widget
+        widgets = [self._overlay_content_widget, *self._overlay_extra_widgets]
+        self._overlay_orig_records = []
+        detached = []
+        for widget in widgets:
+            if widget is None:
+                continue
+            orig_parent = widget.parentWidget()
+            orig_layout, orig_index, orig_stretch = None, -1, 0
+            if orig_parent is not None:
+                # 在父控件的布局树中递归查找包含该 widget 的布局及索引
+                result = self._find_widget_in_layout_tree(
+                    orig_parent.layout(), widget)
+                if result is not None:
+                    orig_layout, orig_index = result
+            if orig_layout is not None:
+                # 记录 stretch factor
+                item = orig_layout.itemAt(orig_index)
+                if item is not None:
+                    try:
+                        orig_stretch = orig_layout.stretch(orig_index)
+                    except Exception:
+                        orig_stretch = 0
+                orig_layout.removeWidget(widget)
+            widget.setParent(None)
+            self._overlay_orig_records.append(
+                (widget, orig_parent, orig_layout, orig_index, orig_stretch))
+            detached.append(widget)
+        return detached
 
     @staticmethod
     def _find_widget_in_layout_tree(layout, target):
@@ -2468,17 +2507,26 @@ class CollapsibleCard(QWidget):
                     return r
         return None
 
-    def _restore_overlay_widget(self):
-        """将浮动内容控件恢复到原布局原位置"""
-        widget = self._overlay_content_widget
-        if widget is None or self._overlay_orig_layout is None:
-            return
-        widget.setParent(self._overlay_orig_parent)
-        if self._overlay_orig_index >= 0:
-            self._overlay_orig_layout.insertWidget(self._overlay_orig_index, widget, self._overlay_orig_stretch)
-        else:
-            self._overlay_orig_layout.addWidget(widget, self._overlay_orig_stretch)
-        widget.show()
+    def _restore_overlay_widgets(self):
+        """将浮动内容控件恢复到原布局原位置。
+
+        按原索引升序恢复同一布局内的多个控件，保持相对顺序正确。
+        Returns: 已恢复的控件列表
+        """
+        restored = []
+        for widget, orig_parent, orig_layout, orig_index, orig_stretch in sorted(
+                self._overlay_orig_records, key=lambda r: r[3]):
+            if orig_layout is None:
+                continue
+            widget.setParent(orig_parent)
+            if orig_index >= 0:
+                orig_layout.insertWidget(orig_index, widget, orig_stretch)
+            else:
+                orig_layout.addWidget(widget, orig_stretch)
+            widget.show()
+            restored.append(widget)
+        self._overlay_orig_records = []
+        return restored
 
     def _find_content_host(self):
         """向上查找适合作为全屏宿主的滚动区 viewport。
@@ -2567,16 +2615,25 @@ class CollapsibleCard(QWidget):
         if self.layout() is not None:
             self.layout().activate()
 
-        # 创建浮动数据面板：将数据记录区控件浮于图表上方
+        # 创建浮动数据面板：将数据记录区与分析控件浮于图表上方
         if self._overlay_content_widget is not None:
-            overlay_content = self._detach_overlay_widget()
-            if overlay_content is not None:
+            detached = self._detach_overlay_widgets()
+            if detached:
                 # 嵌入模式：隐藏 data_text 自身标题栏，避免与浮动面板标题重复
-                if hasattr(overlay_content, 'set_embedded_mode'):
-                    overlay_content.set_embedded_mode(True)
+                for w in detached:
+                    if hasattr(w, 'set_embedded_mode'):
+                        w.set_embedded_mode(True)
+                # 多个浮动控件（如数据记录区 + 拟合分析面板）纵向堆叠进一个容器
+                overlay_box = QWidget()
+                box_lay = QVBoxLayout(overlay_box)
+                box_lay.setContentsMargins(0, 0, 0, 0)
+                box_lay.setSpacing(10)
+                for w in detached:
+                    box_lay.addWidget(w)
                 self._floating_panel = FloatingDataPanel(
-                    overlay_content,
+                    overlay_box,
                     summary_widget=self._overlay_summary_widget,
+                    footer_widget=self._overlay_footer_widget,
                     parent=self,
                 )
                 self._floating_panel.move(16, 16)
@@ -2633,12 +2690,16 @@ class CollapsibleCard(QWidget):
         # 销毁浮动数据面板，恢复内容控件到原布局
         if self._floating_panel is not None:
             released = self._floating_panel.release_content()
+            self._floating_panel.release_footer()
             self._floating_panel.deleteLater()
             self._floating_panel = None
-            self._restore_overlay_widget()
             # 关闭嵌入模式，恢复 data_text 自身标题栏
-            if released is not None and hasattr(released, 'set_embedded_mode'):
-                released.set_embedded_mode(False)
+            for w in self._restore_overlay_widgets():
+                if hasattr(w, 'set_embedded_mode'):
+                    w.set_embedded_mode(False)
+            # released 是临时容器，子控件已恢复回原布局，直接销毁
+            if released is not None:
+                released.deleteLater()
 
         # 恢复全屏时隐藏的控件
         for w in self._fullscreen_hidden_widgets:
