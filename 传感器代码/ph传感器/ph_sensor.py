@@ -31,7 +31,7 @@ import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
     fluent_message_box, ChartPanel,
-    SerialThread, SampleRateComboBox, CalibrationDialog, SimulatorThread,
+    SerialThread, SampleRateComboBox, CalibrationMessageBox, SimulatorThread,
     load_sensor_config, save_sensor_config, _get_config_file_path,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
@@ -674,8 +674,8 @@ class PhSensorWidget(QWidget):
         self.save_btn.setEnabled(False)
 
     def edit_calibration(self):
-        """编辑校准参数对话框"""
-        dialog = CalibrationDialog(self.calibration_points, self)
+        """编辑校准参数对话框（Fluent MessageBox 风格：掩码弹窗 + 确定/取消）"""
+        dialog = CalibrationMessageBox(self.calibration_points, self)
         if dialog.exec() == 1:  # QDialog.Accepted
             new_points = dialog.get_calibration_points()
             self.calibration_mode = dialog.get_calibration_mode()
