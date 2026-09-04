@@ -44,6 +44,7 @@ from qfluentwidgets import (
     LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
+    ConfigSerializer,
     ExpandGroupSettingCard, FluentIcon, RadioButton, SettingCard,
 )
 
@@ -128,13 +129,43 @@ DEFAULT_THEME_COLOR = '#0078d4'
 # app_config.json 默认值（首次启动与「恢复默认设置」共用）
 _APP_CONFIG_DEFAULT = {
     "Chart": {"Engine": "pyqtgraph"},
-    "General": {"ConfigPersistenceEnabled": True, "ThemeColorMode": "custom"},
+    "General": {
+        "ConfigPersistenceEnabled": True,
+        "ThemeColorMode": "custom",
+        "PinnedModules": [],
+    },
     "QFluentWidgets": {
         "FontFamilies": ["Segoe UI", "Microsoft YaHei", "PingFang SC"],
         "ThemeColor": "#ff0078d4",
         "ThemeMode": "Light",
     },
 }
+
+
+class StringListSerializer(ConfigSerializer):
+    """字符串列表序列化器：列表直接以 JSON 数组写入 app_config.json。
+
+    qconfig 原生 ConfigItem 默认只支持标量值（字符串/数字/布尔），
+    主页「模块置顶」需要持久化一个模块名列表，故自定义序列化器
+    保证读写两端都是 list（qconfig.save 的 json.dump 原生支持数组）。
+    deserialize 兼容旧版本写入的 JSON 字符串（如 "[]"），平滑升级。
+    """
+
+    def serialize(self, value):
+        try:
+            return list(value or [])
+        except Exception:
+            return []
+
+    def deserialize(self, value):
+        try:
+            if isinstance(value, list):
+                return list(value)
+            if isinstance(value, str):
+                return json.loads(value or "[]")
+            return []
+        except Exception:
+            return []
 
 
 # 应用自身配置 — 独立文件存放，不受传感器配置开关影响。
@@ -154,6 +185,11 @@ class AppConfig(QConfig):
     chartEngine = OptionsConfigItem(
         "Chart", "Engine", "pyqtgraph",
         OptionsValidator(["matplotlib", "pyqtgraph"]),
+    )
+    # 主页模块置顶列表（模块名列表，置顶的磁贴排在每组最前面）
+    pinnedModules = ConfigItem(
+        "General", "PinnedModules", [],
+        serializer=StringListSerializer(),
     )
 
 

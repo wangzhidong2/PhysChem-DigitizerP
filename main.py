@@ -42,6 +42,8 @@ from qfluentwidgets import (
     SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
     SwitchSettingCard, MessageBox, qconfig, IndicatorPosition,
     LineEdit,
+    CardWidget, IconWidget, PillToolButton,
+    AdaptiveFlowLayout, ToolTipFilter,
 )
 
 
@@ -128,6 +130,63 @@ def make_text_icon(text: str, size: int = 128) -> QIcon:
 
     p.end()
     return icon
+
+
+# ============================================================
+# 主页模块磁贴（文件夹卡片）
+# ============================================================
+class ModuleFolderTile(CardWidget):
+    """主页模块磁贴：模块文字图标 + 模块名 + 右上角图钉（置顶开关）。
+
+    - 图标沿用侧边栏同款文字图标（V/F/x/pH/v/A，`make_text_icon()` 渲染），
+      亮/暗主题下文字颜色随主题（`apply_theme` 时重绘刷新）
+    - 点击磁贴任意位置 → 进入对应传感器模块（CardWidget.clicked）
+    - 右上角 PillToolButton（FIF.PIN）为 toggle：选中态自动填充主题色，
+      置顶的模块排在本组最前面；状态持久化到 app_config.json
+    - 外观完全由 FluentWidgets 渲染：CardWidget 自带圆角边框 + 悬停
+      背景动画，亮/暗主题自动适配
+    """
+
+    def __init__(self, name: str, icon_text: str, pinned: bool = False, parent=None):
+        super().__init__(parent)
+        self.setBorderRadius(8)
+        self.setFixedHeight(118)
+        self.setMinimumWidth(160)
+        self.setClickEnabled(True)
+        self._name = name
+        self._icon_text = icon_text or '?'
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 4, 10, 8)
+        lay.setSpacing(2)
+
+        # 顶部行：图钉右对齐（Pin 置顶切换）
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(0)
+        top.addStretch(1)
+        self.pin_btn = PillToolButton(FIF.PIN, self)
+        self.pin_btn.setFixedSize(24, 24)
+        self.pin_btn.setChecked(pinned)
+        self.pin_btn.setToolTip("取消置顶" if pinned else "置顶")
+        self.pin_btn.installEventFilter(ToolTipFilter(self.pin_btn))
+        top.addWidget(self.pin_btn)
+        lay.addLayout(top)
+
+        # 模块文字图标（识别区文字，如 V/F/x/pH/v/A）
+        self.icon_widget = IconWidget(QIcon(make_text_icon(self._icon_text, size=128)), self)
+        self.icon_widget.setFixedSize(44, 44)
+        lay.addWidget(self.icon_widget, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        # 模块名
+        self.name_label = BodyLabel(name, self)
+        self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.name_label.setWordWrap(True)
+        lay.addWidget(self.name_label)
+
+    def refresh_icon(self):
+        """按当前主题重绘文字图标（主题切换时调用）。"""
+        self.icon_widget.setIcon(QIcon(make_text_icon(self._icon_text, size=128)))
 
 
 # ============================================================
@@ -256,9 +315,12 @@ def scan_modules(modules_dir):
 # 主页
 # ============================================================
 class HomePageWidget(QWidget):
-    """主页面 - 基于 FluentWidgets 原生可折叠卡片（ExpandGroupSettingCard）
+    """主页面 —— 项目信息 + 仓库地址 + 传感器模块磁贴网格。
 
-    所有卡片使用 FluentWidgets 原生样式，深色/浅色模式自动适配。
+    模块区采用 Windows 资源管理器磁贴风格：每个模块一张卡片，
+    模块文字图标 + 名称 + 右上角图钉（置顶）。网格由
+    AdaptiveFlowLayout 驱动，随窗口宽度自动换行铺满；图钉状态
+    持久化在 app_config.json 的 General.PinnedModules。
     """
 
     module_clicked = Signal(str)
@@ -266,6 +328,7 @@ class HomePageWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._modules = []  # [(icon, name, category), ...]
+        self._tiles = {}    # name -> ModuleFolderTile（磁贴跨重建复用）
         # 自绘 Gitee / GitCode logo（FluentWidgets 没有内置）
         self._img_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "docs", "images")
@@ -294,8 +357,8 @@ class HomePageWidget(QWidget):
         self.content.setObjectName("home_content")
         self.content.setStyleSheet(page_bg_style())
         self.content_layout = QVBoxLayout(self.content)
-        self.content_layout.setContentsMargins(24, 16, 24, 18)
-        self.content_layout.setSpacing(10)
+        self.content_layout.setContentsMargins(20, 10, 20, 12)
+        self.content_layout.setSpacing(8)
 
         # 页面标题：用 FluentWidgets TitleLabel 自动适配主题
         title = TitleLabel("主页")
@@ -309,12 +372,25 @@ class HomePageWidget(QWidget):
         repo_card = self._build_repo_card()
         self._default_expand(repo_card)
 
-        # ========== 传感器模块（动态填充可折叠卡片，默认展开） ==========
-        self.modules_container = QWidget()
-        self.modules_container_layout = QVBoxLayout(self.modules_container)
-        self.modules_container_layout.setContentsMargins(0, 0, 0, 0)
-        self.modules_container_layout.setSpacing(10)
-        self.content_layout.addWidget(self.modules_container)
+        # ========== 传感器模块（文字图标磁贴网格，按物理/化学分组） ==========
+        self._phys_title = TitleLabel("物理实验模块")
+        self._chem_title = TitleLabel("化学实验模块")
+
+        self._phys_flow = AdaptiveFlowLayout()
+        self._phys_flow.setHorizontalSpacing(10)
+        self._phys_flow.setVerticalSpacing(10)
+        self._phys_flow.setWidgetMinimumWidth(160)
+
+        self._chem_flow = AdaptiveFlowLayout()
+        self._chem_flow.setHorizontalSpacing(10)
+        self._chem_flow.setVerticalSpacing(10)
+        self._chem_flow.setWidgetMinimumWidth(160)
+
+        self.content_layout.addWidget(self._phys_title)
+        self.content_layout.addLayout(self._phys_flow)
+        self.content_layout.addSpacing(8)
+        self.content_layout.addWidget(self._chem_title)
+        self.content_layout.addLayout(self._chem_flow)
 
         self.content_layout.addStretch()
         self.scroll.setWidget(self.content)
@@ -423,59 +499,66 @@ class HomePageWidget(QWidget):
         return card
 
     def _rebuild_module_cards(self):
-        """根据 self._modules 重建模块卡片（按物理/化学分组）。"""
-        # 清空旧卡片
-        while self.modules_container_layout.count():
-            item = self.modules_container_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        """根据 self._modules 重建磁贴网格（置顶优先，物理/化学分组）。
 
-        # 按类别分组
-        categories = {}
-        for icon, name, cat in self._modules:
-            categories.setdefault(cat, []).append((icon, name))
-
-        if categories:
-            card = self._build_module_card(categories)
-            self.modules_container_layout.addWidget(card)
-
-    def _build_module_card(self, categories):
-        """创建传感器模块可折叠卡片，按物理/化学分组。
-
-        每个模块一行：模块自己的图标文字 + 名称 + 进入按钮。
+        磁贴控件跨重建复用（self._tiles），只做取回 + 重排序；
+        图钉状态以 app_cfg.pinnedModules 为准（配置重载/主题切换安全）。
         """
-        card = ExpandGroupSettingCard(
-            FIF.MENU, "传感器模块",
-            "点击展开查看所有传感器模块")
+        # 清空两个网格（不删除磁贴）
+        # 注意：qfluentwidgets 的 FlowLayout.takeAt() 直接返回 widget 本身
+        # （不是 QLayoutItem），不可再调用 item.widget()
+        for flow in (self._phys_flow, self._chem_flow):
+            while flow.count():
+                w = flow.takeAt(0)
+                if w is not None:
+                    w.setParent(None)
 
-        cat_names = {
-            'physics': '物理实验模块',
-            'chemistry': '化学实验模块',
-        }
+        pinned = set(app_cfg.pinnedModules.value or [])
 
-        for cat_key in ['physics', 'chemistry']:
-            if cat_key not in categories or not categories[cat_key]:
-                continue
+        def _sort_key(m):
+            return (0 if m[1] in pinned else 1, m[1])
 
-            display_name = cat_names.get(cat_key, cat_key)
-            mods = categories[cat_key]
+        phys = [m for m in self._modules if m[2] == 'physics']
+        chem = [m for m in self._modules if m[2] == 'chemistry']
+        phys.sort(key=_sort_key)
+        chem.sort(key=_sort_key)
 
-            for icon_text, name in mods:
-                enter_btn = PushButton("进入")
-                enter_btn.setFixedHeight(30)
-                enter_btn.setFixedWidth(64)
-                enter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                enter_btn.clicked.connect(
-                    lambda _=False, n=name: self.on_module_clicked(n))
+        for title, flow, mods in (
+            (self._phys_title, self._phys_flow, phys),
+            (self._chem_title, self._chem_flow, chem),
+        ):
+            title.setVisible(bool(mods))
+            for icon_text, name, _cat in mods:
+                tile = self._tiles.get(name)
+                if tile is None:
+                    tile = ModuleFolderTile(
+                        name, icon_text, pinned=(name in pinned))
+                    tile.clicked.connect(
+                        lambda n=name: self.on_module_clicked(n))
+                    tile.pin_btn.toggled.connect(
+                        lambda checked, n=name: self._on_pin_toggled(n, checked))
+                    self._tiles[name] = tile
+                else:
+                    # 复用时同步图钉状态（blockSignals 防触发重排）
+                    tile.pin_btn.blockSignals(True)
+                    tile.pin_btn.setChecked(name in pinned)
+                    tile.pin_btn.blockSignals(False)
+                    tile.pin_btn.setToolTip(
+                        "取消置顶" if name in pinned else "置顶")
+                flow.addWidget(tile)
 
-                # 用模块自己的图标文字（icon_text）作为图标
-                module_icon = make_text_icon(icon_text, size=64)
-                content = f"{display_name} · {len(mods)} 个模块"
-                card.addGroup(module_icon, name, content, enter_btn)
-
-        # 模块卡片默认展开
-        self._default_expand(card)
-        return card
+    def _on_pin_toggled(self, name, checked):
+        """图钉切换：更新置顶列表（持久化到 app_config.json）并重排磁贴。"""
+        pinned = list(app_cfg.pinnedModules.value or [])
+        if checked and name not in pinned:
+            pinned.append(name)
+        elif not checked and name in pinned:
+            pinned.remove(name)
+        try:
+            qconfig.set(app_cfg.pinnedModules, pinned)
+        except Exception as e:
+            print(f"⚠️ 保存置顶配置失败: {e}")
+        self._rebuild_module_cards()
 
     @staticmethod
     def _default_expand(card):
@@ -530,12 +613,19 @@ class HomePageWidget(QWidget):
         self.module_clicked.emit(module_name)
 
     def apply_theme(self, theme):
-        """主题切换：刷新页面/滚动区背景，重建模块卡片（文字图标随主题变色）。"""
+        """主题切换：刷新页面/滚动区背景，重绘磁贴文字图标。
+
+        磁贴为 FluentWidgets 原生组件（CardWidget/PillToolButton/
+        BodyLabel），亮暗主题自动适配；文字图标（make_text_icon）的
+        Normal 状态颜色随主题变化，需按新主题重绘。
+        """
         self.scroll.setStyleSheet(scroll_area_style())
         self.content.setStyleSheet(page_bg_style())
-        # 重建模块卡片（文字图标颜色随主题变化）
-        if self._modules:
-            self._rebuild_module_cards()
+        for tile in self._tiles.values():
+            try:
+                tile.refresh_icon()
+            except Exception as e:
+                print(f"⚠️ 磁贴图标主题刷新失败 [{tile._name}]: {e}")
 
 
 # ============================================================
