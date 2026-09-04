@@ -28,6 +28,13 @@
 └── 电流传感器/
     ├── ESP32_ADC_Raw_Data.ino               # ESP32-S3 固件
     └── current_sensor.py
+└── 电学综合/                                  # 欧姆定律 + 电功率
+    ├── VI_ESP32_ADC.ino                      # 电压(内置ADC)+ACS712 一体固件
+    ├── VI_ADS1115.ino                        # 电压(ADS1115 16位)+ACS712 一体固件
+    ├── VI_HX711.ino                          # 电压(HX711 24位)+ACS712 一体固件
+    ├── ohm_sensor.py                         # 欧姆定律（R=U/I）
+    ├── power_sensor.py                       # 电功率（P=UI）
+    └── README.md                             # 接线/校准说明
 ```
 
 ## 2.支持的传感器
@@ -40,6 +47,8 @@
 | 力/质量 | HX711 | ESP32-S3 | `force_sensor.py` |
 | 电压 | ESP32 内置 ADC / HX711 / ADS1115 | ESP32-S3 | `voltage_sensor.py` |
 | 电流 | ACS712 | ESP32-S3 | `current_sensor.py` |
+| 欧姆定律 | ESP32 ADC / ADS1115 / HX711 + ACS712 | ESP32-S3 | `ohm_sensor.py`（单板一体/双板分测/模拟器） |
+| 电功率 | 同上 | ESP32-S3 | `power_sensor.py` |
 
 ## 3.通用约定
 

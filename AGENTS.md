@@ -1,4 +1,4 @@
-﻿# 项目说明 / AGENTS.md
+# 项目说明 / AGENTS.md
 
 **[English](#english-version)** | **[中文版](#项目简介)**
 
@@ -73,6 +73,13 @@ PhysChem-DigitizerP/
     └── 电流传感器/
         ├── ESP32_ADC_Raw_Data.ino
         └── current_sensor.py      ← ACS712 电流（5A/20A/30A 量程，AC/DC）
+    └── 电学综合/
+        ├── VI_ESP32_ADC.ino       ← 电压(内置ADC)+电流(ACS712) 一体固件
+        ├── VI_ADS1115.ino         ← 电压(ADS1115 16位)+电流 一体固件
+        ├── VI_HX711.ino           ← 电压(HX711 24位)+电流 一体固件
+        ├── ohm_sensor.py          ← 欧姆定律模块（R=U/I，识别区 icon: R）
+        ├── power_sensor.py        ← 电功率模块（P=UI，识别区 icon: P）
+        └── README.md
 ```
 
 ## Arduino 固件
@@ -90,6 +97,8 @@ PhysChem-DigitizerP/
 | 电压采集 | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
 | HX711 电压采集 | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py`（含 HX711 模式） |
 | 电流 (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py`（5A/20A/30A 量程，AC/DC，零点校准） |
+| 欧姆定律 (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（内置ADC/ADS1115/HX711 三选一，电压+ACS712 电流一体；双板分测用同目录 `V_*.ino`+`I_ACS712.ino` 单通道副本） | `ohm_sensor.py`（单板一体/双板分测/模拟器三模式，I-U 曲线线性拟合斜率倒数=电阻） |
+| 电功率 (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（同上） | `power_sensor.py`（P=UI，梯形积分累计电能 W） |
 
 通过 Arduino IDE 烧录。开发板管理器地址：
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
@@ -338,6 +347,8 @@ Located in `传感器代码/` (Chinese directory names). Each subfolder contains
 | Voltage ADC | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
 | HX711 voltage | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py` (HX711 mode) |
 | Current (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py` (5A/20A/30A ranges, AC/DC, zero calibration) |
+| Ohm's law (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (built-in ADC / ADS1115 / HX711 + ACS712, one board; dual-board mode uses the `V_*.ino` + `I_ACS712.ino` single-channel copies in the same folder) | `ohm_sensor.py` (single-board / dual-board / simulator modes; linear fit of I-U curve gives 1/R) |
+| Electric power (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (same as above) | `power_sensor.py` (P=UI, trapezoidal integration accumulates energy W) |
 
 Flash via Arduino IDE. Board packages:
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`

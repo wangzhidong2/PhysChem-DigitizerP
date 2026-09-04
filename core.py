@@ -1813,8 +1813,13 @@ class SerialThread(QThread):
 
     def stop(self):
         self.running = False
-        if self.serial:
-            self.serial.close()
+        # 关闭可能正在被读取线程使用的串口句柄；并发 close 抛异常时
+        # 吞掉（读取线程自身的 except 会收尾退出），避免调用方崩溃
+        try:
+            if self.serial:
+                self.serial.close()
+        except Exception:
+            pass
 
 
 def list_serial_ports():
@@ -3139,6 +3144,16 @@ def apply_module_theme(widget, theme=None):
     except Exception:
         pass
 
+    # 4. 重刷「开始/停止采集」按钮配色（播放器风格，主题切换后自动跟随）
+    #    按钮带 update_collect_btn 打的 _is_collect_btn 标记才处理
+    try:
+        from PySide6.QtWidgets import QPushButton as _QPButton
+        for btn in widget.findChildren(_QPButton):
+            if btn.property('_is_collect_btn'):
+                update_collect_btn(btn, bool(btn.property('_is_collecting')))
+    except Exception:
+        pass
+
 
 def card_style():
     """卡片内容区容器样式（适配当前主题）。
@@ -3217,6 +3232,69 @@ def accent_btn_style(normal, hover, pressed):
         QPushButton:pressed {{ background-color: {pressed}; }}
         QPushButton:disabled {{ background-color: #f5f5f5; color: #aaaaaa; }}
     """
+
+
+# ============================================================
+# 采集按钮统一样式（播放器风格：开始 ▶ 主题色底白字 / 停止 ⏸ 白底）
+# 所有传感器模块的「开始/停止采集」按钮统一走本函数切换
+# ============================================================
+ACTION_BUTTON_WIDTH = 120  # 操作按钮统一紧凑宽度，便于多个按钮一行放下
+# 注意：collect_btn（开始/停止采集）不设固定宽度——qfluentwidgets 自绘
+# 图标位置按 minimumSizeHint 推算，固定宽度会把图标推向文字造成重叠；
+# 保持自适应宽度即 Fluent 官方「▶ 图标 + 36px 左留白」的布局。
+
+
+def set_action_button_width(btn, width=ACTION_BUTTON_WIDTH):
+    """操作按钮统一紧凑宽度（保存/清除/校准等无图标按钮，一行放下）。"""
+    btn.setFixedWidth(width)
+    return btn
+
+
+def update_collect_btn(btn, collecting):
+    """「开始/停止采集」按钮的播放器风格状态刷新。
+
+    Args:
+        btn: 采集按钮（collect_btn / 全屏浮动栏按钮共用）
+        collecting: True=采集中（显示 ⏸ 停止采集，白底）；
+                    False=未采集（显示 ▶ 开始采集，主题色底白字）
+
+    样式颜色取自 core._theme_colors()（当前亮/暗主题）；
+    按钮会打上 `_is_collect_btn`/`_is_collecting` 属性标记，
+    apply_module_theme() 主题切换时会自动重刷，无需各模块处理。
+    """
+    from qfluentwidgets import FluentIcon as _FIF
+    btn.setText("停止采集" if collecting else "开始采集")
+    btn.setIcon(_FIF.PAUSE if collecting else _FIF.PLAY)
+    btn.setProperty('_is_collect_btn', True)
+    btn.setProperty('_is_collecting', bool(collecting))
+    c = _theme_colors()
+    if collecting:
+        # 采集中 → 停止：白底（暗色为深灰底）+ 正文色 + 边框
+        if isDarkTheme():
+            bg, fg, bd, hov = (c['content_bg'], c['text_primary'],
+                               c['card_border'], c['hover_bg'])
+        else:
+            bg, fg, bd, hov = ('#ffffff', '#1a1a1a', '#d0d0d0', '#f5f5f5')
+        qss = (
+            f"QPushButton {{ background-color: {bg}; color: {fg};"
+            f" border: 1px solid {bd}; border-radius: 6px;"
+            # 左侧 36px 与库内规则一致：qfluentwidgets 自绘图标占位
+            " padding: 0 14px 0 36px; }"
+            f" QPushButton:hover {{ background-color: {hov}; }}"
+            f" QPushButton:disabled {{ background-color: {bg};"
+            " color: #888888; }}"
+        )
+    else:
+        # 未采集 → 开始：主题色底 + 白字（Primary 视觉）
+        qss = (
+            f"QPushButton {{ background-color: {c['accent']}; color: #ffffff;"
+            " border: none; border-radius: 6px;"
+            " padding: 0 14px 0 36px; }"
+            f" QPushButton:hover {{ background-color: {c['accent_hover']}; }}"
+            " QPushButton:disabled {{ background-color: #888888;"
+            " color: #dddddd; }}"
+        )
+    btn.setStyleSheet(qss)
 
 
 def modern_combo_style():

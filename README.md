@@ -99,6 +99,8 @@ python ./main.py
 | 力/质量传感器 | HX711 | ESP32-S3 | 物理 | [使用说明](传感器代码/力传感器/README.md) |
 | 电压传感器 | ESP32 ADC / HX711等AD转换模块 | ESP32-S3 | 物理 |  [使用说明](传感器代码/电压传感器/README.md) |
 | 电流传感器 | ACS712 | ESP32-S3 | 物理 |  [使用说明](传感器代码/电流传感器/README.md) |
+| 欧姆定律 | ESP32 ADC / ADS1115 / HX711 + ACS712（一体或双板） | ESP32-S3 | 物理 | [使用说明](传感器代码/电学综合/README.md) |
+| 电功率 | 同上 | ESP32-S3 | 物理 | [使用说明](传感器代码/电学综合/README.md) |
 
 ## 4.下位机固件烧录
 ### 4.1.安装 [Arduino IDE](https://www.arduino.cc/en/software)
@@ -162,6 +164,13 @@ PhysChem-DigitizerP/
     └── 电流传感器/              # ACS712 电流（5A/20A/30A，AC/DC，零点校准）
         ├── ESP32_ADC_Raw_Data.ino   # ESP32-S3 固件
         └── current_sensor.py        # 电流上位机模块（5A/20A/30A 量程，AC/DC）
+    └── 电学综合/                # 欧姆定律 + 电功率（电压+电流双通道）
+        ├── README.md               # 使用说明（接线/校准/双板接线）
+        ├── VI_ESP32_ADC.ino        # 电压(内置ADC)+ACS712电流 一体固件
+        ├── VI_ADS1115.ino          # 电压(ADS1115 16位)+ACS712电流 一体固件
+        ├── VI_HX711.ino            # 电压(HX711 24位)+ACS712电流 一体固件
+        ├── ohm_sensor.py           # 欧姆定律模块（R=U/I，I-U 曲线线性拟合）
+        └── power_sensor.py         # 电功率模块（P=UI，累计电能 W）
 ```
 
 > 模块加载机制、识别区格式与添加新模块的完整教程请参考 [AGENTS.md](AGENTS.md)。

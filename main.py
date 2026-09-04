@@ -1788,6 +1788,27 @@ class MainWindow(FluentWindow):
         self.current_theme = "light"
         self.apply_theme("light")
 
+    def closeEvent(self, event):
+        """关闭窗口前统一停止所有传感器模块的通信线程。
+
+        子页面销毁不会触发模块自身的 closeEvent，若串口/BLE/模拟器线程
+        仍在运行，QThread 对象被销毁时会触发 Qt fail-fast 闪退
+        （0xC0000409）。此处兜底：逐模块调用断开方法（不同模块方法名
+        不同：disconnect_all / disconnect_serial）停线程。
+        """
+        for name, widget in self.modules.items():
+            if name in ("主页", "设置"):
+                continue
+            for meth in ("disconnect_all", "disconnect_serial"):
+                dispose = getattr(widget, meth, None)
+                if callable(dispose):
+                    try:
+                        dispose()
+                    except Exception as e:
+                        print(f"⚠️ 退出清理 [{name}.{meth}] 失败: {e}")
+                    break
+        super().closeEvent(event)
+
 
 def _set_windows_appusermodelid():
     """设置 Windows AppUserModelID。

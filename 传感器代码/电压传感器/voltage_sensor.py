@@ -39,6 +39,7 @@ from core import (
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     BLE_AVAILABLE, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
+    update_collect_btn, set_action_button_width,
 )
 
 
@@ -574,6 +575,7 @@ class VoltageSensorWidget(QWidget):
         # 全屏浮动栏：合并的开始/停止按钮（与操作按钮卡的 collect_btn 同步状态）
         self.float_collect_btn = PrimaryPushButton("开始采集")
         self.float_collect_btn.setFixedHeight(34)
+        update_collect_btn(self.float_collect_btn, False)
         self.float_collect_btn.clicked.connect(self.toggle_collection)
         self.float_collect_btn.setEnabled(False)
         # 全屏时：数据记录 + 拟合分析面板浮于图表上方，浮动栏底部可控制开始/停止
@@ -594,6 +596,7 @@ class VoltageSensorWidget(QWidget):
         # 开始/停止合并为单按钮：文案随采集状态切换（停止采集/开始采集）
         self.collect_btn = PrimaryPushButton("开始采集")
         self.collect_btn.setFixedHeight(38)
+        update_collect_btn(self.collect_btn, False)
         self.collect_btn.clicked.connect(self.toggle_collection)
         self.collect_btn.setEnabled(False)
         actions_layout.addWidget(self.collect_btn)
@@ -601,6 +604,7 @@ class VoltageSensorWidget(QWidget):
         # 去皮按钮：取最近若干个数据点平均值作为空载偏移
         self.tare_btn = PushButton("去皮" if not self.tare_active else "取消去皮")
         self.tare_btn.setFixedHeight(38)
+        set_action_button_width(self.tare_btn)
         self.tare_btn.clicked.connect(self.toggle_tare)
         self.tare_btn.setEnabled(False)
         self.tare_btn.setStyleSheet("background-color: #fd7e14; color: white;"
@@ -612,12 +616,14 @@ class VoltageSensorWidget(QWidget):
 
         self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
+        set_action_button_width(self.save_btn)
         self.save_btn.clicked.connect(self.save_data)
         self.save_btn.setEnabled(False)
         actions_layout.addWidget(self.save_btn)
 
         self.clear_btn = PushButton("清除数据")
         self.clear_btn.setFixedHeight(38)
+        set_action_button_width(self.clear_btn)
         self.clear_btn.clicked.connect(self.clear_data)
         actions_layout.addWidget(self.clear_btn)
 
@@ -949,9 +955,8 @@ class VoltageSensorWidget(QWidget):
 
     def _refresh_collect_btn(self):
         """合并按钮与浮动栏按钮：文案随采集状态切换（停止采集/开始采集）。"""
-        text = "停止采集" if self._collecting else "开始采集"
-        self.collect_btn.setText(text)
-        self.float_collect_btn.setText(text)
+        update_collect_btn(self.collect_btn, self._collecting)
+        update_collect_btn(self.float_collect_btn, self._collecting)
 
     def start_collection(self):
         self.voltage_data.clear()
