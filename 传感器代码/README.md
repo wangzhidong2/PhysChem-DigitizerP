@@ -47,8 +47,8 @@
 | 力/质量 | HX711 | ESP32-S3 | `force_sensor.py` |
 | 电压 | ESP32 内置 ADC / HX711 / ADS1115 | ESP32-S3 | `voltage_sensor.py` |
 | 电流 | ACS712 | ESP32-S3 | `current_sensor.py` |
-| 欧姆定律 | ESP32 ADC / ADS1115 / HX711 + ACS712 | ESP32-S3 | `ohm_sensor.py`（单板一体/双板分测/模拟器） |
-| 电功率 | 同上 | ESP32-S3 | `power_sensor.py` |
+| 欧姆定律 | ESP32 ADC / ADS1115 / HX711 + ACS712 | ESP32-S3 | `ohm_sensor.py`（电压/电流独立连接板块：模拟器·串口任意混搭、一体 VI_* 或双板） |
+| 电功率 | 同上 | ESP32-S3 | `power_sensor.py`（同上） |
 
 ## 3.通用约定
 

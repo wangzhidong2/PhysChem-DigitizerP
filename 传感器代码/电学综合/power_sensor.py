@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from qfluentwidgets import (
-    PushButton, PrimaryPushButton, ComboBox, DoubleSpinBox,
+    PushButton, PrimaryPushButton, ComboBox, DoubleSpinBox, SwitchButton,
     BodyLabel, CaptionLabel, TitleLabel, isDarkTheme,
 )
 
@@ -76,8 +76,9 @@ class PowerSensorWidget(QWidget):
     }
     UNIT_FACTORS = {'A': 1.0, 'mA': 1000.0}
 
-    # 连接方式：单板一体 / 双板分测 / 模拟器
-    MODE_VALUES = ['single', 'dual', 'simulator']
+    # 电压/电流两个独立连接板块：
+    # volt_mode / cur_mode: 'serial' 串口 或 'simulator' 模拟器，可各自单独设置
+    # volt_merged=True: 电压一体固件(VI_*)同时输出电流，电流通道随电压板连接
     # 电压采样方式（三套固件）
     VOLT_METHOD_VALUES = ['esp32', 'ads1115', 'hx711']
 
@@ -113,8 +114,10 @@ class PowerSensorWidget(QWidget):
         # 退出慢的旧线程保留引用（切模式/断开时防止 QThread 销毁崩溃）
         self._retired_threads = []
 
-        # 连接/测量配置
-        self.connect_mode = 'single'     # single / dual / simulator
+        # 连接/测量配置：电压、电流两个独立板块
+        self.volt_mode = 'serial'        # 电压板块：serial / simulator
+        self.cur_mode = 'serial'         # 电流板块：serial / simulator
+        self.volt_merged = True          # 一体固件(VI_*)同时输出电流
         self.volt_method = 'esp32'       # esp32 / ads1115 / hx711
         # 电压参数
         self.divider_ratio = 1.0         # 分压比 (R1+R2)/R2
@@ -135,10 +138,11 @@ class PowerSensorWidget(QWidget):
 
         self.config = self.load_config()
         self.init_ui()
-        # pyserial 未安装：自动切模拟器
+        # pyserial 未安装：电压/电流自动切模拟器
         if not SERIAL_AVAILABLE:
-            self.mode_combo.setCurrentIndex(self.MODE_VALUES.index('simulator'))
-            self.on_mode_changed(self.MODE_VALUES.index('simulator'))
+            self.volt_mode = self.cur_mode = 'simulator'
+            self.volt_merged = True
+            self._sync_conn_controls()
 
     # --------------------------------------------------------------
     # 配置读写
@@ -146,7 +150,19 @@ class PowerSensorWidget(QWidget):
     def load_config(self):
         config = load_sensor_config('power_sensor')
         if config:
-            self.connect_mode = config.get('connect_mode', self.connect_mode)
+            # 旧版单键 connect_mode 兼容迁移：
+            #  single→电压一体串口；dual→电压/电流各自串口；simulator→双模拟器
+            _legacy = config.get('connect_mode')
+            if _legacy == 'simulator':
+                self.volt_mode = self.cur_mode = 'simulator'
+                self.volt_merged = True
+            elif _legacy == 'dual':
+                self.volt_mode = self.cur_mode = 'serial'
+                self.volt_merged = False
+            else:
+                self.volt_mode = config.get('volt_mode', self.volt_mode)
+                self.cur_mode = config.get('cur_mode', self.cur_mode)
+                self.volt_merged = config.get('volt_merged', self.volt_merged)
             self.volt_method = config.get('volt_method', self.volt_method)
             self.divider_ratio = config.get('divider_ratio', self.divider_ratio)
             self.amp_ratio = config.get('amp_ratio', self.amp_ratio)
@@ -168,7 +184,9 @@ class PowerSensorWidget(QWidget):
 
     def save_config(self):
         config = {
-            'connect_mode': self.connect_mode,
+            'volt_mode': self.volt_mode,
+            'cur_mode': self.cur_mode,
+            'volt_merged': self.volt_merged,
             'volt_method': self.volt_method,
             'divider_ratio': self.divider_ratio,
             'amp_ratio': self.amp_ratio,
@@ -261,17 +279,15 @@ class PowerSensorWidget(QWidget):
         # 页面标题
         layout.addWidget(TitleLabel("电功率"))
 
-        # ========== 卡片1：连接控制 ==========
+        # ========== 卡片1：连接控制（电压/电流两个独立板块） ==========
         card_conn = FluentCard("连接控制")
-        self.mode_combo = ComboBox()
-        self.mode_combo.addItems([
-            "单板一体（一台 ESP32 同时测电压+电流）",
-            "双板分测（电压板 + 电流板，双串口）",
-            "模拟器",
-        ])
-        self.mode_combo.setCurrentIndex(self.MODE_VALUES.index(self.connect_mode))
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        card_conn.add_row("测量模式", self.mode_combo)
+        # ----- 电压连接板块 -----
+        card_conn.add_widget(BodyLabel("电压连接"))
+        self.volt_mode_combo = ComboBox()
+        self.volt_mode_combo.addItems(["模拟器", "串口"])
+        self.volt_mode_combo.setCurrentIndex(1 if self.volt_mode == 'serial' else 0)
+        self.volt_mode_combo.currentIndexChanged.connect(self.on_volt_mode_changed)
+        card_conn.add_row("电压连接方式", self.volt_mode_combo)
 
         self.volt_combo = ComboBox()
         self.volt_combo.addItems([
@@ -281,7 +297,6 @@ class PowerSensorWidget(QWidget):
         self.volt_combo.currentIndexChanged.connect(self.on_volt_method_changed)
         card_conn.add_row("电压采样方式", self.volt_combo)
 
-        # 串口（电压/一体）
         port_row = QHBoxLayout()
         port_row.setSpacing(8)
         self.port_combo = ComboBox()
@@ -293,10 +308,25 @@ class PowerSensorWidget(QWidget):
         port_row.addWidget(self.refresh_btn)
         port_widget = QWidget()
         port_widget.setLayout(port_row)
-        card_conn.add_row("串口(电压/一体)", port_widget)
-        card_conn.add_widget(CaptionLabel("单板：烧录 电学综合/VI_*.ino；双板：电压板接此口"))
+        self.volt_port_row = port_widget
+        card_conn.add_row("电压串口", port_widget)
 
-        # 串口（电流，双板模式显示）
+        self.merged_switch = SwitchButton()
+        self.merged_switch.setText("开")
+        self.merged_switch.setOnText("一体固件（VI_*，同时输出电流）")
+        self.merged_switch.setOffText("独立电压板（V_*）")
+        self.merged_switch.setChecked(self.volt_merged)
+        self.merged_switch.checkedChanged.connect(self.on_merged_changed)
+        card_conn.add_row("一体固件", self.merged_switch)
+
+        # ----- 电流连接板块 -----
+        card_conn.add_widget(BodyLabel("电流连接"))
+        self.cur_mode_combo = ComboBox()
+        self.cur_mode_combo.addItems(["模拟器", "串口"])
+        self.cur_mode_combo.setCurrentIndex(1 if self.cur_mode == 'serial' else 0)
+        self.cur_mode_combo.currentIndexChanged.connect(self.on_cur_mode_changed)
+        card_conn.add_row("电流连接方式", self.cur_mode_combo)
+
         self.port2_row_container = QWidget()
         r2 = QHBoxLayout(self.port2_row_container)
         r2.setContentsMargins(0, 0, 0, 0)
@@ -304,8 +334,10 @@ class PowerSensorWidget(QWidget):
         self.port2_combo = ComboBox()
         self.port2_combo.setMinimumWidth(180)
         r2.addWidget(self.port2_combo, 1)
-        self.port2_row_container.setVisible(self.connect_mode == 'dual')
+        self.port2_row_container.setLayout(r2)
         card_conn.add_row("电流串口", self.port2_row_container)
+        self.cur_port_hint = CaptionLabel("双板分测：电压板(V_*.ino)与电流板(I_ACS712.ino)分别接串口")
+        card_conn.add_widget(self.cur_port_hint)
 
         # 采样频率（内联下拉）
         self.sample_rate_combo = SampleRateComboBox()
@@ -518,6 +550,7 @@ class PowerSensorWidget(QWidget):
         main_layout.addWidget(scroll)
 
         # 按当前配置同步控件可用状态
+        self._sync_conn_controls()
         self._sync_volt_method_controls()
         self.refresh_ports()
 
@@ -528,14 +561,56 @@ class PowerSensorWidget(QWidget):
     # --------------------------------------------------------------
     # 参数变更槽函数
     # --------------------------------------------------------------
-    def on_mode_changed(self, index):
-        mode = self.MODE_VALUES[index] if 0 <= index < len(self.MODE_VALUES) else 'single'
-        self.connect_mode = mode
-        # 双板分测才需要第二个串口
-        self.port2_row_container.setVisible(mode == 'dual')
+    def on_volt_mode_changed(self, index):
+        """电压板块连接方式：模拟器 / 串口（独立于电流板块）。"""
+        self.volt_mode = 'serial' if index == 1 else 'simulator'
+        self._sync_conn_controls()
         self.save_config()
         if self._connected:
             self.disconnect_all()
+
+    def on_cur_mode_changed(self, index):
+        """电流板块连接方式：模拟器 / 串口（一体固件时锁定，随电压板）。"""
+        self.cur_mode = 'serial' if index == 1 else 'simulator'
+        self._sync_conn_controls()
+        self.save_config()
+        if self._connected:
+            self.disconnect_all()
+
+    def on_merged_changed(self, checked):
+        """一体固件开关：VI_* 同时输出电流时，电流板块不再独立连接。"""
+        self.volt_merged = bool(checked)
+        self._sync_conn_controls()
+        self.save_config()
+        if self._connected:
+            self.disconnect_all()
+
+    def _sync_conn_controls(self):
+        """按当前连接配置同步连接卡控件（电压/电流板块独立显示）。"""
+        for combo, value in ((self.volt_mode_combo, self.volt_mode),
+                             (self.cur_mode_combo, self.cur_mode)):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(1 if value == 'serial' else 0)
+            combo.blockSignals(False)
+        self.merged_switch.blockSignals(True)
+        self.merged_switch.setChecked(self.volt_merged)
+        self.merged_switch.blockSignals(False)
+        # 一体固件开关仅对「电压=串口」有意义；电压为模拟器时电流板块完全独立
+        self.merged_switch.setEnabled(self.volt_mode == 'serial')
+        merged_effective = self.volt_mode == 'serial' and self.volt_merged
+        # 电压串口行：仅电压为串口模式时显示
+        self.volt_port_row.setVisible(self.volt_mode == 'serial')
+        # 电流串口行：一体固件未生效 且 电流为串口 时显示
+        self.port2_row_container.setVisible(
+            not merged_effective and self.cur_mode == 'serial')
+        # 一体固件生效时电流板块锁定，提示共享端口
+        self.cur_mode_combo.setEnabled(not merged_effective)
+        if merged_effective:
+            self.cur_port_hint.setText(
+                "一体固件(VI_*)已同时输出电流，电流通道随电压板连接，无需独立设置")
+        else:
+            self.cur_port_hint.setText(
+                "双板分测：电压板(V_*.ino)与电流板(I_ACS712.ino)分别接串口")
 
     def on_volt_method_changed(self, index):
         self.volt_method = self.VOLT_METHOD_VALUES[index] if 0 <= index < len(self.VOLT_METHOD_VALUES) else 'esp32'
@@ -637,51 +712,75 @@ class PowerSensorWidget(QWidget):
             self.connect_device()
 
     def connect_device(self):
-        if self.connect_mode == 'simulator':
-            self._connect_simulator()
-            return
-        if not SERIAL_AVAILABLE:
+        """按电压/电流板块配置分别建立数据源（互不依赖）。
+
+        组合矩阵：
+        - 电压=模拟器 + 电流=模拟器            → 双模拟线程
+        - 电压=串口(一体VI_*)                 → 单串口三字段，电流随电压板
+        - 电压=串口(V_*) + 电流=串口(I_ACS712) → 双串口配对
+        - 电压=串口 + 电流=模拟器 / 反过来     → 串口 + 模拟线程混用
+        """
+        if not SERIAL_AVAILABLE and (self.volt_mode == 'serial'
+                                     or self.cur_mode == 'serial'):
             self.on_serial_unavailable()
             return
-        port = self.port_combo.currentData() or ""
-        if not port:
-            fluent_message_box(self, "连接失败", "请先选择串口")
-            return
+
         self._connected = True
         self.status_label.setText("连接中...")
         self.connect_btn.setEnabled(False)
-        if self.connect_mode == 'single':
-            self.serial_vi = SerialThread(port)
-            self.serial_vi.data_received.connect(self.handle_vi_line)
-            self.serial_vi.start()
+
+        # ---- 电压源 ----
+        if self.volt_mode == 'serial':
+            port = self.port_combo.currentData() or ""
+            if not port:
+                self._connected = False
+                self.connect_btn.setEnabled(True)
+                fluent_message_box(self, "连接失败", "请先选择电压串口")
+                return
+            if self.volt_merged:
+                # 一体固件：一行 时间戳,电压ADC,电流ADC，电流随电压板输出
+                self.serial_vi = SerialThread(port)
+                self.serial_vi.data_received.connect(self.handle_vi_line)
+                self.serial_vi.start()
+            else:
+                self.serial_v = SerialThread(port)
+                self.serial_v.data_received.connect(self.handle_v_line)
+                self.serial_v.start()
         else:
+            # 电压模拟器：ADC 0~4095 围绕 ~2500 漂移（约 2V）
+            self.sim_v = SimulatorThread(0, 4095, 100, start_value=2500)
+            self.sim_v.data_received.connect(self.handle_v_line)
+            self.sim_v.start()
+
+        # ---- 电流源 ----
+        # 一体固件仅在「电压=串口」时生效（VI_* 一行三字段）；
+        # 电压=模拟器 时电流始终独立建立（模拟器也是独立线程）
+        if self.volt_merged and self.volt_mode == 'serial':
+            pass  # 电流随电压板一体固件输出
+        elif self.cur_mode == 'serial':
             port2 = self.port2_combo.currentData() or ""
             if not port2:
                 self._connected = False
                 self.connect_btn.setEnabled(True)
-                fluent_message_box(self, "连接失败", "双板分测需要选择电流串口")
+                self.disconnect_all()
+                fluent_message_box(self, "连接失败", "请先选择电流串口")
                 return
-            self.serial_v = SerialThread(port)
-            self.serial_v.data_received.connect(self.handle_v_line)
-            self.serial_v.start()
             self.serial_i = SerialThread(port2)
             self.serial_i.data_received.connect(self.handle_i_line)
             self.serial_i.start()
+        else:
+            # 电流模拟器：ADC 围绕中点 2048 附近 ±200（≈零点附近小电流）
+            self.sim_i = SimulatorThread(1800, 2300, 100, start_value=2048)
+            self.sim_i.data_received.connect(self.handle_i_line)
+            self.sim_i.start()
 
-    def _connect_simulator(self):
-        self._connected = True
-        self.status_label.setText("已连接（模拟器）")
-        self.connect_btn.setEnabled(True)
-        self.connect_btn.setText("断开")
-        self._enable_controls(True)
-        # 电压模拟：ADC 0~4095 围绕 ~2500 漂移（约 2V）
-        self.sim_v = SimulatorThread(0, 4095, 100, start_value=2500)
-        # 电流模拟：ADC 围绕中点 2048 附近 ±200（≈零点附近的小电流）
-        self.sim_i = SimulatorThread(1800, 2300, 100, start_value=2048)
-        self.sim_v.data_received.connect(self.handle_v_line)
-        self.sim_i.data_received.connect(self.handle_i_line)
-        self.sim_v.start()
-        self.sim_i.start()
+        # 全部为模拟器：直接进入已连接状态（串口源等 START 再激活）
+        if self.volt_mode == 'simulator' and (
+                self.volt_merged or self.cur_mode == 'simulator'):
+            self.status_label.setText("已连接（模拟器）")
+            self.connect_btn.setText("断开")
+            self.connect_btn.setEnabled(True)
+            self._enable_controls(True)
 
     def disconnect_all(self):
         self._connected = False
@@ -796,9 +895,8 @@ class PowerSensorWidget(QWidget):
             self._consume_pair(tv, adc_v, vals[0])
 
     def _on_started(self):
-        if self.connect_mode != 'simulator':
-            self._connected = True
-            self.status_label.setText("已连接")
+        self._connected = True
+        self.status_label.setText("已连接")
         self.connect_btn.setText("断开")
         self.connect_btn.setEnabled(True)
         self._enable_controls(True)
@@ -969,7 +1067,7 @@ class PowerSensorWidget(QWidget):
         # 子图2：电压 + 电流
         c.plot(self.time_data, self.v_data, color='#0078d4', width=2,
                label='电压', index=1)
-        c.plot(self.time_data, self.i_data, color='#0f8f8f', width=2,
+        c.plot(self.time_data, self.i_data, color='#f7630c', width=2,
                label='电流', index=1)
         c.set_labels('时间 (s)', '电压 (V) / 电流 (A)', index=1)
         c.set_title('电压-电流-时间曲线', index=1)

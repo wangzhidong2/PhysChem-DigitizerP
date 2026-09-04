@@ -97,7 +97,7 @@ PhysChem-DigitizerP/
 | 电压采集 | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
 | HX711 电压采集 | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py`（含 HX711 模式） |
 | 电流 (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py`（5A/20A/30A 量程，AC/DC，零点校准） |
-| 欧姆定律 (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（内置ADC/ADS1115/HX711 三选一，电压+ACS712 电流一体；双板分测用同目录 `V_*.ino`+`I_ACS712.ino` 单通道副本） | `ohm_sensor.py`（单板一体/双板分测/模拟器三模式，I-U 曲线线性拟合斜率倒数=电阻） |
+| 欧姆定律 (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（内置ADC/ADS1115/HX711 三选一，电压+ACS712 电流一体；双板分测用同目录 `V_*.ino`+`I_ACS712.ino` 单通道副本） | `ohm_sensor.py`（电压/电流两个独立连接板块：模拟器·串口任意混搭，一体固件 VI_* 或双板；I-U 曲线线性拟合斜率倒数=电阻） |
 | 电功率 (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（同上） | `power_sensor.py`（P=UI，梯形积分累计电能 W） |
 
 通过 Arduino IDE 烧录。开发板管理器地址：
@@ -347,7 +347,7 @@ Located in `传感器代码/` (Chinese directory names). Each subfolder contains
 | Voltage ADC | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
 | HX711 voltage | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py` (HX711 mode) |
 | Current (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py` (5A/20A/30A ranges, AC/DC, zero calibration) |
-| Ohm's law (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (built-in ADC / ADS1115 / HX711 + ACS712, one board; dual-board mode uses the `V_*.ino` + `I_ACS712.ino` single-channel copies in the same folder) | `ohm_sensor.py` (single-board / dual-board / simulator modes; linear fit of I-U curve gives 1/R) |
+| Ohm's law (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (built-in ADC / ADS1115 / HX711 + ACS712, one board; dual-board mode uses the `V_*.ino` + `I_ACS712.ino` single-channel copies in the same folder) | `ohm_sensor.py` (two independent connection panels for voltage & current — simulator/serial freely mixable, merged VI_* firmware or dual boards; linear fit of I-U curve gives 1/R) |
 | Electric power (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (same as above) | `power_sensor.py` (P=UI, trapezoidal integration accumulates energy W) |
 
 Flash via Arduino IDE. Board packages:
