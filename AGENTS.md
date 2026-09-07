@@ -31,7 +31,7 @@ pip install PySide6-Fluent-Widgets
 pip install bleak
 ```
 
-本项目没有 `requirements.txt`、`setup.py` 或 `pyproject.toml`。
+项目根目录已提供 `requirements.txt`（包含全部必需与可选依赖），可直接 `pip install -r requirements.txt`。没有 `setup.py` 或 `pyproject.toml`。
 
 ## 运行与调试
 
@@ -52,6 +52,11 @@ PhysChem-DigitizerP/
 ├── core.py                     ← 公共模块：通信线程 / 配置 / 对话框 / 样式
 ├── main_legacy.py              ← 历史存档（单文件版，不再维护）
 ├── test_serial.py              ← 串口诊断工具
+├── requirements.txt            ← 依赖清单（pip install -r requirements.txt）
+├── PhysChem-DigitizerP.spec    ← PyInstaller 打包配置（build/dist 产物已 .gitignore）
+├── README.md                   ← 项目文档
+├── CONTRIBUTING.md / LICENSE   ← 贡献指南 / GPL-3.0 许可证
+├── docs/images/                ← 文档图片
 ├── sensor_config.json          ← 本地校准数据（.gitignore，运行时生成）
 └── 传感器代码/                  ← 下位机 .ino + 上位机 .py 同目录
     ├── 超声波位移传感器/
@@ -288,7 +293,7 @@ pip install PySide6-Fluent-Widgets
 pip install bleak
 ```
 
-No `requirements.txt`, `setup.py`, or `pyproject.toml` exists.
+A `requirements.txt` is now provided at the project root (all required and optional deps) — just run `pip install -r requirements.txt`. No `setup.py` or `pyproject.toml` exists.
 
 ## Run & debug
 
@@ -309,6 +314,11 @@ PhysChem-DigitizerP/
 ├── core.py                     ← Shared: comm threads / config / dialogs / styles
 ├── main_legacy.py              ← Legacy archive (single-file, unmaintained)
 ├── test_serial.py              ← Serial diagnostics
+├── requirements.txt            ← Dependency list (pip install -r requirements.txt)
+├── PhysChem-DigitizerP.spec    ← PyInstaller packaging config (build/dist outputs are .gitignore'd)
+├── README.md                   ← Project docs
+├── CONTRIBUTING.md / LICENSE   ← Contribution guide / GPL-3.0 license
+├── docs/images/                ← Docs images
 ├── sensor_config.json          ← Local calibration (.gitignore, runtime-generated)
 └── 传感器代码/                  ← Firmware .ino + host .py in same dir
     ├── 超声波位移传感器/
