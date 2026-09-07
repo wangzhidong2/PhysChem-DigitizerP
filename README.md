@@ -27,6 +27,8 @@
 ## 3.快速上手上位机
 ### 3.1.使用预打包文件（无需配置环境）
 #### 3.1.1.在 releases 页面下载打包好的程序
+[AtomGit](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/releases/)
+[GitHub](https://github.com/wangzhidong2/PhysChem-DigitizerP/releases/)
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/b3ff419c-13e0-4858-9748-a3a51d6e1dfe/image.png 'image.png')
 #### 3.1.2.解压，打开主程序
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/3c8e2021-48eb-4ce6-8a39-dc7cb063d59f/image.png 'image.png')
@@ -116,12 +118,12 @@ python ./main.py
 
 - **ESP32 国内镜像（推荐）**：`https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json`（[镜像使用教程](https://blog.csdn.net/2501_91081681/article/details/159542001)）
 - 文件 → 首选项 → 附加开发板管理器网址 → 粘贴上述地址
-- 在搜索框中输入 esp32，找到 esp32 by Espressif Systems ⚠️ 注意：下拉列表中会有多个选项，选择带有 `-cn` 后缀的版本，这是针对国内网络优化的版本。
+- 在搜索框中输入 `esp32`，找到 `esp32 by Espressif Systems` ⚠️ 注意：下拉列表中会有多个选项，选择带有 `-cn` 后缀的版本，这是针对国内网络优化的版本。
 
 ### 4.3.选择开发板并烧录
 
-- ESP8266：开发板选 **WeMos D1 R1**
-- ESP32：开发板选 **ESP32 S3 Dev Module**
+- ESP8266：开发板选 `WeMos D1 R1`
+- ESP32：开发板选 `ESP32 S3 Dev Module`
 - 选择正确端口，点击上传
 
 ### 4.4.验证固件
@@ -282,7 +284,7 @@ python test_serial.py
 
 ## 许可证
 
-本项目采用 **GNU General Public License v3.0** - 详见 [LICENSE](LICENSE) 文件
+本项目采用 `GNU General Public License v3.0 `- 详见 [LICENSE](LICENSE) 文件
 
 ##  致谢
 
