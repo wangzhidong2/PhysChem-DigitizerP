@@ -38,7 +38,7 @@ pip install bleak
 - 串口波特率：**115200**（所有固件和 Python 代码中硬编码）
 - 固件输出格式：`timestamp,value`（CSV），Python 直接解析
 - `sensor_config.json` 存储校准参数（运行时自动创建/更新）
-- 双绘图引擎：matplotlib（默认）/ pyqtgraph，应用配置项 `app_cfg.chartEngine` 持久化，设置页可运行时热切换；matplotlib 字体（微软雅黑）在 `core.py` 中全局设置
+- 双绘图引擎：pyqtgraph（默认）/ matplotlib，应用配置项 `app_cfg.chartEngine` 持久化，设置页可运行时热切换；matplotlib 字体（微软雅黑）在 `core.py` 中全局设置
 - 引擎缺失时优雅降级：未安装的引擎选项在设置页灰显不可选；配置的引擎被卸载时自动降级到另一可用引擎；两个都缺时 `ChartPanel` 显示"未检测到图表引擎"占位提示，绘图 API 变为空操作，其余功能不受影响
 - pyserial 缺失时优雅降级：`core.SERIAL_AVAILABLE` 检测可用性；`core.list_serial_ports()` 统一枚举（未装返回空列表）；未装时各模块自动切"模拟器"模式、串口下拉框显示占位、连接弹安装指引（`core.serial_unavailable_hint()`）
 - 启动控制台会打印可选依赖状态：pyserial / bleak 缺失提示与图表引擎安装状态（含双引擎均缺失的幽默提示）
@@ -67,6 +67,7 @@ PhysChem-DigitizerP/
     │   └── ultrasonic_velocity.py
     ├── ph传感器/
     │   ├── ph esp32.ino
+    │   ├── PH传感器原理图.pdf
     │   └── ph_sensor.py
     ├── 力传感器/
     │   ├── force.ino
@@ -74,6 +75,7 @@ PhysChem-DigitizerP/
     ├── 电压传感器/
     │   ├── ESP32_Voltage_Sensor.ino
     │   ├── HX711_Voltage.ino
+    │   ├── ADS1115_Voltage.ino
     │   └── voltage_sensor.py
     └── 电流传感器/
         ├── ESP32_ADC_Raw_Data.ino
@@ -82,6 +84,7 @@ PhysChem-DigitizerP/
         ├── VI_ESP32_ADC.ino       ← 电压(内置ADC)+电流(ACS712) 一体固件
         ├── VI_ADS1115.ino         ← 电压(ADS1115 16位)+电流 一体固件
         ├── VI_HX711.ino           ← 电压(HX711 24位)+电流 一体固件
+        ├── V_*.ino / I_ACS712.ino ← 双板分测单通道副本（电压/电流各一板）
         ├── ohm_sensor.py          ← 欧姆定律模块（R=U/I，识别区 icon: R）
         ├── power_sensor.py        ← 电功率模块（P=UI，识别区 icon: P）
         └── README.md
@@ -101,6 +104,7 @@ PhysChem-DigitizerP/
 | HX711 力传感器 | ESP32-S3 | `传感器代码/力传感器/force.ino` | `force_sensor.py` |
 | 电压采集 | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
 | HX711 电压采集 | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py`（含 HX711 模式） |
+| ADS1115 电压采集 | ESP32-S3 | `传感器代码/电压传感器/ADS1115_Voltage.ino` | `voltage_sensor.py`（含 ADS1115 模式） |
 | 电流 (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py`（5A/20A/30A 量程，AC/DC，零点校准） |
 | 欧姆定律 (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（内置ADC/ADS1115/HX711 三选一，电压+ACS712 电流一体；双板分测用同目录 `V_*.ino`+`I_ACS712.ino` 单通道副本） | `ohm_sensor.py`（电压/电流两个独立连接板块：模拟器·串口任意混搭，一体固件 VI_* 或双板；I-U 曲线线性拟合斜率倒数=电阻） |
 | 电功率 (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（同上） | `power_sensor.py`（P=UI，梯形积分累计电能 W） |
@@ -122,13 +126,13 @@ PhysChem-DigitizerP/
 
 - **`make_text_icon(text, size=128)`**：把识别区里的文字（如 `V`/`F`/`x`/`pH`/`v`/`A`）画成方形 `QIcon`。FluentIcon 枚举没有对应"电压/电流/pH/力/超声波"的图标，所以直接用文字渲染成图标，保留模块化设计。字号用 `QFontMetrics` 自适应测量（从 `size*0.9` 起步缩到刚好填满画布，留 8% 边距），支持 Normal/Active/Selected 三种状态颜色。
 - **`HomePageWidget`**：主页。上半部分为项目信息卡 + 三平台仓库地址卡（`ExpandGroupSettingCard`）；下半部分为**传感器模块磁贴网格**——每个模块一张 `ModuleFolderTile`（`CardWidget` 子类）：模块文字图标（识别区 `V`/`F`/`x`/`pH`/`v`/`A`，`make_text_icon()` 渲染，随主题变色的 `refresh_icon()`）+ 模块名 + 右上角图钉（`PillToolButton` + `FIF.PIN`，置顶开关）。网格用 `AdaptiveFlowLayout`（`setWidgetMinimumWidth(160)` 自动算列数、随窗口换行铺满）。置顶模块排在本组最前，状态持久化到 `app_config.json` 的 `General.PinnedModules`（`core.StringListSerializer` 序列化为 JSON 数组）；点击磁贴 → `module_clicked` 信号 → 切换模块。标题用 FluentWidgets `TitleLabel` / `SubtitleLabel`，自动适配亮/暗主题；`apply_theme()` 刷新页面/滚动区背景 + 重绘各磁贴文字图标（磁贴本体为 FluentWidgets 原生组件，主题自动适配，无需重建）。
-- **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含多组设置：①个性化（应用主题切换：亮色 / 暗色 / 跟随系统；**保存配置开关**：关闭后不读写 sensor_config.json；**清除用户设置**：确认后调用 `core.clear_sensor_config()` 删除 sensor_config.json 并把保存开关置为开；**图表引擎切换**：matplotlib / pyqtgraph，未安装的引擎选项通过 `ComboBox.setItemEnabled` 灰显不可点击并在文案中标注"未安装"）②关于（应用名 / 版本 / 许可证）③源码 & 反馈（GitHub / Gitee / Issue 链接）。主题切换通过 `theme_change_requested` 信号、引擎切换通过 `engine_change_requested` 信号分别与 `MainWindow.change_app_theme` / `MainWindow.change_chart_engine` 打通。
-- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换、绘图引擎切换。`change_app_theme(theme)` 流程：先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色。`change_chart_engine(engine)` 流程：先用 `chart_engine_available()` 拦截未安装引擎的请求，再遍历各传感器模块 `findChildren(ChartPanel)`，调用 `panel.set_engine(engine)` 重建引擎控件并重放最近一次绘制事务，曲线无缝衔接不丢数据。
+- **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含多组设置：①个性化（**应用主题**：亮色 / 深色 / 跟随系统；**主题色**：跟随系统强调色（读 Windows 注册表，`SystemAccentListener` 监听 DWM 广播实时更新，系统色不落盘）/ 自定义（`ColorDialog` 取色器，选择即持久化）；**保存配置开关**：关闭后不读写 sensor_config.json；**传感器配置管理**：清除 / 导出 / 导入（`core.clear/export/import_sensor_config`，导出/导入走系统文件夹/文件选择对话框）；**恢复默认设置**：重置 app_config.json 与 sensor_config.json；**图表引擎切换**：matplotlib / pyqtgraph，未安装的引擎选项通过 `ComboBox.setItemEnabled` 灰显不可点击并在文案中标注"未安装"，从 pyqtgraph 切到 matplotlib 弹兼容性提醒确认框）②关于（应用名 / 版本 / 许可证）③开源信息（`ExpandGroupSettingCard` 列出依赖库、协议与官网链接）④源码 & 反馈（GitHub / Gitee / GitCode / Issue 链接）。主题切换通过 `theme_change_requested` 信号、引擎切换通过 `engine_change_requested` 信号分别与 `MainWindow.change_app_theme` / `MainWindow.change_chart_engine` 打通。
+- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换、绘图引擎切换。`change_app_theme(theme)` 流程：固定模式（light/dark）先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色；**auto（跟随系统）模式不再调用 `setTheme`**（qconfig 已置 `Theme.AUTO`，系统主题变化由 `qconfig.themeChanged` 回调 `_on_fluent_theme_changed` 只刷新自定义控件，避免把 AUTO 覆盖成固定主题导致模式反复横跳 + 全量刷新死循环）。`change_chart_engine(engine)` 流程：先用 `chart_engine_available()` 拦截未安装引擎的请求，再遍历各传感器模块 `findChildren(ChartPanel)`，调用 `panel.set_engine(engine)` 重建引擎控件并重放最近一次绘制事务，曲线无缝衔接不丢数据。
 - **遗留代码**：`NavButton` / `SidebarWidget` 是迁移到 FluentWindow 前的手写侧边栏实现，**已不再被 `MainWindow` 使用**（FluentWindow 自带导航），仍保留在 `main.py` 中供对照参考，新功能不要基于它们开发。
 
 ### core.py 组成
 
-集中存放共享代码——`SerialThread`、`BLESerialThread`、`scan_ble_devices`、`load/save_sensor_config`、`CalibrationDialog`、`SampleRateDialog`、现代化样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`）。
+集中存放共享代码——`SerialThread`、`SimulatorThread`、`BLESerialThread`、`scan_ble_devices`、`load/save/export/import/clear_sensor_config`、`reset_all_config`、`system_accent_color` / `SystemAccentListener`、`CalibrationDialog`、`CalibrationMessageBox`、`SampleRateDialog`、`SampleRateComboBox`、现代化样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`/`page_bg_style`/`scroll_area_style`）。
 
 **主题基础设施**（亮/暗主题全链路支持）：
 - `_theme_colors()`：按 `isDarkTheme()` 返回当前主题对应的语义颜色字典（`page_bg`/`card_bg`/`content_bg`/`text_primary`/`accent` 等）。
@@ -143,8 +147,10 @@ PhysChem-DigitizerP/
 - 所有传感器模块的图表一律通过 `ChartPanel` 绘制，**不要直接使用** `Figure`/`FigureCanvas` 或 `pg.PlotWidget`。
 - 事务式 API：`begin()` 开启一次绘制 → `plot(x, y, color, width, label, index)` 画曲线 → `hline(y, ...)` 画水平参考线 → `set_labels()` / `set_title()` / `set_xlim()` / `set_ylim()` / `legend()` 设置装饰 → `end()` 提交渲染。多子图用 `ChartPanel(n_plots=N)` + `index` 参数寻址。
 - 引擎选择：构造时读 `app_cfg.chartEngine` 并经 `resolve_chart_engine()` 按可用性解析；`set_engine(engine)` 运行时重建底层控件并**重放最近一次提交的事务**（内部缓存 `_last`），切换引擎曲线不丢。
+- **增量更新（pyqtgraph 实时路径）**：`_commit_pg` 先用 `_pg_incremental_ok()` 比对结构签名（子图数、每子图曲线/参考线数量、图例开关、显式轴范围开关），一致时走 `_incremental_pg()` 只 `setData` 复用已有控件，避免每帧全量 `pi.clear()`+重建控件（pyqtgraph 大流量实时绘制卡顿主因）；结构变化自动退回全量重建。
 - 主题适配：`apply_chart_theme(dark)` 同时处理 matplotlib（figure/axes 背景与轴色）和 pyqtgraph（`setBackground` / 轴文本颜色），各模块 `apply_theme()` 中调用即可。
 - **悬停交互（pyqtgraph）**：鼠标移动时自动定位最近数据点，显示垂直虚线指示线 + 跟随标签（横轴名/时间 + 各曲线数值，点靠近上沿时标签翻到下方防出界）。数据点定位对时间序列走二分（5 万点单次 < 0.1ms）。面板记录最近悬停位置（`_pg_hover_view`），`_commit_pg` 高频重绘后按记录位置在新数据上重新定位恢复——实时采集时鼠标不动标签也持续显示且数值跟随最新数据，不随重绘闪烁消失；主题切换按新配色重建，多子图场景下自动迁移，`clear_chart` 清除记录。
+- **图表分析面板（仅 pyqtgraph）**：`get_analysis_panel()` 返回紧凑纵向分析栏（模块放入图表卡左侧），提供：**视图窗口**（`SwitchButton` 切换「显示整个范围 / 滚动窗口」，滚动窗口把 x 轴锁定为最近 N 秒，`DoubleSpinBox` 支持 0.1s~3h 小数秒）；**曲线拟合**（线性 / 二次 / 三次 / 对数 y=a·ln(x)+b / 幂函数 y=a·x^b，同色虚线叠加 + 方程与 R² 文本锚定视口左上角，定义域外点自动剔除）；**清除离散点**（二次点击确认防误触）；**离群点剔除**（残差比例法：对当前剩余数据重拟合后移除残差最大前 x% 点，多级撤销栈 `_outlier_stack` 逐步恢复，掩码只作用于各子图第一条曲线，新追加点默认保留）。matplotlib / 占位模式下面板自动隐藏。
 - **图例内部管理**：pyqtgraph 图例条目每次重绘前显式 `legend.clear()`（旧版 pyqtgraph 的 `pi.clear()` 不清图例，实时更新会无限累积）；参考线（InfiniteLine）**不得直接加入图例**——它没有 `opts` 属性，旧版 pyqtgraph 的 `ItemSample.paint` 会崩并拖垮整棵控件树的绘制链（图表异常、点击后界面空白）。图例样本用同款画笔的空 `PlotDataItem` 代替。
 
 **引擎可用性与优雅降级**：
@@ -154,7 +160,7 @@ PhysChem-DigitizerP/
 
 ### 模块能力要点
 
-- `VoltageSensorWidget` 支持：HX711 24 位 ADC 模式（通道 A/B、增益 128/32）、kV/V/mV 单位切换、去皮（Tare）功能。
+- `VoltageSensorWidget` 支持：HX711 24 位 ADC 模式（通道 A/B、增益 128/32）、ADS1115 16 位模式（PGA 增益、通道选择）、kV/V/mV 单位切换、去皮（Tare）功能。
 - `ForceSensorWidget` 支持：去皮（Tare）、两点校准、有线串口和 BLE 两种连接方式。
 - `PhSensorWidget` 支持：单点 / 两点 / 三点校准（Nernst 斜率 / 线性拟合 / 二次多项式拟合）。
 - `CurrentSensorWidget` 支持：ACS712 5A/20A/30A 量程切换、AC/DC 测量、零点校准。
@@ -254,7 +260,7 @@ class TemperatureSensorWidget(QWidget):
 - Arduino 代码目录使用中文命名
 - `main_legacy.py` 是迁移前单文件存档，**不再维护**，新功能请改 `main.py` + 模块文件
 - `NavButton` / `SidebarWidget` 是遗留代码，`MainWindow` 已改用 `FluentWindow` 自带导航，不要基于它们开发新功能
-- 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、图表引擎切换（matplotlib / pyqtgraph，热切换，未安装的引擎灰显不可选）、关于信息、仓库链接（`SettingsWidget`）
+- 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、主题色（跟随系统 / 自定义取色）、图表引擎切换（matplotlib / pyqtgraph，热切换，未安装的引擎灰显不可选）、保存配置开关、传感器配置管理（清除 / 导出 / 导入）、恢复默认设置、关于信息、开源信息、仓库链接（`SettingsWidget`）
 - 图表引擎是**可选依赖**：matplotlib / pyqtgraph 至少安装其一；两个都缺时程序照常启动，图表区域显示"未检测到图表引擎"占位提示
 - **pyserial 是可选依赖**：未安装时程序照常启动，各传感器模块自动切"模拟器"模式，串口连接弹安装指引；模块代码**禁止**直接 `import serial`，一律走 `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`
 - 新增传感器模块时建议实现 `apply_theme()` 方法以适配亮/暗主题（委托 `core.apply_module_theme()`）；图表一律用 `core.ChartPanel`，保证引擎热切换与占位降级对模块生效
@@ -300,7 +306,7 @@ A `requirements.txt` is now provided at the project root (all required and optio
 - Serial baud rate: **115200** (hardcoded across all firmware and Python)
 - All firmware output CSV: `timestamp,value` — Python parses this directly
 - `sensor_config.json` stores calibration params (auto-created/updated at runtime)
-- Dual chart engines: matplotlib (default) / pyqtgraph, persisted via the `app_cfg.chartEngine` config item, hot-switchable at runtime from the settings page; matplotlib font (Microsoft YaHei) is set globally in `core.py`
+- Dual chart engines: pyqtgraph (default) / matplotlib, persisted via the `app_cfg.chartEngine` config item, hot-switchable at runtime from the settings page; matplotlib font (Microsoft YaHei) is set globally in `core.py`
 - Graceful degradation when an engine is missing: unavailable engine options are grayed out (disabled) in the settings combo box; if the configured engine is uninstalled, the app falls back to the other available engine at startup; when both are missing, `ChartPanel` shows a "no chart engine detected" placeholder and drawing APIs become no-ops — all other features keep working
 - Graceful degradation when pyserial is missing: `core.SERIAL_AVAILABLE` detects availability; `core.list_serial_ports()` is the single port-enumeration entry (returns an empty list when missing); without it every sensor module auto-switches to simulator mode, the port combo shows a placeholder, and connecting pops an install hint (`core.serial_unavailable_hint()`)
 - The startup console prints optional-dependency status: pyserial / bleak missing hints and chart engine installation status (including a humorous line when both chart engines are missing)
@@ -329,6 +335,7 @@ PhysChem-DigitizerP/
     │   └── ultrasonic_velocity.py
     ├── ph传感器/
     │   ├── ph esp32.ino
+    │   ├── PH传感器原理图.pdf
     │   └── ph_sensor.py
     ├── 力传感器/
     │   ├── force.ino
@@ -336,10 +343,19 @@ PhysChem-DigitizerP/
     ├── 电压传感器/
     │   ├── ESP32_Voltage_Sensor.ino
     │   ├── HX711_Voltage.ino
+    │   ├── ADS1115_Voltage.ino
     │   └── voltage_sensor.py
     └── 电流传感器/
         ├── ESP32_ADC_Raw_Data.ino
         └── current_sensor.py      ← ACS712 current (5A/20A/30A ranges, AC/DC)
+    └── 电学综合/
+        ├── VI_ESP32_ADC.ino       ← Voltage (built-in ADC) + current (ACS712), merged firmware
+        ├── VI_ADS1115.ino         ← Voltage (ADS1115 16-bit) + current, merged firmware
+        ├── VI_HX711.ino           ← Voltage (HX711 24-bit) + current, merged firmware
+        ├── V_*.ino / I_ACS712.ino ← Single-channel copies for dual-board measurement
+        ├── ohm_sensor.py          ← Ohm's law module (R=U/I, meta icon: R)
+        ├── power_sensor.py        ← Electric power module (P=UI, meta icon: P)
+        └── README.md
 ```
 
 ## Arduino firmware
@@ -356,6 +372,7 @@ Located in `传感器代码/` (Chinese directory names). Each subfolder contains
 | HX711 force | ESP32-S3 | `传感器代码/力传感器/force.ino` | `force_sensor.py` |
 | Voltage ADC | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
 | HX711 voltage | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py` (HX711 mode) |
+| ADS1115 voltage | ESP32-S3 | `传感器代码/电压传感器/ADS1115_Voltage.ino` | `voltage_sensor.py` (ADS1115 mode) |
 | Current (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py` (5A/20A/30A ranges, AC/DC, zero calibration) |
 | Ohm's law (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (built-in ADC / ADS1115 / HX711 + ACS712, one board; dual-board mode uses the `V_*.ino` + `I_ACS712.ino` single-channel copies in the same folder) | `ohm_sensor.py` (two independent connection panels for voltage & current — simulator/serial freely mixable, merged VI_* firmware or dual boards; linear fit of I-U curve gives 1/R) |
 | Electric power (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (same as above) | `power_sensor.py` (P=UI, trapezoidal integration accumulates energy W) |
@@ -377,13 +394,13 @@ Flash via Arduino IDE. Board packages:
 
 - **`make_text_icon(text, size=128)`**: renders the meta-header text (e.g. `V`/`F`/`x`/`pH`/`v`/`A`) into a square `QIcon`. FluentIcon enum has no icons for "voltage/current/pH/force/ultrasonic", so text is rendered directly into an icon to preserve the modular design. Font size is auto-measured with `QFontMetrics` (starts at `size*0.9` and shrinks to just fill the canvas, leaving 8% margin), supporting Normal/Active/Selected state colors.
 - **`HomePageWidget`**: home page. The upper half holds the project info card + 3-platform repo address card (`ExpandGroupSettingCard`); the lower half is the **sensor module tile grid** — one `ModuleFolderTile` (`CardWidget` subclass) per module: a module text icon (meta `V`/`F`/`x`/`pH`/`v`/`A`, rendered via `make_text_icon()` with a theme-reactive `refresh_icon()`) + module name + a pin button in the top-right (`PillToolButton` + `FIF.PIN`, pin-to-top toggle). The grid uses `AdaptiveFlowLayout` (`setWidgetMinimumWidth(160)` computes columns automatically and wraps to fill rows as the window resizes). Pinned modules sort first within their group; the state persists to `General.PinnedModules` in `app_config.json` (serialized as a JSON array by `core.StringListSerializer`); clicking a tile emits `module_clicked` → switches to that module. Titles use FluentWidgets `TitleLabel` / `SubtitleLabel` for automatic light/dark theme adaptation; `apply_theme()` refreshes the page/scroll background and redraws each tile's text icon (tiles themselves are native FluentWidgets components and adapt automatically — no rebuild needed).
-- **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Groups: ① Personalization (app theme: light / dark / follow system; **config persistence switch**: when off, sensor_config.json is neither read nor written; **clear user settings**: after confirmation, calls `core.clear_sensor_config()` to delete sensor_config.json and turns the persistence switch back on; **chart engine: matplotlib / pyqtgraph** — unavailable engines are grayed out via `ComboBox.setItemEnabled` and labeled "未安装/not installed") ② About (app name / version / license) ③ Source & feedback (GitHub / Gitee / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via `theme_change_requested`; engine switching is wired to `MainWindow.change_chart_engine` via `engine_change_requested`.
-- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, theme switching, and chart engine switching. `change_app_theme(theme)` flow: first `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors. `change_chart_engine(engine)` flow: first rejects requests for uninstalled engines via `chart_engine_available()`, then iterates each sensor module via `findChildren(ChartPanel)` and calls `panel.set_engine(engine)` to rebuild the engine widget and replay the last committed draw transaction — curves carry over seamlessly without data loss.
+- **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Groups: ① Personalization (**app theme**: light / dark / follow system; **theme color**: follow the Windows system accent color — read from the registry, `SystemAccentListener` listens for DWM broadcasts and updates live, system color is never persisted — or custom via a `ColorDialog` color picker, persisted on selection; **config persistence switch**: when off, sensor_config.json is neither read nor written; **sensor config management**: clear / export / import via `core.clear/export/import_sensor_config` using system folder/file dialogs; **reset to defaults**: restores app_config.json and sensor_config.json; **chart engine: matplotlib / pyqtgraph** — unavailable engines are grayed out via `ComboBox.setItemEnabled` and labeled "未安装/not installed"; switching from pyqtgraph to matplotlib pops a compatibility warning confirmation) ② About (app name / version / license) ③ Open-source info (`ExpandGroupSettingCard` listing dependency libraries, licenses and official links) ④ Source & feedback (GitHub / Gitee / GitCode / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via `theme_change_requested`; engine switching is wired to `MainWindow.change_chart_engine` via `engine_change_requested`.
+- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, theme switching, and chart engine switching. `change_app_theme(theme)` flow: for fixed modes (light/dark) it first calls `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors; in **auto (follow system) mode `setTheme` is NOT called** (qconfig is already set to `Theme.AUTO`; system theme changes fire `qconfig.themeChanged` → `_on_fluent_theme_changed`, which only refreshes custom widgets — this avoids overwriting AUTO with a fixed theme, which would cause the mode to flip-flop and trigger full-refresh loops). `change_chart_engine(engine)` flow: first rejects requests for uninstalled engines via `chart_engine_available()`, then iterates each sensor module via `findChildren(ChartPanel)` and calls `panel.set_engine(engine)` to rebuild the engine widget and replay the last committed draw transaction — curves carry over seamlessly without data loss.
 - **Legacy code**: `NavButton` / `SidebarWidget` are the hand-written sidebar implementation from before the FluentWindow migration, **no longer used by `MainWindow`** (FluentWindow has its own navigation). They are still kept in `main.py` for reference — do not build new features on them.
 
 ### core.py composition
 
-Centralized shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices`, `load/save_sensor_config`, `CalibrationDialog`, `SampleRateDialog`, modern style functions (`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`).
+Centralized shared code — `SerialThread`, `SimulatorThread`, `BLESerialThread`, `scan_ble_devices`, `load/save/export/import/clear_sensor_config`, `reset_all_config`, `system_accent_color` / `SystemAccentListener`, `CalibrationDialog`, `CalibrationMessageBox`, `SampleRateDialog`, `SampleRateComboBox`, modern style functions (`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`/`page_bg_style`/`scroll_area_style`).
 
 **Theme infrastructure** (full light/dark theme support):
 - `_theme_colors()`: returns a dict of semantic colors for the current theme based on `isDarkTheme()` (`page_bg`/`card_bg`/`text_primary`/`accent`, etc.).
@@ -398,8 +415,10 @@ Centralized shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices
 - All sensor module charts are drawn exclusively through `ChartPanel` — do **not** use `Figure`/`FigureCanvas` or `pg.PlotWidget` directly.
 - Transactional API: `begin()` opens a draw → `plot(x, y, color, width, label, index)` draws curves → `hline(y, ...)` draws horizontal reference lines → `set_labels()` / `set_title()` / `set_xlim()` / `set_ylim()` / `legend()` add decorations → `end()` commits and renders. Multi-plot layouts use `ChartPanel(n_plots=N)` with the `index` parameter.
 - Engine selection: reads `app_cfg.chartEngine` at construction and resolves it against availability via `resolve_chart_engine()`; `set_engine(engine)` rebuilds the underlying widget at runtime and **replays the last committed transaction** (cached in `_last`), so no curve data is lost on engine switch.
+- **Incremental updates (pyqtgraph live path)**: `_commit_pg` first compares a structural signature via `_pg_incremental_ok()` (sub-plot count, curves/hlines per sub-plot, legend toggle, explicit axis-range toggles); when it matches, `_incremental_pg()` reuses existing controls and only calls `setData`, avoiding a full `pi.clear()` + control rebuild every frame (the main cause of pyqtgraph lag under high-rate live drawing); structural changes automatically fall back to a full rebuild.
 - Theme adaptation: `apply_chart_theme(dark)` handles both matplotlib (figure/axes background & axis colors) and pyqtgraph (`setBackground` / axis text colors); call it from each module's `apply_theme()`.
 - **Hover interaction (pyqtgraph)**: on mouse move the panel locates the nearest data point and shows a dashed vertical guide line plus a following label (x-axis name/time + each curve's value; the label flips below the point near the top edge to stay in view). Nearest-point lookup uses binary search for time series (50k points in < 0.1ms per move). The panel records the last hover position (`_pg_hover_view`) and re-positions the hover items on the freshest data after every `_commit_pg` redraw — during live acquisition the label keeps showing with updated values even when the mouse is still, instead of flickering away on each redraw; hover items are restyled on theme change, migrate across sub-plots automatically, and the record is cleared by `clear_chart`.
+- **Chart analysis panel (pyqtgraph only)**: `get_analysis_panel()` returns a compact vertical analysis bar (modules place it in the left column of the chart card) offering: **view window** (`SwitchButton` toggles "show full range / scrolling window"; the scrolling window locks the x axis to the last N seconds via a `DoubleSpinBox` supporting 0.1s~3h fractional seconds); **curve fitting** (linear / quadratic / cubic / logarithmic y=a·ln(x)+b / power y=a·x^b — same-color dashed overlay plus equation & R² text anchored to the top-left of the viewport; points outside the domain are auto-dropped); **clear scatter points** (double-click confirm to prevent mis-taps); **outlier removal** (residual-ratio method: re-fit the remaining data and drop the top x% largest-residual points, with a multi-level undo stack `_outlier_stack` for step-by-step restore; masks apply only to each sub-plot's first curve, newly appended points stay by default). The panel auto-hides on matplotlib / placeholder modes.
 - **Legend managed internally**: legend entries are explicitly `legend.clear()`-ed before every redraw (older pyqtgraph's `pi.clear()` does not clear the legend, so live updates would accumulate entries indefinitely); reference lines (`InfiniteLine`) must **never** be added to the legend directly — they lack the `opts` attribute, and older pyqtgraph's `ItemSample.paint` crashes on them, taking down the whole widget tree's paint chain (broken charts, blank UI after clicks). Legend samples use an empty `PlotDataItem` with the same pen instead.
 
 **Engine availability & graceful degradation**:
@@ -409,7 +428,7 @@ Centralized shared code — `SerialThread`, `BLESerialThread`, `scan_ble_devices
 
 ### Module capability notes
 
-- `VoltageSensorWidget` supports: HX711 24-bit ADC mode (channel A/B, gain 128/32), kV/V/mV unit switching, Tare function.
+- `VoltageSensorWidget` supports: HX711 24-bit ADC mode (channel A/B, gain 128/32), ADS1115 16-bit mode (PGA gain, channel selection), kV/V/mV unit switching, Tare function.
 - `ForceSensorWidget` supports: Tare, two-point calibration, wired serial and BLE connections.
 - `PhSensorWidget` supports: single-point / two-point / three-point calibration (Nernst slope / linear fit / quadratic polynomial fit).
 - `CurrentSensorWidget` supports: ACS712 5A/20A/30A range switching, AC/DC measurement, zero calibration.
@@ -509,7 +528,7 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - Chinese directory/file names throughout the firmware folder
 - `main_legacy.py` is the pre-refactor single-file archive, **no longer maintained** — edit `main.py` + module files for new features
 - `NavButton` / `SidebarWidget` are legacy code; `MainWindow` now uses `FluentWindow`'s built-in navigation — do not build new features on them
-- The settings page now implements theme switching (light / dark / follow system), chart engine switching (matplotlib / pyqtgraph, hot-switch; uninstalled engines grayed out and unselectable), about info, and repo links (`SettingsWidget`)
+- The settings page now implements theme switching (light / dark / follow system), theme color (follow system / custom picker), chart engine switching (matplotlib / pyqtgraph, hot-switch; uninstalled engines grayed out and unselectable), config persistence switch, sensor config management (clear / export / import), reset to defaults, about info, open-source info, and repo links (`SettingsWidget`)
 - Chart engines are **optional dependencies**: install at least one of matplotlib / pyqtgraph; when both are missing the app still starts and chart areas show a "no chart engine detected" placeholder
 - **pyserial is an optional dependency**: without it the app still starts, every sensor module auto-switches to simulator mode, and serial connection pops an install hint; module code must **never** `import serial` directly — always go through `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`
 - When adding a new sensor module, implement `apply_theme()` to support light/dark themes (delegate to `core.apply_module_theme()`); always draw charts via `core.ChartPanel` so engine hot-switching and placeholder degradation work for the module
