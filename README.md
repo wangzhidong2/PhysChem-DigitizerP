@@ -61,6 +61,11 @@ pip install bleak
 ```bash
 pip install PySide6 PySide6-Fluent-Widgets numpy pyserial matplotlib pyqtgraph bleak
 ```
+或者，项目根目录已提供[requirements.txt](requirements.txt)，包含所有必需与可选依赖。
+在项目根目录（即 `main.py` 所在目录）打开终端，执行：
+```bash
+pip install -r requirements.txt
+```
 如果你所在的shell（powershell）不支持一次输入多个模块，依次输入以下命令
 ```powershell
 pip install PySide6
