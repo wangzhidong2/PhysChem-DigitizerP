@@ -11,16 +11,16 @@
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
 
 ## 1.写在前面
-本项目的开源协议是GPLv3,为什么用GPLv3开源呢?因为b人也是一个开源爱好者，想把自由一直传递下去，同时我的上游库PySide6与Fluent-Widgets库也都是GPL类的。请在制作自己的分支的时候，遵守GPL相关协议，耗子尾汁哦:) 如果你的项目是商用项目，实在不想公开源代码的话，那你跟PySide6与Fluent-Widgets库商量，违反GPL,反正我不会去追究你，因为我还要上晚自习😒😒，如果跟上游库商量好之后，你想要闭源进行商用的话，跟我说一声不过分吧？要不然…我会在生日许愿时祝你电脑蓝屏:(  哦。
+本项目的开源协议是`GPLv3`,为什么用GPLv3开源呢?因为b人也是一个开源爱好者，想把自由一直传递下去，同时我的上游库`PySide6`与`Fluent-Widgets`库也都是GPL类的。请在制作自己的分支的时候，遵守GPL相关协议，耗子尾汁哦:) 如果你的项目是商用项目，实在不想公开源代码的话，那你跟PySide6与Fluent-Widgets库商量，违反GPL,反正我不会去追究你，因为我还要上晚自习😒😒，如果跟上游库商量好之后，你想要闭源进行商用的话，跟我说一声不过分吧？要不然…我会在生日许愿时祝你电脑蓝屏:(  哦。
 
 ## 2.项目简介
 
 **PhysChem-DigitizerP** 是一个开源的物理化学实验数字化传感器系统，目的在于为中学物理/化学实验提供低成本，可视化的传感器解决方案。项目包含硬件（ESP32/ESP8266/Arduino）和软件（Python ）两部分，实现了从传感器数据采集、实时可视化到数据导出的功能。该项目处于维护中，但鉴于本人是个高中生，没有办法及时更新，所以更新不规律。
 
 - **低成本替代**：单传感器成本 < ¥80（商业方案通常 > ¥200）
-- **开源透明**：GPL-3.0 协议，硬件设计和软件代码完全开源，同时提供我认为写的比较详细的教程
-- **模块化设计**：新增传感器只需丢文件，详情参看Agents.md，同时也方便AI Agent开发
-- **现代化界面**：PySide6 +Fluent-widgets库图形界面，UI美观，尽可能的复刻fluent design
+- **开源透明**：`GPL-3.0` 协议，硬件设计和软件代码完全开源，同时提供我认为写的比较详细的教程
+- **模块化设计**：新增传感器只需丢文件，详情参看`Agents.md`，同时也方便AI Agent开发
+- **现代化界面**：`PySide6 `+`Fluent-widgets`库图形界面，UI美观，尽可能的复刻fluent design
 
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/1f6418ee-c7c5-48d0-948f-c704f9c59442/image.png 'image.png')
 
