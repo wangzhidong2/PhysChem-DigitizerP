@@ -1,0 +1,20 @@
+# 核心 UI 框架
+PySide6>=6.4.0
+PySide6-Fluent-Widgets
+
+# 数值计算
+numpy>=1.21.0
+
+# 串口通信（连接真实下位机必需，缺失时会降级到模拟器模式）
+pyserial>=3.5
+
+# 绘图引擎（至少安装一个，两者都装也没问题）
+matplotlib>=3.5.0
+pyqtgraph>=0.13.0
+
+# BLE 无线通信（可选，但如果要用蓝牙功能则需安装）
+bleak
+#如果网络较慢，可以加上国内镜像，例如：
+#pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+
