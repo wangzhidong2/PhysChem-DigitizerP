@@ -564,8 +564,8 @@ class PowerSensorWidget(QWidget):
     def _enable_controls(self, enabled):
         self.collect_btn.setEnabled(enabled)
         self.float_collect_btn.setEnabled(enabled)
-        self.save_btn.setEnabled(enabled or (self._bufs and any(
-            b['t'] for b in self._bufs.values())))
+        self.save_btn.setEnabled(enabled or bool(
+            self._bufs and any(b['t'] for b in self._bufs.values())))
         self.zero_cal_btn.setEnabled(enabled)
         if enabled:
             for u in self.panel.units:

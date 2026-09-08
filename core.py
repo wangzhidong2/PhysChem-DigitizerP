@@ -2884,8 +2884,8 @@ class FluentCard(ExpandGroupSettingCard):
     """
     ICON = None  # 子类可替换 header 图标（FluentIcon）
 
-    def __init__(self, title, content_widget=None, expanded=True):
-        super().__init__(self.__class__.ICON or FluentIcon.FOLDER, title, None, None)
+    def __init__(self, title, content_widget=None, expanded=True, parent=None):
+        super().__init__(self.__class__.ICON or FluentIcon.FOLDER, title, None, parent)
 
         # 内容容器：紧凑布局
         self.content = QWidget()
@@ -3358,7 +3358,7 @@ class VIConnectionUnitCard(FluentCard):
     remove_requested = Signal(object)
 
     def __init__(self, unit, index, parent=None):
-        super().__init__(f"连接 #{index + 1}", None, parent)
+        super().__init__(f"连接 #{index + 1}", None, True, parent)
         self.unit = unit
 
         # ---- header：自定义名称 + 图线颜色下拉 + 删除按钮 ----
@@ -3552,7 +3552,7 @@ class VIConnectionPanel(FluentCard):
 
     def __init__(self, on_sample, sample_interval_ms=100, title="连接控制",
                  parent=None):
-        super().__init__(title, None, parent)
+        super().__init__(title, None, True, parent)
         self.on_sample = on_sample
         self._unit_objs = []      # VIConnectionUnit
         self._unit_cards = []     # VIConnectionUnitCard
@@ -3607,6 +3607,10 @@ class VIConnectionPanel(FluentCard):
             unit.update_config(config)
         card = VIConnectionUnitCard(unit, idx, parent=self)
         card.remove_requested.connect(self.remove_unit)
+        # 子卡展开/折叠动画期间逐帧刷新本面板高度（子卡折叠后 sizeHint 不
+        # 缩小，必须按实际高度重算，见 _adjustViewSize）；动画结束再兜底一次
+        card.expandAni.valueChanged.connect(self._adjustViewSize)
+        card.expandAni.finished.connect(self._adjustViewSize)
         self._unit_objs.append(unit)
         self._unit_cards.append(card)
         self.units_layout.addWidget(card)
@@ -3635,6 +3639,28 @@ class VIConnectionPanel(FluentCard):
         self._refresh_add_btn()
         self._sync_connected()
         self.units_changed.emit()
+
+    def _adjustViewSize(self):
+        """重写高度计算：子卡折叠后 sizeHint() 不缩小，改用子卡实际高度。
+
+        ExpandSettingCard 的折叠依赖滚动区 + 动画逐帧 setFixedHeight——
+        折叠后的子卡 height() 会缩到仅剩 header，但其 sizeHint() 仍返回
+        全展开高度。父面板 body 的 sizeHint() 因此高估，这里把
+        units_container 的贡献替换为各子卡 height() 之和 + 间距，
+        使连接卡随子卡展开/折叠自适应收放。
+        """
+        h = self.body.sizeHint().height()
+        cards = getattr(self, '_unit_cards', None)
+        if cards:
+            cont = getattr(self, 'units_container', None)
+            if cont is not None:
+                actual = sum(c.height() for c in cards)
+                actual += 8 * (len(cards) - 1)
+                h = h - cont.sizeHint().height() + actual
+        h = max(int(h), 1)
+        self.spaceWidget.setFixedHeight(h)
+        if self.isExpand:
+            self.setFixedHeight(self.card.height() + h)
 
     def _refresh_add_btn(self):
         """多单元时有删除入口，无需禁用加号；仅无单元时也可补加一个。"""
