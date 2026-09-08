@@ -41,7 +41,7 @@ from PySide6.QtGui import (
 
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
-    SwitchButton, DoubleSpinBox,
+    SwitchButton, DoubleSpinBox, ToolButton,
     LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
@@ -3379,7 +3379,7 @@ class VIConnectionUnitCard(FluentCard):
         self.color_combo.currentIndexChanged.connect(self._on_color_changed)
         self.add_header_widget(self.color_combo)
 
-        self.remove_btn = PushButton("✕", self)
+        self.remove_btn = ToolButton(FluentIcon.DELETE, self)
         self.remove_btn.setFixedSize(28, 28)
         self.remove_btn.setToolTip("删除该连接")
         self.remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
