@@ -26,6 +26,7 @@ import bisect
 import threading
 import importlib
 import importlib.util
+from collections import deque
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
@@ -2961,6 +2962,758 @@ class FluentCard(ExpandGroupSettingCard):
     # ---------- 主题 ----------
     def apply_theme(self, theme=None):
         """原生卡自动适配主题，无需手动刷新样式（兼容 apply_module_theme 契约）。"""
+
+
+# ============================================================
+# 多连接控制面板（电学综合系列模块共用：电功率 / 欧姆定律）
+#
+# 「连接」抽象为可动态增删的单元：默认一个连接单元，点「＋ 添加连接」
+# 追加新的，每个单元 = 一路完整的 电压+电流 测量装置（连接方式 / 采样
+# 方式 / 电压串口 / 一体固件 / 电流串口 / 图线颜色），独立串口或模拟
+# 线程并行采集，换算后的 (时间, 电压, 电流) 经 on_sample 回调交给模块。
+# ============================================================
+
+# 预设图线颜色（多路曲线在图表中的区分色，可在单元卡中自行更换）
+LINE_COLORS = [
+    '#0078d4',  # 蓝
+    '#f7630c',  # 橙
+    '#107c10',  # 绿
+    '#d13438',  # 红
+    '#825a2c',  # 棕
+    '#7030a0',  # 紫
+    '#00b294',  # 青
+    '#e3008c',  # 品红
+]
+
+
+def _pick_line_color(index):
+    """按序号循环取图线颜色。"""
+    return LINE_COLORS[index % len(LINE_COLORS)]
+
+
+def _color_icon(hex_color, size=24):
+    """生成实心圆角色块 QIcon（给 ComboBox 做颜色预览）。"""
+    from PySide6.QtGui import QIcon, QPixmap
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(hex_color))
+    p.drawEllipse(2, 2, size - 4, size - 4)
+    p.end()
+    return QIcon(pm)
+
+
+class VIConnectionUnit:
+    """单路「电压+电流」数据通道：配置 + 通信线程 + 解析换算。
+
+    - 每个单元独立持有电压/电流两套数据源（一体固件 VI_* 单串口双通道，
+      或电压板 + 电流板双串口，或双模拟器），并行互不干扰。
+    - 换算后的实时样本经 on_sample(unit, t_s, v, i) 回调模块；
+      采样频率过滤 / 双通道配对 / AC RMS / 零点校准缓存均在本类内完成。
+    - 连接状态变化经 on_state(unit, connected, err_text) 回调面板聚合。
+    """
+
+    # 电压换算常量（与电压传感器模块一致）
+    ADC_BITS_OPTIONS = {8: 255, 10: 1023, 12: 4095, 14: 16383,
+                        16: 65535, 18: 262143, 20: 1048575,
+                        22: 4194303, 24: 16777215}
+    VREF = 3.3
+
+    # ADS1115 PGA 量程
+    ADS1115_PGA_RANGES = {
+        '±6.144V': 6.144,
+        '±4.096V': 4.096,
+        '±2.048V': 2.048,   # 默认（PGA=010）
+        '±1.024V': 1.024,
+        '±0.512V': 0.512,
+        '±0.256V': 0.256,
+    }
+
+    # 电流换算常量（与电流传感器模块一致）
+    ACS712_RANGES = {
+        '5A':  {'sensitivity': 0.185, 'range_a': 5,  'desc': 'ACS712ELC-05B  ±5A  185mV/A'},
+        '20A': {'sensitivity': 0.100, 'range_a': 20, 'desc': 'ACS712ELC-20A  ±20A  100mV/A'},
+        '30A': {'sensitivity': 0.066, 'range_a': 30, 'desc': 'ACS712ELC-30A  ±30A  66mV/A'},
+    }
+    UNIT_FACTORS = {'A': 1.0, 'mA': 1000.0}
+    VOLT_METHOD_VALUES = ['esp32', 'ads1115', 'hx711']
+
+    # 无效电流判断阈值（A）：|I| 小于该值视为开路，电阻显示 "---"
+    I_EPS = 1e-7
+
+    def __init__(self, index, on_sample, on_state=None, sample_interval_ms=100):
+        self.index = index
+        self.on_sample = on_sample          # callable(unit, t_s, v, i)
+        self.on_state = on_state            # callable(unit, connected, err_text)
+        self.sample_interval_ms = sample_interval_ms
+        self.custom_name = ""               # 用户自定义显示名（图表/实时行），空则用默认「连接 N」
+        self.color = _pick_line_color(index)
+
+        # 连接/测量配置
+        self.volt_mode = 'serial'        # serial / simulator
+        self.cur_mode = 'serial'         # serial / simulator
+        self.volt_merged = True          # 一体固件(VI_*)同时输出电流
+        self.volt_method = 'esp32'       # esp32 / ads1115 / hx711
+        # 电压参数
+        self.divider_ratio = 1.0
+        self.amp_ratio = 1.0
+        self.ads1115_pga = '±6.144V'
+        self.ads1115_channel = 'AIN0'
+        self.hx711_avdd = 5.0
+        self.hx711_channel = 'B'
+        # 电流参数
+        self.acs_range = '5A'
+        self.vcc = 5.0
+        self.v_quiescent = 2.5           # 零电流输出电压（零点校准后更新）
+        self.i_divider_ratio = 1.515     # ACS712 输出分压比
+        self.current_mode = 'DC'         # DC / AC
+        self.current_unit = 'A'
+        self.adc_bits = 12
+        self.ac_rms_window = 50
+
+        # 通信线程与状态
+        self.serial_vi = None
+        self.serial_v = None
+        self.serial_i = None
+        self.sim_v = None
+        self.sim_i = None
+        self.port_v = ""          # 连接前由面板从卡上同步串口选择
+        self.port_i = ""
+        self.connected = False
+        self.zero_cal_active = False
+        self._recent_vs = deque(maxlen=10)
+        self._pending_v = None
+        self._pending_i = None
+        self._i_win = None
+        self.last_sample_time_ms = 0
+        # 退出慢的旧线程保留引用（切模式/断开时防止 QThread 销毁崩溃）
+        self._retired_threads = []
+
+    @property
+    def label(self):
+        """图表/实时行/统计显示的连接名：优先用户自定义名，否则「连接 N」。"""
+        return self.custom_name or f"连接 {self.index + 1}"
+
+    # ---------------- 换算 ----------------
+    @property
+    def sensitivity(self):
+        return self.ACS712_RANGES.get(self.acs_range,
+                                      self.ACS712_RANGES['5A'])['sensitivity']
+
+    def to_current_unit(self, current_a):
+        return current_a * self.UNIT_FACTORS.get(self.current_unit, 1.0)
+
+    def format_current(self, current_a):
+        c = self.to_current_unit(current_a)
+        if self.current_unit == 'mA':
+            return f"{c:.2f}"
+        abs_c = abs(c)
+        if abs_c >= 1.0:
+            return f"{c:.4f}"
+        return f"{c:.6f}"
+
+    def adc_to_voltage(self, adc_value):
+        """电压 ADC 原始值 → 被测电压 (V)。换算公式与电压传感器模块一致。"""
+        if self.volt_method == 'ads1115':
+            fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 6.144)
+            v_adc = adc_value / 32768.0 * fsr
+        elif self.volt_method == 'hx711':
+            gain = 128 if self.hx711_channel == 'A' else 32
+            v_adc = adc_value / 8388608.0 * (self.hx711_avdd / gain)
+        else:
+            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+            v_adc = (adc_value / max_adc) * self.VREF
+        return v_adc * self.divider_ratio / self.amp_ratio
+
+    def adc_to_vsensor(self, adc_value):
+        """电流 ADC 原始值 → ACS712 输出电压 (V，扣除分压电路影响)。"""
+        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+        v_adc = (adc_value / max_adc) * self.VREF
+        return v_adc * self.i_divider_ratio
+
+    def adc_to_current(self, adc_value):
+        """电流 ADC 原始值 → 瞬时电流 (A)。"""
+        return (self.adc_to_vsensor(adc_value) - self.v_quiescent) / self.sensitivity
+
+    # ---------------- 连接 / 断开 ----------------
+    def connect(self):
+        """按本单元配置建立电压/电流数据源，返回错误文本（成功返回 None）。"""
+        if not SERIAL_AVAILABLE and (self.volt_mode == 'serial'
+                                     or self.cur_mode == 'serial'):
+            return serial_unavailable_hint()
+
+        # ---- 电压源 ----
+        if self.volt_mode == 'serial':
+            port = self.port_v or ""
+            if not port:
+                return "请先选择电压串口"
+            if self.volt_merged:
+                self.serial_vi = SerialThread(port)
+                self.serial_vi.data_received.connect(self.handle_vi_line)
+                self.serial_vi.start()
+            else:
+                self.serial_v = SerialThread(port)
+                self.serial_v.data_received.connect(self.handle_v_line)
+                self.serial_v.start()
+        else:
+            self.sim_v = SimulatorThread(0, 4095, self.sample_interval_ms, start_value=2500)
+            self.sim_v.data_received.connect(self.handle_v_line)
+            self.sim_v.start()
+            self._mark_connected(True, None)
+
+        # ---- 电流源 ----
+        if self.volt_merged and self.volt_mode == 'serial':
+            pass  # 电流随电压板一体固件输出
+        elif self.cur_mode == 'serial':
+            port2 = self.port_i or ""
+            if not port2:
+                self.disconnect()
+                return "请先选择电流串口"
+            self.serial_i = SerialThread(port2)
+            self.serial_i.data_received.connect(self.handle_i_line)
+            self.serial_i.start()
+        else:
+            self.sim_i = SimulatorThread(1800, 2300, self.sample_interval_ms, start_value=2048)
+            self.sim_i.data_received.connect(self.handle_i_line)
+            self.sim_i.start()
+            self._mark_connected(True, None)
+        return None
+
+    def disconnect(self):
+        self._mark_connected(False, None)
+        threads = (self.serial_vi, self.serial_v, self.serial_i,
+                   self.sim_v, self.sim_i)
+        for t in threads:
+            if t is not None:
+                try:
+                    t.stop()
+                except Exception:
+                    pass
+        # 等线程真正退出再释放引用：QThread 仍在运行时被销毁会触发
+        # Qt fail-fast 崩溃（0xC0000409）；退出慢的收进 _retired_threads
+        for t in threads:
+            if t is None:
+                continue
+            try:
+                if not t.wait(2000):
+                    self._retired_threads.append(t)
+            except Exception:
+                self._retired_threads.append(t)
+        self._retired_threads = [t for t in self._retired_threads
+                                 if t.isRunning()]
+        self.serial_vi = self.serial_v = self.serial_i = None
+        self.sim_v = self.sim_i = None
+
+    def _mark_connected(self, connected, err_text=None):
+        """更新本单元连接状态并回调（面板据此聚合、模块据此刷新按钮）。"""
+        if self.connected == connected and err_text is None:
+            return
+        self.connected = connected
+        if self.on_state is not None:
+            self.on_state(self, connected, err_text)
+
+    def _on_started(self):
+        self._mark_connected(True, None)
+
+    def _on_error(self, data):
+        msg = data[len("ERROR:"):] if data.startswith("ERROR:") else data
+        self._mark_connected(False, msg)
+
+    # ---------------- 数据解析（单板三字段 / 双板与模拟器两字段 + 配对） ----------------
+    @staticmethod
+    def _parse(line):
+        parts = line.strip().split(',')
+        try:
+            t = int(float(parts[0]))
+            vals = [int(float(v)) for v in parts[1:]]
+            return t, vals
+        except (ValueError, IndexError):
+            return None
+
+    def handle_vi_line(self, data):
+        """单板一体：一行 时间戳,电压ADC,电流ADC。"""
+        if data == "START":
+            self._on_started()
+            return
+        if data.startswith("ERROR"):
+            self._on_error(data)
+            return
+        parsed = self._parse(data)
+        if parsed is None:
+            return
+        t, vals = parsed
+        if len(vals) != 2:
+            return
+        self._consume_pair(t, vals[0], vals[1])
+
+    def handle_v_line(self, data):
+        """电压通道数据（双板电压板 / 模拟器）。"""
+        if data == "START":
+            self._on_started()
+            return
+        if data.startswith("ERROR"):
+            self._on_error(data)
+            return
+        parsed = self._parse(data)
+        if parsed is None:
+            return
+        t, vals = parsed
+        if len(vals) != 1:
+            return
+        if self._pending_i is not None:
+            ti, adc_i = self._pending_i
+            self._pending_i = None
+            self._consume_pair(t, vals[0], adc_i)
+        else:
+            self._pending_v = (t, vals[0])
+
+    def handle_i_line(self, data):
+        """电流通道数据（双板电流板 / 模拟器）。"""
+        if data.startswith("ERROR"):
+            self._on_error(data)
+            return
+        parsed = self._parse(data)
+        if parsed is None:
+            return
+        t, vals = parsed
+        if len(vals) != 1:
+            return
+        self._pending_i = (t, vals[0])
+        if self._pending_v is not None:
+            tv, adc_v = self._pending_v
+            self._pending_v = None
+            self._consume_pair(tv, adc_v, vals[0])
+
+    def _consume_pair(self, t_ms, adc_v, adc_i):
+        """电压+电流配对到达：采样过滤 → 换算 → RMS(AC) → 回调模块。"""
+        if t_ms - self.last_sample_time_ms < self.sample_interval_ms:
+            return
+        self.last_sample_time_ms = t_ms
+
+        v = self.adc_to_voltage(adc_v)
+        v_sensor = self.adc_to_vsensor(adc_i)
+        i_inst = (v_sensor - self.v_quiescent) / self.sensitivity
+
+        if self.current_mode == 'AC':
+            self._i_win = getattr(self, '_i_win', deque(maxlen=self.ac_rms_window))
+            self._i_win.append(i_inst)
+            if len(self._i_win) >= 2:
+                import numpy as np
+                arr = np.array(list(self._i_win))
+                i = float(np.sqrt(np.mean(arr ** 2)))
+            else:
+                i = 0.0
+        else:
+            i = i_inst
+
+        self._recent_vs.append(v_sensor)
+        # 时间戳转相对秒交给模块（模块维护各自起点），这里只给原始毫秒换算值
+        if self.on_sample is not None:
+            self.on_sample(self, t_ms, v, i)
+
+    # ---------------- 零点校准 ----------------
+    def zero_calibrate(self):
+        """多取几个 ACS712 输出电压求均，作为零电流输出电压。"""
+        vals = list(self._recent_vs)
+        if len(vals) < 3:
+            return False
+        self.v_quiescent = sum(vals) / len(vals)
+        self.zero_cal_active = True
+        return True
+
+    def cancel_zero_cal(self):
+        self.v_quiescent = self.vcc / 2.0
+        self.zero_cal_active = False
+
+    def update_config(self, cfg):
+        """从 dict（模块持久化格式）批量回写本单元配置。"""
+        for k, v in cfg.items():
+            if k == 'label':
+                # 旧格式迁移：非默认序号名视为自定义名
+                if v and v != f"连接 {self.index + 1}":
+                    self.custom_name = v
+                continue
+            if hasattr(self, k):
+                setattr(self, k, v)
+
+    def get_config(self):
+        """导出本单元配置 dict（模块持久化用）。"""
+        keys = ('volt_mode', 'cur_mode', 'volt_merged', 'volt_method',
+                'divider_ratio', 'amp_ratio', 'ads1115_pga', 'ads1115_channel',
+                'hx711_avdd', 'hx711_channel', 'acs_range', 'vcc',
+                'v_quiescent', 'i_divider_ratio', 'current_mode',
+                'current_unit', 'zero_cal_active', 'adc_bits', 'ac_rms_window',
+                'custom_name', 'color')
+        return {k: getattr(self, k) for k in keys}
+
+
+class VIConnectionUnitCard(FluentCard):
+    """单个连接单元卡：完整 U+I 装置配置 + 图线颜色下拉 + 删除按钮。
+
+    配置变更即时写回对应 VIConnectionUnit；标题与颜色随序号自动分配。
+    """
+
+    remove_requested = Signal(object)
+
+    def __init__(self, unit, index, parent=None):
+        super().__init__(f"连接 #{index + 1}", None, parent)
+        self.unit = unit
+
+        # ---- header：自定义名称 + 图线颜色下拉 + 删除按钮 ----
+        self.name_edit = LineEdit(self)
+        self.name_edit.setText(unit.label)
+        self.name_edit.setPlaceholderText("自定义名称")
+        self.name_edit.setFixedWidth(112)
+        self.name_edit.setToolTip("图表图例/实时数据中显示的名称（留空则用默认「连接 #N」）")
+        self.name_edit.textEdited.connect(self._on_name_edited)
+        self.add_header_widget(self.name_edit)
+
+        self.color_combo = ComboBox(self)
+        for color in LINE_COLORS:
+            self.color_combo.addItem(color, _color_icon(color), userData=color)
+        self._set_color(unit.color)
+        self.color_combo.setMinimumWidth(96)
+        self.color_combo.setToolTip("该连接的图线颜色")
+        self.color_combo.currentIndexChanged.connect(self._on_color_changed)
+        self.add_header_widget(self.color_combo)
+
+        self.remove_btn = PushButton("✕", self)
+        self.remove_btn.setFixedSize(28, 28)
+        self.remove_btn.setToolTip("删除该连接")
+        self.remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
+        self.add_header_widget(self.remove_btn)
+
+        # ---- body：连接方式 + 采样方式（同一行） ----
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row1.addWidget(BodyLabel("连接方式"))
+        self.mode_combo = ComboBox()
+        self.mode_combo.addItems(["模拟器", "串口"])
+        self.mode_combo.setCurrentIndex(1 if unit.volt_mode == 'serial' else 0)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        row1.addWidget(self.mode_combo)
+        row1.addSpacing(8)
+        row1.addWidget(BodyLabel("采样方式"))
+        self.method_combo = ComboBox()
+        self.method_combo.addItems(
+            ["ESP32 内置 ADC", "ADS1115 (16位)", "HX711 (24位)"])
+        self.method_combo.setCurrentIndex(
+            unit.VOLT_METHOD_VALUES.index(unit.volt_method))
+        self.method_combo.currentIndexChanged.connect(self._on_method_changed)
+        row1.addWidget(self.method_combo)
+        row1.addStretch()
+        w1 = QWidget()
+        w1.setLayout(row1)
+        self.add_widget(w1)
+
+        # ---- 电压串口行（仅串口模式可见）----
+        port_row = QHBoxLayout()
+        port_row.setSpacing(8)
+        port_row.addWidget(BodyLabel("电压串口"))
+        self.port_combo = ComboBox()
+        self.port_combo.setMinimumWidth(130)
+        self.refresh_btn = PushButton("刷新")
+        self.refresh_btn.setFixedHeight(30)
+        self.refresh_btn.clicked.connect(self.refresh_ports)
+        port_row.addWidget(self.port_combo, 1)
+        port_row.addWidget(self.refresh_btn)
+        self.volt_port_row = QWidget()
+        self.volt_port_row.setLayout(port_row)
+        self.add_widget(self.volt_port_row)
+
+        # ---- 一体固件 ----
+        self.merged_switch = SwitchButton()
+        self.merged_switch.setText("开")
+        self.merged_switch.setOnText("一体固件（VI_*，同时输出电流）")
+        self.merged_switch.setOffText("独立电压板（V_*）")
+        self.merged_switch.setChecked(unit.volt_merged)
+        self.merged_switch.checkedChanged.connect(self._on_merged_changed)
+        self.add_row("一体固件", self.merged_switch)
+
+        # ---- 电流串口行 ----
+        self.port2_container = QWidget()
+        r2 = QHBoxLayout(self.port2_container)
+        r2.setContentsMargins(0, 0, 0, 0)
+        r2.setSpacing(8)
+        r2.addWidget(BodyLabel("电流串口"))
+        self.port2_combo = ComboBox()
+        self.port2_combo.setMinimumWidth(130)
+        r2.addWidget(self.port2_combo, 1)
+        self.add_widget(self.port2_container)
+
+        self.cur_port_hint = CaptionLabel(
+            "双板分测：电压板(V_*.ino)与电流板(I_ACS712.ino)分别接串口")
+        self.add_widget(self.cur_port_hint)
+
+        self.refresh_ports()
+        self._sync_visibility()
+
+    def _set_color(self, color):
+        idx = LINE_COLORS.index(color) if color in LINE_COLORS else 0
+        self.color_combo.blockSignals(True)
+        self.color_combo.setCurrentIndex(idx)
+        self.color_combo.blockSignals(False)
+
+    def _on_name_edited(self, text):
+        """用户输入自定义名称：立即写回单元（留空忽略，保留当前名）。"""
+        t = text.strip()
+        if t:
+            self.unit.custom_name = t
+
+    def _on_color_changed(self, index):
+        self.unit.color = self.color_combo.itemData(index)
+
+    def _on_mode_changed(self, index):
+        self.unit.volt_mode = 'serial' if index == 1 else 'simulator'
+        self._sync_visibility()
+        # 一体固件仅对串口有意义；电压为模拟器时电流板块完全独立
+        self.merged_switch.setEnabled(self.unit.volt_mode == 'serial')
+
+    def _on_method_changed(self, index):
+        self.unit.volt_method = (self.unit.VOLT_METHOD_VALUES[index]
+                                 if 0 <= index < len(self.unit.VOLT_METHOD_VALUES)
+                                 else 'esp32')
+
+    def _on_merged_changed(self, checked):
+        self.unit.volt_merged = bool(checked)
+        self._sync_visibility()
+
+    def _sync_visibility(self):
+        unit = self.unit
+        merged_effective = unit.volt_mode == 'serial' and unit.volt_merged
+        self.volt_port_row.setVisible(unit.volt_mode == 'serial')
+        self.port2_container.setVisible(
+            not merged_effective and unit.cur_mode == 'serial')
+        self.cur_port_hint.setVisible(self.port2_container.isVisible() or
+                                      merged_effective)
+        if merged_effective:
+            self.cur_port_hint.setText(
+                "一体固件(VI_*)已同时输出电流，电流通道随电压板连接，无需独立设置")
+        else:
+            self.cur_port_hint.setText(
+                "双板分测：电压板(V_*.ino)与电流板(I_ACS712.ino)分别接串口")
+        try:
+            self._adjustViewSize()
+        except Exception:
+            pass
+
+    def refresh_ports(self):
+        ports = list_serial_ports()
+        for combo in (self.port_combo, self.port2_combo):
+            combo.blockSignals(True)
+            combo.clear()
+            if ports:
+                for device, desc in ports:
+                    combo.addItem(f"{device} {desc}" if desc else device,
+                                  userData=device)
+                combo.setCurrentIndex(0)
+            else:
+                if SERIAL_AVAILABLE:
+                    combo.addItem("未检测到串口设备", userData="")
+                else:
+                    combo.addItem("未安装 pyserial", userData="")
+            combo.blockSignals(False)
+
+    def sync_from_unit(self):
+        """配置重载后把 unit 的值同步回控件。"""
+        unit = self.unit
+        self.name_edit.blockSignals(True)
+        self.name_edit.setText(unit.label)
+        self.name_edit.blockSignals(False)
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentIndex(1 if unit.volt_mode == 'serial' else 0)
+        self.mode_combo.blockSignals(False)
+        self.method_combo.blockSignals(True)
+        self.method_combo.setCurrentIndex(
+            unit.VOLT_METHOD_VALUES.index(unit.volt_method)
+            if unit.volt_method in unit.VOLT_METHOD_VALUES else 0)
+        self.method_combo.blockSignals(False)
+        self.merged_switch.blockSignals(True)
+        self.merged_switch.setChecked(unit.volt_merged)
+        self.merged_switch.blockSignals(False)
+        self._set_color(unit.color)
+        self._sync_visibility()
+
+
+class VIConnectionPanel(FluentCard):
+    """多连接控制面板：单元卡列表 + 添加/删除 + 采样频率 + 连接按钮。
+
+    - add_unit() / remove_unit() 动态增删；每单元独立并行采集。
+    - connection_changed(any_connected) 供模块启用/禁用采集按钮。
+    - units_changed() 在增删后通知模块重建每路实时标签/缓冲。
+    - get_configs() / set_configs(configs) 对接模块配置持久化。
+    """
+
+    connection_changed = Signal(bool)
+    units_changed = Signal()
+
+    def __init__(self, on_sample, sample_interval_ms=100, title="连接控制",
+                 parent=None):
+        super().__init__(title, None, parent)
+        self.on_sample = on_sample
+        self._unit_objs = []      # VIConnectionUnit
+        self._unit_cards = []     # VIConnectionUnitCard
+        self._pending_index = 0   # 序号（删除后不回退，避免撞号）
+
+        # header：＋ 添加连接
+        self.add_btn = PushButton("＋ 添加连接")
+        self.add_btn.setFixedHeight(30)
+        self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_btn.setToolTip("添加一个新的连接（多传感器并行采集）")
+        self.add_btn.clicked.connect(self.add_unit)
+        self.add_header_widget(self.add_btn)
+
+        # 单元卡列表容器
+        self.units_container = QWidget()
+        self.units_layout = QVBoxLayout(self.units_container)
+        self.units_layout.setContentsMargins(0, 0, 0, 0)
+        self.units_layout.setSpacing(8)
+        self.add_widget(self.units_container)
+
+        # 采样频率（所有单元共享）
+        self.sample_rate_combo = SampleRateComboBox()
+        self.sample_rate_combo.setSampleInterval(sample_interval_ms)
+        self._sample_interval_ms = sample_interval_ms
+        self.sample_rate_combo.sampleIntervalChanged.connect(
+            self._on_sample_interval_changed)
+        self.add_row("采样频率", self.sample_rate_combo)
+
+        # 连接按钮 + 状态
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        self.connect_btn = PrimaryPushButton("连接")
+        self.connect_btn.setFixedHeight(34)
+        self.connect_btn.clicked.connect(self._on_connect_clicked)
+        btn_row.addWidget(self.connect_btn)
+        self.status_label = BodyLabel("未连接")
+        btn_row.addWidget(self.status_label)
+        btn_row.addStretch(1)
+        self.add_layout(btn_row)
+
+        self._refresh_add_btn()
+
+    # ---------------- 单元增删 ----------------
+    def add_unit(self, config=None):
+        """新增一个连接单元（返回新建的 VIConnectionUnit）。"""
+        self._pending_index += 1
+        idx = self._pending_index - 1
+        unit = VIConnectionUnit(
+            idx, self.on_sample, on_state=self._on_unit_state,
+            sample_interval_ms=self._sample_interval_ms)
+        if config:
+            unit.update_config(config)
+        card = VIConnectionUnitCard(unit, idx, parent=self)
+        card.remove_requested.connect(self.remove_unit)
+        self._unit_objs.append(unit)
+        self._unit_cards.append(card)
+        self.units_layout.addWidget(card)
+        try:
+            self._adjustViewSize()
+        except Exception:
+            pass
+        self._refresh_add_btn()
+        self.units_changed.emit()
+        return unit
+
+    def remove_unit(self, card):
+        """删除指定单元卡（若在连接先断开，再清理线程引用）。"""
+        if card not in self._unit_cards:
+            return
+        if card.unit.connected:
+            card.unit.disconnect()
+        self._unit_objs.remove(card.unit)
+        self._unit_cards.remove(card)
+        self.units_layout.removeWidget(card)
+        card.deleteLater()
+        try:
+            self._adjustViewSize()
+        except Exception:
+            pass
+        self._refresh_add_btn()
+        self._sync_connected()
+        self.units_changed.emit()
+
+    def _refresh_add_btn(self):
+        """多单元时有删除入口，无需禁用加号；仅无单元时也可补加一个。"""
+        self.add_btn.setEnabled(len(self._unit_objs) < 8)
+
+    @property
+    def units(self):
+        return list(self._unit_objs)
+
+    def sync_all_cards(self):
+        """把各单元配置同步回对应卡控件（配置重载/自动切换模式后调用）。"""
+        for card in self._unit_cards:
+            card.sync_from_unit()
+
+    # ---------------- 采样频率 ----------------
+    def _on_sample_interval_changed(self, interval_ms):
+        self._sample_interval_ms = interval_ms
+        for u in self._unit_objs:
+            u.sample_interval_ms = interval_ms
+
+    # ---------------- 连接 ----------------
+    def _on_unit_state(self, unit, connected, err_text):
+        if err_text:
+            fluent_message_box(self, "连接错误", err_text)
+            unit.disconnect()
+        self._sync_connected()
+
+    def _sync_connected(self):
+        any_conn = any(u.connected for u in self._unit_objs)
+        if any_conn:
+            self.connect_btn.setText("断开")
+            self.status_label.setText("已连接")
+        else:
+            self.connect_btn.setText("连接")
+            self.status_label.setText("未连接")
+        self.connection_changed.emit(any_conn)
+
+    def _on_connect_clicked(self):
+        if any(u.connected for u in self._unit_objs):
+            self.disconnect_all()
+            return
+        self.connect_all()
+
+    def connect_all(self):
+        """逐单元建立数据源（并行）；串口开始工作后的单元在 START 时置位。"""
+        if not self._unit_objs:
+            return
+        errors = []
+        for unit, card in zip(self._unit_objs, self._unit_cards):
+            if unit.connected:
+                continue
+            # 从卡上同步当前串口选择到单元
+            unit.port_v = card.port_combo.currentData() or ""
+            unit.port_i = card.port2_combo.currentData() or ""
+            err = unit.connect()
+            if err:
+                errors.append(f"{unit.label}: {err}")
+        if errors:
+            fluent_message_box(self, "连接失败", "\n".join(errors))
+        # 全模拟器单元立即就绪，串口单元等 START（_sync_connected 经回调刷新）
+        self._sync_connected()
+
+    def disconnect_all(self):
+        for u in self._unit_objs:
+            u.disconnect()
+        self._sync_connected()
+
+    # ---------------- 配置持久化 ----------------
+    def get_configs(self):
+        return [u.get_config() for u in self._unit_objs]
+
+    def set_configs(self, configs):
+        """批量重建单元（清空现有）。"""
+        for card in list(self._unit_cards):
+            self.remove_unit(card)
+        for cfg in (configs or []):
+            self.add_unit(cfg)
+        if not self._unit_objs:
+            self.add_unit()
 
 
 # ============================================================
