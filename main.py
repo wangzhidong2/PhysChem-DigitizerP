@@ -1789,13 +1789,24 @@ class MainWindow(FluentWindow):
         self.apply_theme("light")
 
     def closeEvent(self, event):
-        """关闭窗口前统一停止所有传感器模块的通信线程。
+        """关闭前先弹确认框：未保存实验数据将被销毁。确认后才停止各模块线程。
 
         子页面销毁不会触发模块自身的 closeEvent，若串口/BLE/模拟器线程
         仍在运行，QThread 对象被销毁时会触发 Qt fail-fast 闪退
-        （0xC0000409）。此处兜底：逐模块调用断开方法（不同模块方法名
+        （0xC0000409）。确认退出后逐模块调用断开方法（不同模块方法名
         不同：disconnect_all / disconnect_serial）停线程。
         """
+        box = MessageBox(
+            "退出确认",
+            "程序即将退出，所有未保存的实验数据将被销毁。\n确定要退出吗？",
+            self,
+        )
+        box.yesButton.setText("确认退出")
+        box.cancelButton.setText("取消")
+        if not box.exec():
+            event.ignore()
+            return
+
         for name, widget in self.modules.items():
             if name in ("主页", "设置"):
                 continue
