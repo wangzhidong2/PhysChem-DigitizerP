@@ -3087,7 +3087,7 @@ class VIConnectionUnit:
         self._pending_v = None
         self._pending_i = None
         self._i_win = None
-        self.last_sample_time_ms = 0
+        self.last_sample_time_ms = -1   # -1 表示尚未采样，首帧不丢
         # 退出慢的旧线程保留引用（切模式/断开时防止 QThread 销毁崩溃）
         self._retired_threads = []
 
@@ -3143,6 +3143,15 @@ class VIConnectionUnit:
         if not SERIAL_AVAILABLE and (self.volt_mode == 'serial'
                                      or self.cur_mode == 'serial'):
             return serial_unavailable_hint()
+        # 一致性兜底：电压为模拟器时电流必须同为模拟器
+        # （旧配置/UI 遗漏可能残留 cur_mode='serial'，否则模拟器模式会
+        # 误要求电流串口 —— 报「请先选择电流串口」）
+        if self.volt_mode == 'simulator' and self.cur_mode != 'simulator':
+            self.cur_mode = 'simulator'
+        # 重置配对缓存与采样节流：避免旧连接残留帧混入新连接
+        self._pending_v = None
+        self._pending_i = None
+        self.last_sample_time_ms = -1
 
         # ---- 电压源 ----
         if self.volt_mode == 'serial':
@@ -3175,7 +3184,14 @@ class VIConnectionUnit:
             self.serial_i.data_received.connect(self.handle_i_line)
             self.serial_i.start()
         else:
-            self.sim_i = SimulatorThread(1800, 2300, self.sample_interval_ms, start_value=2048)
+            # 模拟器电流：ADC 范围围绕零电流输出电压 v_quiescent 波动。
+            # v_quiescent 是「扣除分压电路影响」后的零电流电压，对应原始
+            # ADC = vq / (VREF * 分压比) * 4095；范围 ±400 ADC ≈ ±0.65A(5A 量程)
+            v_div = self.v_quiescent / max(0.001, self.i_divider_ratio)
+            vq_adc = int(max(0.0, min(self.VREF, v_div)) / self.VREF * 4095)
+            lo = max(0, vq_adc - 400)
+            hi = min(4095, vq_adc + 400)
+            self.sim_i = SimulatorThread(lo, hi, self.sample_interval_ms, start_value=vq_adc)
             self.sim_i.data_received.connect(self.handle_i_line)
             self.sim_i.start()
             self._mark_connected(True, None)
@@ -3235,6 +3251,7 @@ class VIConnectionUnit:
     def handle_vi_line(self, data):
         """单板一体：一行 时间戳,电压ADC,电流ADC。"""
         if data == "START":
+            self._pending_v = self._pending_i = None  # 设备重启：清配对缓存
             self._on_started()
             return
         if data.startswith("ERROR"):
@@ -3251,6 +3268,7 @@ class VIConnectionUnit:
     def handle_v_line(self, data):
         """电压通道数据（双板电压板 / 模拟器）。"""
         if data == "START":
+            self._pending_v = self._pending_i = None  # 设备重启：清配对缓存
             self._on_started()
             return
         if data.startswith("ERROR"):
@@ -3271,6 +3289,10 @@ class VIConnectionUnit:
 
     def handle_i_line(self, data):
         """电流通道数据（双板电流板 / 模拟器）。"""
+        if data == "START":
+            self._pending_v = self._pending_i = None  # 设备重启：清配对缓存
+            self._on_started()
+            return
         if data.startswith("ERROR"):
             self._on_error(data)
             return
@@ -3288,7 +3310,10 @@ class VIConnectionUnit:
 
     def _consume_pair(self, t_ms, adc_v, adc_i):
         """电压+电流配对到达：采样过滤 → 换算 → RMS(AC) → 回调模块。"""
-        if t_ms - self.last_sample_time_ms < self.sample_interval_ms:
+        # last_sample_time_ms=-1 表示尚未采过样：首帧无条件接受
+        # （旧逻辑初始为 0，模拟器首帧时间戳≈0 时会被 0<interval 误丢）
+        if (self.last_sample_time_ms >= 0
+                and t_ms - self.last_sample_time_ms < self.sample_interval_ms):
             return
         self.last_sample_time_ms = t_ms
 
@@ -3467,7 +3492,15 @@ class VIConnectionUnitCard(FluentCard):
         self.unit.color = self.color_combo.itemData(index)
 
     def _on_mode_changed(self, index):
-        self.unit.volt_mode = 'serial' if index == 1 else 'simulator'
+        """连接方式：串口 / 模拟器 同时作用于电压与电流两条通道。
+
+        此前只改 volt_mode 而 cur_mode 恒为 'serial'，导致选「模拟器」
+        时电流仍要求串口（报「请先选择电流串口」或误连串口）——
+        电压能连、电流不能连。现在统一同步两个通道。
+        """
+        mode = 'serial' if index == 1 else 'simulator'
+        self.unit.volt_mode = mode
+        self.unit.cur_mode = mode
         self._sync_visibility()
         # 一体固件仅对串口有意义；电压为模拟器时电流板块完全独立
         self.merged_switch.setEnabled(self.unit.volt_mode == 'serial')
