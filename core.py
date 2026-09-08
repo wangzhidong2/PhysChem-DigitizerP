@@ -3005,6 +3005,50 @@ def _color_icon(hex_color, size=24):
     return QIcon(pm)
 
 
+class TimestampPairer:
+    """双板分测配对器：把电压板与电流板两路「时间戳,ADC」流按时间戳就近配对。
+
+    - 两块板各自按 ~100ms 周期（10Hz）输出，时间戳间隔恒定但起始时刻不同。
+    - 每侧缓存最新一行；两侧都到时比较时间戳差值：
+      * |t_v - t_i| <= tolerance_ms → 组成一对并回调 on_pair(t_ms, adc_v, adc_i)
+      * 否则丢弃时间戳更旧的一侧（等新行），避免某板偶发掉行导致永久错位。
+    """
+
+    def __init__(self, tolerance_ms=50, on_pair=None):
+        self.tolerance_ms = tolerance_ms
+        self.on_pair = on_pair
+        self._v = None   # (t_ms, adc)
+        self._i = None
+
+    def feed(self, side, t_ms, adc):
+        """喂入一侧新行；返回是否成功配对。"""
+        if side == 'v':
+            self._v = (t_ms, adc)
+        else:
+            self._i = (t_ms, adc)
+        return self._try_pair()
+
+    def _try_pair(self):
+        if self._v is None or self._i is None:
+            return False
+        tv, adc_v = self._v
+        ti, adc_i = self._i
+        if abs(tv - ti) <= self.tolerance_ms:
+            self._v = self._i = None
+            if self.on_pair is not None:
+                self.on_pair(tv, adc_v, adc_i)
+            return True
+        # 时间差超容差：丢旧等新，防止错位累积
+        if tv < ti:
+            self._v = None
+        else:
+            self._i = None
+        return False
+
+    def reset(self):
+        self._v = self._i = None
+
+
 class VIConnectionUnit:
     """单路「电压+电流」数据通道：配置 + 通信线程 + 解析换算。
 
@@ -3072,6 +3116,10 @@ class VIConnectionUnit:
         self.current_unit = 'A'
         self.adc_bits = 12
         self.ac_rms_window = 50
+
+        # 数据角色（由模块按参数卡「当前连接」写入，双板分测的核心）
+        self.role = 'both'      # both=一体/模拟器自出U+I；voltage/current=单通道传感器；none=未绑定
+        self.on_raw = None      # 单通道原始 ADC 样品回调 on_raw(self, t_ms, adc)（role=voltage/current 时）
 
         # 通信线程与状态
         self.serial_vi = None
@@ -3148,10 +3196,29 @@ class VIConnectionUnit:
         # 误要求电流串口 —— 报「请先选择电流串口」）
         if self.volt_mode == 'simulator' and self.cur_mode != 'simulator':
             self.cur_mode = 'simulator'
+        if self.role == 'none':
+            return None  # 未绑定任何参数卡的连接不建立数据源
         # 重置配对缓存与采样节流：避免旧连接残留帧混入新连接
         self._pending_v = None
         self._pending_i = None
         self.last_sample_time_ms = -1
+
+        # ---- 单通道角色（role=voltage/current）：电压板或电流板，一路数据源 ----
+        if self.role in ('voltage', 'current'):
+            if self.volt_mode == 'simulator':
+                sim = SimulatorThread(0, 4095, self.sample_interval_ms, start_value=2500)
+                sim.data_received.connect(self.handle_single_line)
+                sim.start()
+                self.sim_v = sim
+                self._mark_connected(True, None)
+            else:
+                port = self.port_v or ""
+                if not port:
+                    return "请先选择串口"
+                self.serial_v = SerialThread(port)
+                self.serial_v.data_received.connect(self.handle_single_line)
+                self.serial_v.start()
+            return None
 
         # ---- 电压源 ----
         if self.volt_mode == 'serial':
@@ -3308,6 +3375,34 @@ class VIConnectionUnit:
             self._pending_v = None
             self._consume_pair(tv, adc_v, vals[0])
 
+    def handle_single_line(self, data):
+        """单通道角色（role=voltage/current）数据行：START / ERROR: / 时间戳,ADc。
+
+        一路只出一个模拟值，回调 on_raw(self, t_ms, adc) 由模块自行决定
+        独立显示或送入双板分测配对器。
+        """
+        if data == "START":
+            self._on_started()
+            return
+        if data.startswith("ERROR"):
+            self._on_error(data)
+            return
+        parsed = self._parse(data)
+        if parsed is None:
+            return
+        t, vals = parsed
+        if len(vals) != 1:
+            return
+        if (self.last_sample_time_ms >= 0
+                and t - self.last_sample_time_ms < self.sample_interval_ms):
+            return
+        self.last_sample_time_ms = t
+        # 电流单通道：缓存 ACS712 输出电压用于零点校准
+        if self.role == 'current':
+            self._recent_vs.append(self.adc_to_vsensor(vals[0]))
+        if self.on_raw is not None:
+            self.on_raw(self, t, vals[0])
+
     def _consume_pair(self, t_ms, adc_v, adc_i):
         """电压+电流配对到达：采样过滤 → 换算 → RMS(AC) → 回调模块。"""
         # last_sample_time_ms=-1 表示尚未采过样：首帧无条件接受
@@ -3434,10 +3529,10 @@ class VIConnectionUnitCard(FluentCard):
         w1.setLayout(row1)
         self.add_widget(w1)
 
-        # ---- 电压串口行（仅串口模式可见）----
+        # ---- 串口行（唯一的串口选择；单板/双板共用，仅串口模式可见）----
         port_row = QHBoxLayout()
         port_row.setSpacing(8)
-        port_row.addWidget(BodyLabel("电压串口"))
+        port_row.addWidget(BodyLabel("串口"))
         self.port_combo = ComboBox()
         self.port_combo.setMinimumWidth(130)
         self.refresh_btn = PushButton("刷新")
@@ -3449,29 +3544,14 @@ class VIConnectionUnitCard(FluentCard):
         self.volt_port_row.setLayout(port_row)
         self.add_widget(self.volt_port_row)
 
-        # ---- 一体固件 ----
+        # ---- 单板/双板（一体固件开关）----
         self.merged_switch = SwitchButton()
         self.merged_switch.setText("开")
-        self.merged_switch.setOnText("一体固件（VI_*，同时输出电流）")
-        self.merged_switch.setOffText("独立电压板（V_*）")
+        self.merged_switch.setOnText("单板一体（VI_*，同时输出电压+电流）")
+        self.merged_switch.setOffText("双板分测（V_*/I_*，角色由下方电压/电流设置指定）")
         self.merged_switch.setChecked(unit.volt_merged)
         self.merged_switch.checkedChanged.connect(self._on_merged_changed)
-        self.add_row("一体固件", self.merged_switch)
-
-        # ---- 电流串口行 ----
-        self.port2_container = QWidget()
-        r2 = QHBoxLayout(self.port2_container)
-        r2.setContentsMargins(0, 0, 0, 0)
-        r2.setSpacing(8)
-        r2.addWidget(BodyLabel("电流串口"))
-        self.port2_combo = ComboBox()
-        self.port2_combo.setMinimumWidth(130)
-        r2.addWidget(self.port2_combo, 1)
-        self.add_widget(self.port2_container)
-
-        self.cur_port_hint = CaptionLabel(
-            "双板分测：电压板(V_*.ino)与电流板(I_ACS712.ino)分别接串口")
-        self.add_widget(self.cur_port_hint)
+        self.add_row("固件", self.merged_switch)
 
         self.refresh_ports()
         self._sync_visibility()
@@ -3516,18 +3596,7 @@ class VIConnectionUnitCard(FluentCard):
 
     def _sync_visibility(self):
         unit = self.unit
-        merged_effective = unit.volt_mode == 'serial' and unit.volt_merged
         self.volt_port_row.setVisible(unit.volt_mode == 'serial')
-        self.port2_container.setVisible(
-            not merged_effective and unit.cur_mode == 'serial')
-        self.cur_port_hint.setVisible(self.port2_container.isVisible() or
-                                      merged_effective)
-        if merged_effective:
-            self.cur_port_hint.setText(
-                "一体固件(VI_*)已同时输出电流，电流通道随电压板连接，无需独立设置")
-        else:
-            self.cur_port_hint.setText(
-                "双板分测：电压板(V_*.ino)与电流板(I_ACS712.ino)分别接串口")
         try:
             self._adjustViewSize()
         except Exception:
@@ -3535,20 +3604,19 @@ class VIConnectionUnitCard(FluentCard):
 
     def refresh_ports(self):
         ports = list_serial_ports()
-        for combo in (self.port_combo, self.port2_combo):
-            combo.blockSignals(True)
-            combo.clear()
-            if ports:
-                for device, desc in ports:
-                    combo.addItem(f"{device} {desc}" if desc else device,
-                                  userData=device)
-                combo.setCurrentIndex(0)
+        self.port_combo.blockSignals(True)
+        self.port_combo.clear()
+        if ports:
+            for device, desc in ports:
+                self.port_combo.addItem(f"{device} {desc}" if desc else device,
+                                        userData=device)
+            self.port_combo.setCurrentIndex(0)
+        else:
+            if SERIAL_AVAILABLE:
+                self.port_combo.addItem("未检测到串口设备", userData="")
             else:
-                if SERIAL_AVAILABLE:
-                    combo.addItem("未检测到串口设备", userData="")
-                else:
-                    combo.addItem("未安装 pyserial", userData="")
-            combo.blockSignals(False)
+                self.port_combo.addItem("未安装 pyserial", userData="")
+        self.port_combo.blockSignals(False)
 
     def sync_from_unit(self):
         """配置重载后把 unit 的值同步回控件。"""
@@ -3582,14 +3650,28 @@ class VIConnectionPanel(FluentCard):
 
     connection_changed = Signal(bool)
     units_changed = Signal()
+    dual_pairing_changed = Signal(bool)
 
     def __init__(self, on_sample, sample_interval_ms=100, title="连接控制",
-                 parent=None):
+                 parent=None, dual_pairing=False):
         super().__init__(title, None, True, parent)
         self.on_sample = on_sample
         self._unit_objs = []      # VIConnectionUnit
         self._unit_cards = []     # VIConnectionUnitCard
         self._pending_index = 0   # 序号（删除后不回退，避免撞号）
+        self._dual_pairing = bool(dual_pairing)
+
+        # header：双板分测（跨连接配对电压/电流）+ 添加连接
+        self.dual_switch = SwitchButton()
+        self.dual_switch.setText("关")
+        self.dual_switch.setOnText("单板一体")
+        self.dual_switch.setOffText("双板分测")
+        self.dual_switch.setChecked(self._dual_pairing)
+        self.dual_switch.checkedChanged.connect(self._on_dual_pairing_changed)
+        self.dual_switch.setToolTip(
+            "双板分测：把「电压设置」选中的连接与「电流设置」选中的连接，"
+            "两路数据按时间戳配对成 (U,I) 后再用于计算")
+        self.add_header_widget(self.dual_switch)
 
         # header：＋ 添加连接
         self.add_btn = PushButton("＋ 添加连接")
@@ -3703,6 +3785,15 @@ class VIConnectionPanel(FluentCard):
     def units(self):
         return list(self._unit_objs)
 
+    @property
+    def dual_pairing(self):
+        """双板分测开关状态：True=启用跨连接电压/电流配对。"""
+        return self._dual_pairing
+
+    def _on_dual_pairing_changed(self, checked):
+        self._dual_pairing = bool(checked)
+        self.dual_pairing_changed.emit(self._dual_pairing)
+
     def sync_all_cards(self):
         """把各单元配置同步回对应卡控件（配置重载/自动切换模式后调用）。"""
         for card in self._unit_cards:
@@ -3745,9 +3836,8 @@ class VIConnectionPanel(FluentCard):
         for unit, card in zip(self._unit_objs, self._unit_cards):
             if unit.connected:
                 continue
-            # 从卡上同步当前串口选择到单元
+            # 从卡上同步当前串口选择到单元（单串口；旧双板配置的 port_i 保留自配置）
             unit.port_v = card.port_combo.currentData() or ""
-            unit.port_i = card.port2_combo.currentData() or ""
             err = unit.connect()
             if err:
                 errors.append(f"{unit.label}: {err}")

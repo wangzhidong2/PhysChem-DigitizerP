@@ -45,7 +45,7 @@ from core import (
     apply_module_theme, fluent_message_box,
     FluentCard, CollapsibleCard, ExpandableTextEdit,
     update_collect_btn, set_action_button_width,
-    VIConnectionPanel, VIConnectionUnit,
+    VIConnectionPanel, VIConnectionUnit, TimestampPairer,
 )
 
 
@@ -61,7 +61,11 @@ class PowerSensorWidget(QWidget):
         self._bufs = {}          # VIConnectionUnit -> 数据缓冲 dict
         self._live_labels = {}   # unit -> BodyLabel（实时值行）
         self._stats_labels = {}  # unit -> CaptionLabel（统计行）
-        self._active_index = 0   # 参数卡当前作用的单元序号
+        self._active_index = 0      # 电压参数卡当前作用的单元序号
+        self._cur_active_index = 0  # 电流参数卡当前作用的单元序号（独立于电压侧）
+        self._pairer = None         # 双板分测配对器（时间戳就近匹配）
+        self._voltage_unit = None   # 当前电压源连接
+        self._current_unit = None   # 当前电流源连接
         self.config = self.load_config()
         self.init_ui()
         # pyserial 未安装：各单元自动切模拟器（模拟器模式可体验全部功能）
@@ -77,6 +81,7 @@ class PowerSensorWidget(QWidget):
     def load_config(self):
         config = load_sensor_config('power_sensor')
         self.units_configs = []
+        self.dual_pairing = bool(config.get('dual_pairing', False)) if config else False
         if config:
             units = config.get('units')
             if units:
@@ -98,6 +103,7 @@ class PowerSensorWidget(QWidget):
     def save_config(self):
         return save_sensor_config('power_sensor', {
             'sample_interval_ms': self.panel.sample_rate_combo.getSampleInterval(),
+            'dual_pairing': self.panel.dual_pairing,
             'units': self.panel.get_configs(),
         })
 
@@ -127,9 +133,11 @@ class PowerSensorWidget(QWidget):
         self.panel = VIConnectionPanel(
             on_sample=self._on_unit_sample,
             sample_interval_ms=self.config.get('sample_interval_ms', 100),
+            dual_pairing=self.dual_pairing,
         )
         self.panel.units_changed.connect(self._on_units_changed)
         self.panel.connection_changed.connect(self._on_connection_changed)
+        self.panel.dual_pairing_changed.connect(self._on_dual_pairing_changed)
         layout.addWidget(self.panel)
 
         # ========== 卡片2：电压参数（作用于「当前连接」所选的单元） ==========
@@ -167,8 +175,12 @@ class PowerSensorWidget(QWidget):
         card_volt.add_row("HX711 通道", self.hx711_ch_combo)
         layout.addWidget(card_volt)
 
-        # ========== 卡片3：电流参数（作用于「当前连接」所选的单元） ==========
+        # ========== 卡片3：电流参数（作用于「当前连接」选中的单元，独立于电压卡） ==========
         card_cur = FluentCard("电流参数（ACS712）")
+        self._cur_active_combo = ComboBox()
+        self._cur_active_combo.currentIndexChanged.connect(self._on_cur_active_changed)
+        card_cur.add_row("当前连接", self._cur_active_combo)
+
         self.range_combo = ComboBox()
         self.range_combo.addItems(list(VIConnectionUnit.ACS712_RANGES.keys()))
         self.range_combo.currentIndexChanged.connect(self._on_range_changed)
@@ -305,16 +317,23 @@ class PowerSensorWidget(QWidget):
     # 「当前连接」目标单元
     # --------------------------------------------------------------
     def _active_unit(self):
-        """参数卡当前作用的目标单元（无单元时返回 None）。"""
+        """电压参数卡当前作用的目标单元（无单元时返回 None）。"""
         units = self.panel.units
         if 0 <= self._active_index < len(units):
             return units[self._active_index]
         return None
 
-    def _on_units_changed(self):
-        """增删连接后：重建「当前连接」下拉、实时/统计行、清理缓冲。"""
+    def _cur_active_unit(self):
+        """电流参数卡当前作用的目标单元（无单元时返回 None）。"""
         units = self.panel.units
-        # 同步「当前连接」下拉
+        if 0 <= self._cur_active_index < len(units):
+            return units[self._cur_active_index]
+        return None
+
+    def _on_units_changed(self):
+        """增删连接后：重建电压/电流「当前连接」下拉、实时/统计行、清理缓冲。"""
+        units = self.panel.units
+        # 同步电压「当前连接」下拉
         self._active_unit_combo.blockSignals(True)
         self._active_unit_combo.clear()
         for i, u in enumerate(units):
@@ -326,7 +345,34 @@ class PowerSensorWidget(QWidget):
         self._active_unit_combo.setEnabled(bool(units))
         self._active_unit_combo.blockSignals(False)
 
-        # 重建实时/统计行（每连接一行）
+        # 同步电流「当前连接」下拉（与电压侧完全独立）
+        self._cur_active_combo.blockSignals(True)
+        self._cur_active_combo.clear()
+        for i, u in enumerate(units):
+            self._cur_active_combo.addItem(f"连接 #{i + 1}")
+        if self._cur_active_index >= len(units):
+            self._cur_active_index = max(0, len(units) - 1)
+        self._cur_active_combo.setCurrentIndex(
+            self._cur_active_index if units else -1)
+        self._cur_active_combo.setEnabled(bool(units))
+        self._cur_active_combo.blockSignals(False)
+
+        # 重建实时/统计行（按角色；配对时电流源并入电压源行显示）
+        self._apply_roles()
+        self._rebuild_rows()
+
+        # 清理已删除单元的缓冲
+        self._bufs = {u: b for u, b in self._bufs.items() if u in units}
+
+        # 参数控件同步到当前单元（电压卡 + 电流卡各自的「当前连接」）
+        if units:
+            self._load_active_params()
+            self._load_cur_params()
+
+    def _rebuild_rows(self):
+        """按当前角色重建实时/统计行：both/voltage 一整行；独立电流一行；none/配对电流不显示。"""
+        units = self.panel.units
+        paired = self._pairer is not None
         for lbl in self._live_labels.values():
             self._live_box.removeWidget(lbl)
             lbl.deleteLater()
@@ -336,8 +382,15 @@ class PowerSensorWidget(QWidget):
         self._live_labels = {}
         self._stats_labels = {}
         for unit in units:
+            if unit.role == 'none':
+                continue
+            if paired and unit.role == 'current':
+                continue  # 配对模式下电流源数据并入电压源行（见 _on_paired_raw）
             dot = f"<span style='color:{unit.color};'>●</span> "
-            lbl = BodyLabel(dot + f"{unit.label}: 电压 -- | 电流 -- | 功率 -- | 电能 0.000 J")
+            if unit.role == 'current':
+                lbl = BodyLabel(dot + f"{unit.label}: 电流 -- {unit.current_unit}")
+            else:
+                lbl = BodyLabel(dot + f"{unit.label}: 电压 -- | 电流 -- | 功率 -- | 电能 0.000 J")
             lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
             self._live_labels[unit] = lbl
             self._live_box.addWidget(lbl)
@@ -345,26 +398,116 @@ class PowerSensorWidget(QWidget):
             self._stats_labels[unit] = st
             self._stats_box.addWidget(st)
 
-        # 清理已删除单元的缓冲
-        self._bufs = {u: b for u, b in self._bufs.items() if u in units}
-
-        # 参数控件同步到当前单元
-        if units:
-            self._load_active_params()
-
     def _on_active_changed(self, index):
         self._active_index = index
         self._load_active_params()
+        self._apply_roles()
+        self._rebuild_rows()
+
+    def _on_cur_active_changed(self, index):
+        self._cur_active_index = index
+        self._load_cur_params()
+        self._apply_roles()
+        self._rebuild_rows()
+
+    # --------------------------------------------------------------
+    # 角色绑定与双板分测配对（连接 → 电压/电流源）
+    # --------------------------------------------------------------
+    def _bound_units(self):
+        """按两个参数卡的「当前连接」返回 (电压源单元, 电流源单元)。"""
+        units = self.panel.units
+        u_v = units[self._active_index] if 0 <= self._active_index < len(units) else None
+        u_i = units[self._cur_active_index] if 0 <= self._cur_active_index < len(units) else None
+        return u_v, u_i
+
+    def _apply_roles(self):
+        """按参数卡选择分配角色：同连接→both（一体/模拟器）；不同→电压/电流单通道；未绑定→none。
+
+        双板分测勾选时，把电压源/电流源两路原始 ADC 流接入 TimestampPairer（时间戳就近匹配）。
+        """
+        units = self.panel.units
+        self._unwire_raw()
+        self._pairer = None
+        self._voltage_unit = self._current_unit = None
+        if not units:
+            return
+        u_v, u_i = self._bound_units()
+        for u in units:
+            if u is u_v and u is u_i:
+                u.role = 'both'
+            elif u is u_v:
+                u.role = 'voltage'
+            elif u is u_i:
+                u.role = 'current'
+            else:
+                u.role = 'none'
+        if u_v is not None and u_i is not None and u_v is not u_i:
+            self._voltage_unit, self._current_unit = u_v, u_i
+            if self.panel.dual_pairing:
+                self._pairer = TimestampPairer(tolerance_ms=50,
+                                               on_pair=self._on_paired_raw)
+        for u in units:
+            if u.role in ('voltage', 'current'):
+                u.on_raw = self._on_raw_sample
+
+    def _unwire_raw(self):
+        for u in self.panel.units:
+            u.on_raw = None
+
+    def _on_dual_pairing_changed(self, checked):
+        """双板分测开关：重分配角色/配对，重绘实时行（连接方式变更需手动重连）。"""
+        self._apply_roles()
+        self._rebuild_rows()
+        self.save_config()
+
+    def _on_raw_sample(self, unit, t_ms, adc):
+        """单通道原始 ADC：双板分测→配对器；未勾选→独立单通道显示。"""
+        if not self._collecting:
+            return
+        if self._pairer is not None:
+            self._pairer.feed('v' if unit.role == 'voltage' else 'i', t_ms, adc)
+            return
+        buf = self._bufs.get(unit)
+        if buf is None:
+            return
+        if buf['t0'] is None:
+            buf['t0'] = t_ms
+        t = (t_ms - buf['t0']) / 1000.0
+        buf['t'].append(t)
+        lbl = self._live_labels.get(unit)
+        if unit.role == 'voltage':
+            v = unit.adc_to_voltage(adc)
+            buf['v'].append(v)
+            if lbl is not None:
+                lbl.setText(
+                    f"<span style='color:{unit.color};'>●</span> "
+                    f"{unit.label}: 电压 {v:.4f} V")
+        else:
+            i = unit.adc_to_current(adc)
+            buf['i'].append(i)
+            if lbl is not None:
+                lbl.setText(
+                    f"<span style='color:{unit.color};'>●</span> "
+                    f"{unit.label}: 电流 {unit.format_current(i)} {unit.current_unit}")
+        self.update_stats()
+
+    def _on_paired_raw(self, t_ms, adc_v, adc_i):
+        """双板分测配对成功：电压源/电流源各自换算成 U、I，走统一采样通路。"""
+        if not self._collecting:
+            return
+        if self._voltage_unit is None or self._current_unit is None:
+            return
+        v = self._voltage_unit.adc_to_voltage(adc_v)
+        i = self._current_unit.adc_to_current(adc_i)
+        self._on_unit_sample(self._voltage_unit, t_ms, v, i)
 
     def _load_active_params(self):
-        """把当前单元的参数值同步到参数卡控件（应保持 blockSignals 上下文）。"""
+        """把当前单元（电压卡选择器）的电压参数同步到电压参数卡控件。"""
         unit = self._active_unit()
         if unit is None:
             return
         for w in (self.divider_spin, self.amp_spin, self.hx711_avdd_spin,
-                  self.vcc_spin, self.vq_spin, self.i_divider_spin,
-                  self.pga_combo, self.hx711_ch_combo, self.range_combo,
-                  self.current_mode_combo, self.unit_combo):
+                  self.pga_combo, self.hx711_ch_combo):
             w.blockSignals(True)
         self.divider_spin.setValue(unit.divider_ratio)
         self.amp_spin.setValue(unit.amp_ratio)
@@ -372,6 +515,19 @@ class PowerSensorWidget(QWidget):
         self.hx711_avdd_spin.setValue(unit.hx711_avdd)
         self.hx711_ch_combo.setCurrentIndex(
             0 if unit.hx711_channel == 'A' else 1)
+        for w in (self.divider_spin, self.amp_spin, self.hx711_avdd_spin,
+                  self.pga_combo, self.hx711_ch_combo):
+            w.blockSignals(False)
+        self._sync_active_method_controls()
+
+    def _load_cur_params(self):
+        """把当前单元（电流卡选择器）的电流参数同步到电流参数卡控件。"""
+        unit = self._cur_active_unit()
+        if unit is None:
+            return
+        for w in (self.vcc_spin, self.vq_spin, self.i_divider_spin,
+                  self.range_combo, self.current_mode_combo, self.unit_combo):
+            w.blockSignals(True)
         self.range_combo.setCurrentText(unit.acs_range)
         self.range_desc_label.setText(
             unit.ACS712_RANGES.get(unit.acs_range,
@@ -382,12 +538,9 @@ class PowerSensorWidget(QWidget):
         self.current_mode_combo.setCurrentIndex(
             0 if unit.current_mode == 'DC' else 1)
         self.unit_combo.setCurrentText(unit.current_unit)
-        for w in (self.divider_spin, self.amp_spin, self.hx711_avdd_spin,
-                  self.vcc_spin, self.vq_spin, self.i_divider_spin,
-                  self.pga_combo, self.hx711_ch_combo, self.range_combo,
-                  self.current_mode_combo, self.unit_combo):
+        for w in (self.vcc_spin, self.vq_spin, self.i_divider_spin,
+                  self.range_combo, self.current_mode_combo, self.unit_combo):
             w.blockSignals(False)
-        self._sync_active_method_controls()
 
     def _sync_active_method_controls(self):
         """按当前单元电压采样方式启用对应的参数控件。"""
@@ -412,6 +565,14 @@ class PowerSensorWidget(QWidget):
         mutator(unit)
         self.save_config()
 
+    def _save_cur(self, mutator):
+        """电流参数写回「当前连接」（电流卡独立选择器）选中的单元。"""
+        unit = self._cur_active_unit()
+        if unit is None:
+            return
+        mutator(unit)
+        self.save_config()
+
     def _on_divider_changed(self, value):
         self._save_active(lambda u: setattr(u, 'divider_ratio', value))
 
@@ -431,7 +592,7 @@ class PowerSensorWidget(QWidget):
             lambda u: setattr(u, 'hx711_channel', 'A' if index == 0 else 'B'))
 
     def _on_range_changed(self, index):
-        unit = self._active_unit()
+        unit = self._cur_active_unit()
         if unit is None:
             return
         unit.acs_range = self.range_combo.currentText()
@@ -449,21 +610,21 @@ class PowerSensorWidget(QWidget):
                 self.vq_spin.blockSignals(True)
                 self.vq_spin.setValue(u.v_quiescent)
                 self.vq_spin.blockSignals(False)
-        self._save_active(_apply)
+        self._save_cur(_apply)
 
     def _on_vq_changed(self, value):
-        self._save_active(lambda u: setattr(u, 'v_quiescent', value))
+        self._save_cur(lambda u: setattr(u, 'v_quiescent', value))
 
     def _on_i_divider_changed(self, value):
-        self._save_active(lambda u: setattr(u, 'i_divider_ratio', value))
+        self._save_cur(lambda u: setattr(u, 'i_divider_ratio', value))
 
     def _on_current_mode_changed(self, index):
-        self._save_active(
+        self._save_cur(
             lambda u: setattr(u, 'current_mode', 'DC' if index == 0 else 'AC'))
 
     def _on_unit_changed(self, index):
-        self._save_active(lambda u: setattr(u, 'current_unit',
-                                            self.unit_combo.currentText()))
+        self._save_cur(lambda u: setattr(u, 'current_unit',
+                                         self.unit_combo.currentText()))
 
     # --------------------------------------------------------------
     # 面板回调：连接状态 / 数据样本
@@ -511,7 +672,7 @@ class PowerSensorWidget(QWidget):
         self.update_stats()
 
     def update_stats(self):
-        """每连接一行统计（数据点/平均功率/平均电压/平均电流/累计电能）。"""
+        """每连接一行统计（数据点 + 按角色可用的电压/电流/功率/电能）。"""
         for unit in self.panel.units:
             st = self._stats_labels.get(unit)
             if st is None:
@@ -521,17 +682,20 @@ class PowerSensorWidget(QWidget):
                 st.setText(f"{unit.label}: 数据点 0")
                 continue
             n = len(buf['t'])
-            v_arr = np.array(buf['v'])
-            i_arr = np.array(buf['i'])
-            p_arr = np.array(buf['p'])
-            avg_p = float(p_arr.mean()) if n else 0.0
+            parts = [f"{unit.label}: 数据点 {n}"]
+            v_arr = np.array(buf['v']) if buf['v'] else None
+            i_arr = np.array(buf['i']) if buf['i'] else None
+            p_arr = np.array(buf['p']) if buf['p'] else None
             unit_label = unit.current_unit
-            st.setText(
-                f"{unit.label}: 数据点 {n} | "
-                f"平均功率 {avg_p:.4f} W | "
-                f"平均电压 {v_arr.mean():.4f} V | "
-                f"平均电流 {unit.format_current(float(i_arr.mean()))}{unit_label} | "
-                f"累计电能 {buf['w']:.4f} J（{buf['w'] / 3600.0:.6f} Wh）")
+            if v_arr is not None:
+                parts.append(f"平均电压 {v_arr.mean():.4f} V")
+            if i_arr is not None:
+                parts.append(
+                    f"平均电流 {unit.format_current(float(i_arr.mean()))}{unit_label}")
+            if p_arr is not None and n:
+                parts.append(f"平均功率 {float(p_arr.mean()):.4f} W")
+                parts.append(f"累计电能 {buf['w']:.4f} J（{buf['w'] / 3600.0:.6f} Wh）")
+            st.setText(" | ".join(parts))
 
     # --------------------------------------------------------------
     # 采样控制
@@ -601,6 +765,7 @@ class PowerSensorWidget(QWidget):
             self.zero_cal_btn.setStyleSheet(
                 "background-color: #28a745; color: white;")
         self._load_active_params()
+        self._load_cur_params()
         self.save_config()
 
     # --------------------------------------------------------------
@@ -614,14 +779,17 @@ class PowerSensorWidget(QWidget):
             if not buf or not buf['t']:
                 continue
             col = unit.color
-            # 子图0：功率-时间（每路一条）
-            c.plot(buf['t'], buf['p'], color=col, width=2,
-                   label=f"{unit.label} 功率", index=0)
-            # 子图1：电压 + 电流（每路两条，电压粗、电流细）
-            c.plot(buf['t'], buf['v'], color=col, width=2,
-                   label=f"{unit.label} 电压", index=1)
-            c.plot(buf['t'], buf['i'], color=col, width=1,
-                   label=f"{unit.label} 电流", index=1)
+            # 子图0：功率-时间（仅双通道：一体/模拟器/配对）
+            if buf['p']:
+                c.plot(buf['t'], buf['p'], color=col, width=2,
+                       label=f"{unit.label} 功率", index=0)
+            # 子图1：电压 + 电流（按角色可用的通道绘制，电压粗、电流细）
+            if buf['v']:
+                c.plot(buf['t'], buf['v'], color=col, width=2,
+                       label=f"{unit.label} 电压", index=1)
+            if buf['i']:
+                c.plot(buf['t'], buf['i'], color=col, width=1,
+                       label=f"{unit.label} 电流", index=1)
         c.set_labels('时间 (s)', '功率 (W)', index=0)
         c.set_title('功率-时间曲线', index=0)
         c.set_labels('时间 (s)', '电压 (V) / 电流 (A)', index=1)
@@ -655,25 +823,51 @@ class PowerSensorWidget(QWidget):
                         cum += (p + last_p) / 2.0 * (t - last_t)
                     last_p, last_t = p, t
                     cums[u].append(cum)
-            n = max(len(self._bufs[u]['t']) for u in units)
+            # 每路只导出实际采集到的通道（角色感知，列对齐）
+            specs = []
+            for i, u in enumerate(units, 1):
+                buf = self._bufs[u]
+                if not buf['t']:
+                    continue
+                cols = []
+                if buf['v']:
+                    cols.append(f"U{i}(V)")
+                if buf['i']:
+                    cols.append(f"I{i}(A)")
+                if buf['p']:
+                    cols.append(f"P{i}(W)")
+                    cols.append(f"W{i}(J)")
+                if cols:
+                    specs.append((u, cols))
+            if not specs:
+                fluent_message_box(self, "保存数据", "暂无数据")
+                return
+            n = max(len(self._bufs[u]['t']) for u, _ in specs)
             with open(path, 'w', encoding='utf-8-sig') as f:
-                header = "时间(s)"
-                for i, u in enumerate(units, 1):
-                    header += f",U{i}(V),I{i}(A),P{i}(W),W{i}(J)"
-                f.write(header + "\n")
+                header = ["时间(s)"]
+                for u, cols in specs:
+                    header.extend(cols)
+                f.write(",".join(header) + "\n")
                 for k in range(n):
-                    row = []
-                    for u in units:
+                    t_cell = ""
+                    for u, cols in specs:
+                        if k < len(self._bufs[u]['t']):
+                            t_cell = f"{self._bufs[u]['t'][k]:.3f}"
+                            break
+                    cells = [t_cell]
+                    for u, cols in specs:
                         buf = self._bufs[u]
                         if k < len(buf['t']):
-                            row.append(f"{buf['t'][k]:.3f}"
-                                       f",{buf['v'][k]:.6f}"
-                                       f",{buf['i'][k]:.6f}"
-                                       f",{buf['p'][k]:.6f}"
-                                       f",{cums[u][k]:.6f}")
+                            if buf['v']:
+                                cells.append(f"{buf['v'][k]:.6f}")
+                            if buf['i']:
+                                cells.append(f"{buf['i'][k]:.6f}")
+                            if buf['p']:
+                                cells.append(f"{buf['p'][k]:.6f}")
+                                cells.append(f"{cums[u][k]:.6f}")
                         else:
-                            row.append(",,,,")
-                    f.write(",".join(row) + "\n")
+                            cells.extend([""] * len(cols))
+                    f.write(",".join(cells) + "\n")
             fluent_message_box(self, "保存成功",
                                f"已保存 {n} 条数据到\n{path}")
         except Exception as e:
@@ -686,9 +880,12 @@ class PowerSensorWidget(QWidget):
                                     last_p=None, last_t_ms=0, w=0.0)
             lbl = self._live_labels.get(unit)
             if lbl is not None:
-                lbl.setText(
-                    f"<span style='color:{unit.color};'>●</span> "
-                    f"{unit.label}: 电压 -- | 电流 -- | 功率 -- | 电能 0.000 J")
+                dot = f"<span style='color:{unit.color};'>●</span> "
+                if unit.role == 'current':
+                    lbl.setText(dot + f"{unit.label}: 电流 -- {unit.current_unit}")
+                else:
+                    lbl.setText(
+                        dot + f"{unit.label}: 电压 -- | 电流 -- | 功率 -- | 电能 0.000 J")
         self.update_stats()
         self.data_text.clear()
         self.chart.clear_chart()
