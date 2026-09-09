@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel,
+    BodyLabel, CaptionLabel, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -256,7 +256,7 @@ class PhSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：校准参数（可折叠） ==========
@@ -282,7 +282,7 @@ class PhSensorWidget(QWidget):
         cal_btn_row.addStretch()
         cal_card_layout.addLayout(cal_btn_row)
 
-        card_cal = FluentCard("校准参数", card_cal_content, expanded=True)
+        card_cal = FluentCard("校准参数", card_cal_content, expanded=True, icon=FIF.EDIT)
 
         # ========== 卡片3：实时数据（可折叠） ==========
         card_data_content = QWidget()
@@ -309,7 +309,7 @@ class PhSensorWidget(QWidget):
         self.stats_label = CaptionLabel("统计信息：暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
 
         # 校准参数 + 实时数据 并排同一行（顶部对齐，各自按内容高度，不强制等高）
         cards_row = QHBoxLayout()
@@ -337,6 +337,7 @@ class PhSensorWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -392,7 +393,7 @@ class PhSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -701,6 +702,17 @@ class PhSensorWidget(QWidget):
 
             fluent_message_box(self, "成功",
                                    "校准参数已更新并保存！\n新的校准曲线将立即生效。\n下次启动程序时会自动加载此配置。")
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.ph_data:
+            return None
+        return {
+            'title': 'pH传感器',
+            'x_label': '时间 (秒)',
+            'y_label': 'pH值',
+            'points': list(zip(self.time_data, self.ph_data)),
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""

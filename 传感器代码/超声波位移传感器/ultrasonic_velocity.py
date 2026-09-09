@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel, SpinBox,
+    BodyLabel, CaptionLabel, SpinBox, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -176,7 +176,7 @@ class UltrasonicVelocityWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：实时数据（可折叠） ==========
@@ -195,7 +195,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.velocity_stats_label = CaptionLabel("速度统计: 暂无数据")
         data_card_layout.addWidget(self.velocity_stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
         layout.addWidget(card_data)
 
         # ========== 卡片3：速度-时间曲线（可全屏） ==========
@@ -217,6 +217,7 @@ class UltrasonicVelocityWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换；上下双子图）
         self.chart = ChartPanel(n_plots=2)
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -271,7 +272,7 @@ class UltrasonicVelocityWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -590,6 +591,17 @@ class UltrasonicVelocityWidget(QWidget):
         self.current_data_label.setText("当前数据: 等待数据...")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.velocity_data:
+            return None
+        return {
+            'title': '超声波速度',
+            'x_label': '时间 (秒)',
+            'y_label': '速度 (cm/s)',
+            'points': list(zip(self.time_data, self.velocity_data)),
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""

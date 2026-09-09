@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -23,7 +23,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel, SpinBox, DoubleSpinBox,
+    BodyLabel, CaptionLabel, SpinBox, DoubleSpinBox, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -303,7 +303,7 @@ class CurrentSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：ACS712 参数（可折叠） ==========
@@ -448,7 +448,7 @@ class CurrentSensorWidget(QWidget):
         ac_row.addStretch()
         acs_card_layout.addLayout(ac_row)
 
-        card_acs = FluentCard("ACS712 参数", card_acs_content, expanded=True)
+        card_acs = FluentCard("ACS712 参数", card_acs_content, expanded=True, icon=FIF.SETTING)
         layout.addWidget(card_acs)
 
         # ========== 卡片3：实时数据（可折叠） ==========
@@ -486,7 +486,7 @@ class CurrentSensorWidget(QWidget):
         self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
         layout.addWidget(card_data)
 
         # ========== 卡片4：图表 + 数据记录（可折叠） ==========
@@ -508,6 +508,7 @@ class CurrentSensorWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -574,7 +575,7 @@ class CurrentSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -1125,6 +1126,17 @@ class CurrentSensorWidget(QWidget):
         self.stats_label.setText("统计: 暂无数据")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.current_data:
+            return None
+        return {
+            'title': '电流传感器',
+            'x_label': '时间 (秒)',
+            'y_label': f'电流 ({self.current_unit})',
+            'points': list(zip(self.time_data, [self.to_current_unit(c) for c in self.current_data])),
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""

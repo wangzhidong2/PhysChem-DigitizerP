@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # -*- coding: utf-8 -*-
@@ -192,6 +192,10 @@ class AppConfig(QConfig):
         "General", "PinnedModules", [],
         serializer=StringListSerializer(),
     )
+    # AI 分析实验：OpenAI 兼容端点 + API Key + 模型（图表卡「AI分析实验」按钮用）
+    aiEndpoint = ConfigItem("General", "AIEndpoint", "")
+    aiApiKey = ConfigItem("General", "AIApiKey", "")
+    aiModel = ConfigItem("General", "AIModel", "deepseek-v4-flash")
 
 
 app_cfg = AppConfig()
@@ -586,6 +590,13 @@ class ChartPanel(QWidget):
         self._outlier_label = None    # 已移除点数计数
         self._outlier_masks = None    # 每子图掩码列表（None=未启用剔除）
         self._outlier_stack = []      # 撤销栈：每项为上一步的多子图掩码列表
+        # AI 分析实验：右上角浮动按钮 + 模块数据提供回调
+        self._ai_data_provider = None   # callable() -> dict 或 None（模块注册）
+        self._ai_btn = PushButton("AI分析实验", self)
+        self._ai_btn.setFixedSize(116, 30)
+        self._ai_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._ai_btn.setToolTip("把当前实验数据发送给 AI 分析（需配置 API 端点与 Key）")
+        self._ai_btn.clicked.connect(self._on_ai_clicked)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -1167,6 +1178,40 @@ class ChartPanel(QWidget):
         else:
             self.figure.clear()
             self._widget.draw()
+
+    # ---------------- AI 分析实验 ----------------
+    def set_ai_data_provider(self, provider):
+        """注册实验数据回调（模块在 __init__ 调用）。
+
+        provider() 返回 dict 或 None：
+            {'title', 'x_label', 'y_label',
+             'points': [(x, y), ...], 'extra': str(可选)}
+        无数据时返回 None（按钮点击会提示先采集）。
+        """
+        self._ai_data_provider = provider
+
+    def _on_ai_clicked(self):
+        """「AI分析实验」：取当前实验数据 → 弹配置/分析对话框。"""
+        payload = None
+        if self._ai_data_provider is not None:
+            try:
+                payload = self._ai_data_provider()
+            except Exception as e:
+                print(f"⚠️ AI 数据回调异常: {e}")
+        if not payload or not payload.get('points'):
+            fluent_message_box(
+                self, "AI 分析实验",
+                "当前没有可分析的数据。\n请先「开始采集」积累数据后再试。")
+            return
+        dlg = AIAnalysisDialog(payload, self)
+        dlg.exec()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if getattr(self, '_ai_btn', None) is not None:
+            # 浮动按钮钉在图表右上角（不占布局，主题由 Fluent 组件自动适配）
+            self._ai_btn.move(self.width() - self._ai_btn.width() - 12, 12)
+            self._ai_btn.raise_()
 
     # ------------ 视图窗口控制 + 曲线拟合 + 离群点剔除（仅 pyqtgraph） ------------
     def get_analysis_panel(self):
@@ -1773,6 +1818,205 @@ class ChartPanel(QWidget):
             text = f"y = {sa}{abs(a):.4g}·x^{sb}{abs(b):.4g}"
         text += f"\nR² = {r2:.4f}"
         return text
+
+
+# ============================================================
+# AI 分析实验（OpenAI 兼容端点；图表卡「AI分析实验」按钮）
+# ============================================================
+# AI 数据分析系统提示词：要求按科学实验报告风格输出分析结论
+_AI_SYSTEM_PROMPT = (
+    "你是一位严谨的物理/化学实验数据分析助手。用户会给你一组实验采集数据"
+    "（时间戳与测量值）。请用中文给出结构化分析，包含：\n"
+    "1. 数据概况：点数、时间跨度、取值范围；\n"
+    "2. 统计特征：平均值、最大值、最小值、波动（标准差/极差）；\n"
+    "3. 趋势判断：整体走势（上升/下降/稳定/波动）、大致变化速率；\n"
+    "4. 异常观察：明显跳变、离群点及其可能原因（结合传感器背景）；\n"
+    "5. 建议：适合的拟合函数、后续实验改进建议。\n"
+    "回答保持简洁、分条列出，不要编造数据中没有的信息。"
+)
+
+
+class AIRequestThread(QThread):
+    """把实验数据文本发送到 OpenAI 兼容端点（后台线程，不阻塞 UI）。"""
+
+    finished_ok = Signal(str)   # AI 回复正文
+    finished_err = Signal(str)  # 错误描述
+
+    def __init__(self, endpoint, api_key, model, user_text, parent=None):
+        super().__init__(parent)
+        self.endpoint = endpoint
+        self.api_key = api_key
+        self.model = model
+        self.user_text = user_text
+
+    def run(self):
+        try:
+            import json
+            import urllib.request
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            body = {
+                "model": self.model or "deepseek-v4-flash",
+                "messages": [
+                    {"role": "system", "content": _AI_SYSTEM_PROMPT},
+                    {"role": "user", "content": self.user_text},
+                ],
+                "temperature": 0.3,
+            }
+            req = urllib.request.Request(
+                self.endpoint,
+                data=json.dumps(body).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            try:
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                # 非标准响应结构：原样返回 JSON 便于排查
+                content = json.dumps(data, ensure_ascii=False, indent=2)
+            self.finished_ok.emit(content)
+        except Exception as e:
+            self.finished_err.emit(str(e))
+
+
+class AIAnalysisDialog(Dialog):
+    """AI 分析实验数据对话框：端点/Key/模型 配置 + 发送 + 结果显示。
+
+    - 端点/Key/模型 持久化到 app_config.json（图表卡按钮与模块无关，全局复用）
+    - 数据文本在打开时构建（大样本自动降采样到 ≤1500 行）
+    - 请求在后台线程执行，期间禁用发送按钮，结果显示在只读文本框
+    """
+
+    def __init__(self, payload, parent=None):
+        super().__init__("AI 分析实验", "", parent)
+        self.payload = payload
+        self._thread = None
+        self.setFixedWidth(620)
+
+        # ---- 配置输入行 ----
+        self.endpoint_edit = LineEdit(self)
+        self.endpoint_edit.setText(app_cfg.aiEndpoint.value)
+        self.endpoint_edit.setPlaceholderText(
+            "OpenAI 兼容端点，如 https://api.openai.com/v1/chat/completions")
+        self.endpoint_edit.setMinimumWidth(360)
+        self.endpoint_edit.setToolTip(
+            "支持任意 OpenAI 兼容 /chat/completions 端点（含本地 Ollama 等）")
+
+        self.key_edit = LineEdit(self)
+        self.key_edit.setText(app_cfg.aiApiKey.value)
+        self.key_edit.setEchoMode(LineEdit.EchoMode.Password)
+        self.key_edit.setMinimumWidth(360)
+        self.key_edit.setPlaceholderText("API Key（本地端点可留空）")
+
+        self.model_edit = LineEdit(self)
+        self.model_edit.setText(app_cfg.aiModel.value)
+        self.model_edit.setMinimumWidth(360)
+        self.model_edit.setPlaceholderText("模型名，如 deepseek-v4-flash / qwen2.5")
+
+        # ---- 数据摘要 + 发送 ----
+        pts = payload.get('points') or []
+        self.summary_label = CaptionLabel(
+            f"{payload.get('title', '实验')}：{len(pts)} 个数据点"
+            f"（{payload.get('x_label', 'X')} / {payload.get('y_label', 'Y')}）")
+        self.send_btn = PrimaryPushButton("发送给 AI 分析")
+        self.send_btn.setFixedHeight(34)
+        self.send_btn.clicked.connect(self._on_send)
+
+        # ---- 结果区 ----
+        self.result_view = TextEdit(self)
+        self.result_view.setReadOnly(True)
+        self.result_view.setMinimumHeight(220)
+        self.result_view.setPlaceholderText("AI 分析结果将显示在这里…")
+
+        # ---- 布局 ----
+        self.textLayout.setSpacing(10)
+        self.textLayout.addWidget(BodyLabel("API 端点"))
+        self.textLayout.addWidget(self.endpoint_edit)
+        self.textLayout.addWidget(BodyLabel("API Key"))
+        self.textLayout.addWidget(self.key_edit)
+        self.textLayout.addWidget(BodyLabel("模型"))
+        self.textLayout.addWidget(self.model_edit)
+        self.textLayout.addWidget(self.summary_label)
+        self.textLayout.addWidget(self.send_btn)
+        self.textLayout.addWidget(self.result_view, 1)
+
+        # 底部按钮：取消 → 关闭（发送走上方主按钮）
+        self.yesButton.hide()
+        self.cancelButton.setText("关闭")
+
+    # ---------------- 数据文本构建 ----------------
+    def _build_user_text(self):
+        p = self.payload
+        pts = p.get('points') or []
+        n = len(pts)
+        # 大样本降采样：最多 1500 行，均匀抽样保持趋势
+        step = max(1, (n + 1499) // 1500)
+        rows = pts[::step]
+        lines = [
+            f"实验: {p.get('title', '')}",
+            f"数据列: {p.get('x_label', 'X')}, {p.get('y_label', 'Y')}",
+            f"数据点总数: {n}（已均匀抽样至 {len(rows)} 行）",
+            "数据:",
+        ]
+        for x, y in rows:
+            lines.append(f"{self._fmt_num(x)}, {self._fmt_num(y)}")
+        extra = p.get('extra')
+        if extra:
+            lines.append("补充说明: " + str(extra))
+        return "\n".join(lines)
+
+    # ---------------- 发送 ----------------
+    @staticmethod
+    def _fmt_num(v):
+        """数值紧凑格式化；非数值（None/字符串等异常数据）原样输出防崩溃。"""
+        try:
+            return f"{float(v):.4g}"
+        except (TypeError, ValueError):
+            return str(v)
+
+    def _on_send(self):
+        endpoint = self.endpoint_edit.text().strip()
+        if not endpoint:
+            self.result_view.setText("请先填写 API 端点 URL。")
+            return
+        key = self.key_edit.text().strip()
+        model = self.model_edit.text().strip()
+        # 持久化配置
+        try:
+            qconfig.set(app_cfg.aiEndpoint, endpoint)
+            qconfig.set(app_cfg.aiApiKey, key)
+            qconfig.set(app_cfg.aiModel, model)
+        except Exception as e:
+            print(f"⚠️ 保存 AI 配置失败: {e}")
+
+        self.send_btn.setEnabled(False)
+        self.send_btn.setText("分析中…")
+        self.result_view.setText("正在发送数据并等待 AI 回复…")
+
+        # 线程不挂 parent：发送中关闭对话框时线程继续运行，完成后自毁
+        # （挂 parent 会随对话框析构触发「QThread destroyed while running」
+        #  的 Qt fail-fast 崩溃 0xC0000409）
+        self._thread = AIRequestThread(
+            endpoint, key, model, self._build_user_text())
+        self._thread.finished_ok.connect(self._on_done_ok)
+        self._thread.finished_err.connect(self._on_done_err)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.start()
+
+    def _on_done_ok(self, content):
+        self.result_view.setText(content)
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText("发送给 AI 分析")
+        self._thread = None
+
+    def _on_done_err(self, err_text):
+        self.result_view.setText(f"请求失败：\n{err_text}")
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText("发送给 AI 分析")
+        self._thread = None
 
 
 # ============================================================
@@ -2884,8 +3128,10 @@ class FluentCard(ExpandGroupSettingCard):
     """
     ICON = None  # 子类可替换 header 图标（FluentIcon）
 
-    def __init__(self, title, content_widget=None, expanded=True, parent=None):
-        super().__init__(self.__class__.ICON or FluentIcon.FOLDER, title, None, parent)
+    def __init__(self, title, content_widget=None, expanded=True, parent=None,
+                 icon=None):
+        super().__init__(icon or self.__class__.ICON or FluentIcon.FOLDER,
+                         title, None, parent)
 
         # 内容容器：紧凑布局
         self.content = QWidget()

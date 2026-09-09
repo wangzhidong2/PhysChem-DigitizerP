@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel,
+    BodyLabel, CaptionLabel, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -165,7 +165,7 @@ class UltrasonicWidget(QWidget):
 
         conn_row.addStretch()
         card_layout.addLayout(conn_row)
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：实时数据（可折叠） ==========
@@ -184,7 +184,7 @@ class UltrasonicWidget(QWidget):
         self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
         layout.addWidget(card_data)
 
         # ========== 卡片3：图表 + 数据记录（可折叠） ==========
@@ -206,6 +206,7 @@ class UltrasonicWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -261,7 +262,7 @@ class UltrasonicWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -523,6 +524,17 @@ class UltrasonicWidget(QWidget):
         self.current_data_label.setText("等待数据...")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.data_points:
+            return None
+        return {
+            'title': '超声波位移',
+            'x_label': '时间 (秒)',
+            'y_label': '距离 (厘米)',
+            'points': list(zip(self.timestamps, self.data_points)),
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
