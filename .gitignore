@@ -51,5 +51,5 @@ app_config.json
 .vscode/settings.json
 .trae/rules/git-commit-message.md
 sensor_config.json
-voltage_sensor_data_20260612_182909.csv
-voltage_sensor_data_20260612_190922.csv
+# 各模块保存的实验数据 CSV（运行时生成）
+*_sensor_data_*.csv
