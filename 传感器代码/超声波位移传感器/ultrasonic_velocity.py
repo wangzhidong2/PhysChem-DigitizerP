@@ -601,6 +601,14 @@ class UltrasonicVelocityWidget(QWidget):
             'x_label': '时间 (秒)',
             'y_label': '速度 (cm/s)',
             'points': list(zip(self.time_data, self.velocity_data)),
+            'params': (
+                f"传感器=HC-SR04 超声波, 速度=相邻两次回波差分, "
+                f"采样间隔={self.sample_interval_ms}ms"),
+            'prompt': (
+                "这是超声波速度测量实验：速度由相邻两次回波时间差计算 "
+                "v=(t0−t1)/2×vs/[(t1+t0)/2+Δt]。距离量化误差会被时间差放大，"
+                "速度波动通常偏大。常见误差来源：测量间隔抖动、目标非匀速、反射面角度。"
+                "请关注速度噪声并给出平滑建议。"),
         }
 
     def apply_theme(self, theme):

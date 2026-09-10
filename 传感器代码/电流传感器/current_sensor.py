@@ -1136,6 +1136,17 @@ class CurrentSensorWidget(QWidget):
             'x_label': '时间 (秒)',
             'y_label': f'电流 ({self.current_unit})',
             'points': list(zip(self.time_data, [self.to_current_unit(c) for c in self.current_data])),
+            'params': (
+                f"传感器=ACS712 {self.acs_range} 量程（灵敏度 {self.sensitivity:.3f} V/A）, "
+                f"VCC={self.vcc}V, 零点电压={self.v_quiescent:.4f}V, "
+                f"分压比={self.divider_ratio}, 模式={self.current_mode}, "
+                f"零点校准={'已校准' if self.zero_cal_active else '未校准'}, "
+                f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
+            'prompt': (
+                "这是 ACS712 霍尔电流传感器实验（串联接入回路，输出经分压接 ESP32 ADC）："
+                "电流 =（传感器输出电压 − 零点电压）÷ 灵敏度；AC 模式取滚动窗口 RMS。"
+                "常见误差来源：零点漂移、温漂、分压电阻误差、电源纹波。"
+                "请结合量程与零点校准状态解读数据。"),
         }
 
     def apply_theme(self, theme):

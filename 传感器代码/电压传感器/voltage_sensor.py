@@ -1127,6 +1127,17 @@ class VoltageSensorWidget(QWidget):
             'x_label': '时间 (秒)',
             'y_label': f'电压 ({self.current_unit})',
             'points': list(zip(self.time_data, [self.to_current_unit(v) for v in self.voltage_data])),
+            'params': (
+                f"采样方式={'ADS1115 16位' if self.adc_bits == 16 else ('HX711 24位' if self.adc_bits == 24 else f'ESP32 内置 ADC {self.adc_bits}位')}, "
+                f"分压比={self.divider_ratio}, 放大倍数={self.amp_ratio}, "
+                f"ADS1115 PGA={self.ads1115_pga}/通道={self.ads1115_channel}, "
+                f"HX711 AVDD={self.hx711_avdd}V/通道={self.hx711_channel}, "
+                f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
+            'prompt': (
+                "这是电压采集实验（ESP32 内置 ADC / HX711 24 位 / ADS1115 16 位，"
+                "信号经分压电路接入）：被测电压 = ADC 换算电压 × 分压比 ÷ 放大倍数。"
+                "常见误差来源：分压电阻精度、ADC 非线性与噪声、参考电压漂移、未共地干扰。"
+                "请结合分压比与采样方式解读数据。"),
         }
 
     def apply_theme(self, theme):

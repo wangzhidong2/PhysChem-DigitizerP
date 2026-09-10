@@ -534,6 +534,14 @@ class UltrasonicWidget(QWidget):
             'x_label': '时间 (秒)',
             'y_label': '距离 (厘米)',
             'points': list(zip(self.timestamps, self.data_points)),
+            'params': (
+                f"传感器=HC-SR04 超声波, 距离换算=回波时间(µs)/58, "
+                f"采样间隔={self.sample_interval_ms}ms"),
+            'prompt': (
+                "这是 HC-SR04 超声波测距/位移实验：距离 = 回波时间 ÷ 58（声速约 340 m/s，"
+                "温度每升高 1℃ 声速约增 0.6 m/s）。常见误差来源：测量面倾斜或柔软、"
+                "遮挡与多径反射、量程外（<2cm 或 >400cm）、温湿度影响。"
+                "请关注距离跳变与稳定性。"),
         }
 
     def apply_theme(self, theme):

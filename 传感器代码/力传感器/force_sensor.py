@@ -946,6 +946,14 @@ class ForceSensorWidget(QWidget):
             'x_label': '时间 (秒)',
             'y_label': self.get_chart_ylabel(),
             'points': list(zip(self.time_data, self.force_data)),
+            'params': (
+                f"传感器=HX711（24 位 ADC）+ 应变片, 去皮 offset={self.offset}, "
+                f"标定 scale={self.scale}, 已校准={self.calibrated}, "
+                f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
+            'prompt': (
+                "这是 HX711 + 应变片称重/测力实验：读数 =（ADC − offset）× scale，"
+                "offset 由去皮得到、scale 由已知砝码标定。常见误差来源：传感器蠕变、"
+                "温度漂移、平台振动、接线松动。请关注载荷变化、噪声幅度与称重稳定性。"),
         }
 
     def apply_theme(self, theme):

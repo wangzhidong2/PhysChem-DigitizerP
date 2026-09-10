@@ -712,6 +712,15 @@ class PhSensorWidget(QWidget):
             'x_label': '时间 (秒)',
             'y_label': 'pH值',
             'points': list(zip(self.time_data, self.ph_data)),
+            'params': (
+                f"传感器=SEN0161 pH 电极 + ESP32-S3（12 位 ADC）, "
+                f"校准 {len(self.calibration_points)} 点 {self.calibration_points}, "
+                f"采样间隔={self.sample_interval_ms}ms"),
+            'prompt': (
+                "这是 pH 电位法测量实验：pH 与电极电位近似符合能斯特方程，"
+                "多点校准用线性拟合或二次多项式拟合。常见误差来源：电极老化、"
+                "参比液干涸、温度变化、搅拌不均、缓冲液污染。"
+                "请结合校准信息解读读数的漂移与稳定性。"),
         }
 
     def apply_theme(self, theme):
