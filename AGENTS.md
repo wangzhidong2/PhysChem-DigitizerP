@@ -59,33 +59,40 @@ PhysChem-DigitizerP/
 ├── docs/images/                ← 文档图片
 ├── sensor_config.json          ← 本地校准数据（.gitignore，运行时生成）
 └── 传感器代码/                  ← 下位机 .ino + 上位机 .py 同目录
+    ├── README.md               ← 本目录总览 + 各传感器说明索引
     ├── 超声波位移传感器/
+    │   ├── README.md
     │   ├── HC-SR04esp32.ino
     │   ├── HC-SR04esp8266.ino
     │   ├── csbwithbt.ino
     │   ├── ultrasonic_displacement.py   ← 模块文件（带识别区）
     │   └── ultrasonic_velocity.py
     ├── ph传感器/
+    │   ├── README.md
     │   ├── ph esp32.ino
     │   ├── PH传感器原理图.pdf
     │   └── ph_sensor.py
     ├── 力传感器/
+    │   ├── README.md
     │   ├── force.ino
-    │   └── force_sensor.py
+    │   ├── force_sensor.py
+    │   └── 资料（HX711称重模块商家提供的）/   ← 供应商参考资料（接线/原理图/驱动）
     ├── 电压传感器/
+    │   ├── README.md
     │   ├── ESP32_Voltage_Sensor.ino
     │   ├── HX711_Voltage.ino
     │   ├── ADS1115_Voltage.ino
     │   └── voltage_sensor.py
-    └── 电流传感器/
-        ├── ESP32_ADC_Raw_Data.ino
-        └── current_sensor.py      ← ACS712 电流（5A/20A/30A 量程，AC/DC）
+    ├── 电流传感器/
+    │   ├── README.md
+    │   ├── ESP32_ADC_Raw_Data.ino
+    │   └── current_sensor.py      ← ACS712 电流（5A/20A/30A 量程，AC/DC）
     └── 电学综合/                  ← 欧姆定律 + 电功率（上位机模块开发中）
+        ├── README.md
         ├── VI_ESP32_ADC.ino       ← 电压(内置ADC)+电流(ACS712) 一体固件
         ├── VI_ADS1115.ino         ← 电压(ADS1115 16位)+电流 一体固件
         ├── VI_HX711.ino           ← 电压(HX711 24位)+电流 一体固件
-        ├── V_*.ino / I_ACS712.ino ← 双板分测单通道副本（电压/电流各一板）
-        └── README.md
+        └── V_*.ino / I_ACS712.ino ← 双板分测单通道副本（电压/电流各一板）
 ```
 
 ## Arduino 固件
@@ -332,33 +339,40 @@ PhysChem-DigitizerP/
 ├── docs/images/                ← Docs images
 ├── sensor_config.json          ← Local calibration (.gitignore, runtime-generated)
 └── 传感器代码/                  ← Firmware .ino + host .py in same dir
+    ├── README.md               ← Directory overview + per-sensor index
     ├── 超声波位移传感器/
+    │   ├── README.md
     │   ├── HC-SR04esp32.ino
     │   ├── HC-SR04esp8266.ino
     │   ├── csbwithbt.ino
     │   ├── ultrasonic_displacement.py   ← Module file (with meta header)
     │   └── ultrasonic_velocity.py
     ├── ph传感器/
+    │   ├── README.md
     │   ├── ph esp32.ino
     │   ├── PH传感器原理图.pdf
     │   └── ph_sensor.py
     ├── 力传感器/
+    │   ├── README.md
     │   ├── force.ino
-    │   └── force_sensor.py
+    │   ├── force_sensor.py
+    │   └── 资料（HX711称重模块商家提供的）/   ← Vendor reference material (wiring/schematics/drivers)
     ├── 电压传感器/
+    │   ├── README.md
     │   ├── ESP32_Voltage_Sensor.ino
     │   ├── HX711_Voltage.ino
     │   ├── ADS1115_Voltage.ino
     │   └── voltage_sensor.py
-    └── 电流传感器/
-        ├── ESP32_ADC_Raw_Data.ino
-        └── current_sensor.py      ← ACS712 current (5A/20A/30A ranges, AC/DC)
+    ├── 电流传感器/
+    │   ├── README.md
+    │   ├── ESP32_ADC_Raw_Data.ino
+    │   └── current_sensor.py      ← ACS712 current (5A/20A/30A ranges, AC/DC)
     └── 电学综合/                  ← Ohm's law + electric power (host modules under development)
+        ├── README.md
         ├── VI_ESP32_ADC.ino       ← Voltage (built-in ADC) + current (ACS712), merged firmware
         ├── VI_ADS1115.ino         ← Voltage (ADS1115 16-bit) + current, merged firmware
         ├── VI_HX711.ino           ← Voltage (HX711 24-bit) + current, merged firmware
-        ├── V_*.ino / I_ACS712.ino ← Single-channel copies for dual-board measurement
-        └── README.md
+        └── V_*.ino / I_ACS712.ino ← Single-channel copies for dual-board measurement
 ```
 
 ## Arduino firmware
