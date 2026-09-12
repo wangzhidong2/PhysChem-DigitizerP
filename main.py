@@ -40,7 +40,7 @@ from qfluentwidgets import (
     ComboBox, InfoBar, InfoBarPosition, BodyLabel,
     TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
     SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
-    SwitchSettingCard, Dialog, qconfig, IndicatorPosition,
+    SwitchSettingCard, MessageBox, Dialog, qconfig, IndicatorPosition,
     LineEdit,
     CardWidget, IconWidget, PillToolButton,
     AdaptiveFlowLayout, ToolTipFilter,
@@ -1163,7 +1163,7 @@ class SettingsWidget(QWidget):
             self._suppress_persistence_confirm = False
             return
         # 确认是否覆盖：从关闭切到开启
-        box = Dialog(
+        box = MessageBox(
             "开启配置保存",
             "开启后将恢复保存配置。当前会话内的更改会随下次修改写入磁盘，"
             "可能覆盖之前保存的校准数据。\n是否继续？",
@@ -1203,7 +1203,7 @@ class SettingsWidget(QWidget):
             return  # 用户取消
         ok, msg = export_sensor_config(folder)
         if ok:
-            box = Dialog(
+            box = MessageBox(
                 "导出成功",
                 f"配置已导出到 {msg}",
                 self,
@@ -1213,7 +1213,7 @@ class SettingsWidget(QWidget):
             box.cancelButton.setStyleSheet("color: #28a745;")
             box.exec()
         else:
-            box = Dialog(
+            box = MessageBox(
                 "导出失败",
                 msg,
                 self,
@@ -1233,7 +1233,7 @@ class SettingsWidget(QWidget):
             return  # 用户取消
         ok, msg = import_sensor_config(file_path)
         if ok:
-            box = Dialog(
+            box = MessageBox(
                 "导入成功",
                 f"{msg}，重启程序后生效",
                 self,
@@ -1243,7 +1243,7 @@ class SettingsWidget(QWidget):
             box.cancelButton.setStyleSheet("color: #28a745;")
             box.exec()
         else:
-            box = Dialog(
+            box = MessageBox(
                 "导入失败",
                 msg,
                 self,
@@ -1255,7 +1255,7 @@ class SettingsWidget(QWidget):
 
     def _on_clear_config_clicked(self):
         """清除用户设置：确认后清空 sensor_config.json，保存开关置为开。"""
-        box = Dialog(
+        box = MessageBox(
             "清除用户设置",
             "将删除已保存的所有传感器校准配置，恢复默认值。\n是否继续？",
             self,
@@ -1270,7 +1270,7 @@ class SettingsWidget(QWidget):
             self._suppress_persistence_confirm = True
             qconfig.set(app_cfg.configPersistenceEnabled, True)
             self._suppress_persistence_confirm = False
-            box = Dialog(
+            box = MessageBox(
                 "已清除",
                 "用户配置已删除，重启程序后全部恢复默认值",
                 self,
@@ -1279,7 +1279,7 @@ class SettingsWidget(QWidget):
             box.cancelButton.setText("关闭")
             box.exec()
         else:
-            box = Dialog(
+            box = MessageBox(
                 "清除失败",
                 "配置文件删除失败，请查看控制台输出",
                 self,
@@ -1303,7 +1303,7 @@ class SettingsWidget(QWidget):
 
     def _on_reset_all_clicked(self):
         """恢复默认设置：确认后重置 app_config.json 和 sensor_config.json。"""
-        box = Dialog(
+        box = MessageBox(
             "恢复默认设置",
             "将清除应用配置（主题/引擎等）和所有传感器校准配置，\n"
             "恢复为出厂默认值。\n是否继续？",
@@ -1315,12 +1315,12 @@ class SettingsWidget(QWidget):
             return
         ok, msg = reset_all_config()
         if ok:
-            box = Dialog("已恢复", msg, self)
+            box = MessageBox("已恢复", msg, self)
             box.hideYesButton()
             box.cancelButton.setText("关闭")
             box.exec()
         else:
-            box = Dialog("恢复失败", msg, self)
+            box = MessageBox("恢复失败", msg, self)
             box.hideYesButton()
             box.cancelButton.setText("关闭")
             box.cancelButton.setStyleSheet("color: #dc3545;")
@@ -1379,7 +1379,7 @@ class SettingsWidget(QWidget):
             return   # 未安装引擎的选项已禁用，此处为双保险
         # 从 pyqtgraph 切换到 matplotlib 时弹确认框（pyqtgraph 推荐）
         if engine == "matplotlib" and app_cfg.chartEngine.value == "pyqtgraph":
-            box = Dialog(
+            box = MessageBox(
                 "切换到 matplotlib",
                 "matplotlib 在 PySide6 中存在一些兼容性 bug，\n"
                 "pyqtgraph 可以提供更好的兼容性与性能，\n"

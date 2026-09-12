@@ -59,35 +59,40 @@ PhysChem-DigitizerP/
 ├── docs/images/                ← 文档图片
 ├── sensor_config.json          ← 本地校准数据（.gitignore，运行时生成）
 └── 传感器代码/                  ← 下位机 .ino + 上位机 .py 同目录
+    ├── README.md               ← 本目录总览 + 各传感器说明索引
     ├── 超声波位移传感器/
+    │   ├── README.md
     │   ├── HC-SR04esp32.ino
     │   ├── HC-SR04esp8266.ino
     │   ├── csbwithbt.ino
     │   ├── ultrasonic_displacement.py   ← 模块文件（带识别区）
     │   └── ultrasonic_velocity.py
     ├── ph传感器/
+    │   ├── README.md
     │   ├── ph esp32.ino
     │   ├── PH传感器原理图.pdf
     │   └── ph_sensor.py
     ├── 力传感器/
+    │   ├── README.md
     │   ├── force.ino
-    │   └── force_sensor.py
+    │   ├── force_sensor.py
+    │   └── 资料（HX711称重模块商家提供的）/   ← 供应商参考资料（接线/原理图/驱动）
     ├── 电压传感器/
+    │   ├── README.md
     │   ├── ESP32_Voltage_Sensor.ino
     │   ├── HX711_Voltage.ino
     │   ├── ADS1115_Voltage.ino
     │   └── voltage_sensor.py
-    └── 电流传感器/
-        ├── ESP32_ADC_Raw_Data.ino
-        └── current_sensor.py      ← ACS712 电流（5A/20A/30A 量程，AC/DC）
-    └── 电学综合/
+    ├── 电流传感器/
+    │   ├── README.md
+    │   ├── ESP32_ADC_Raw_Data.ino
+    │   └── current_sensor.py      ← ACS712 电流（5A/20A/30A 量程，AC/DC）
+    └── 电学综合/                  ← 欧姆定律 + 电功率（上位机模块开发中）
+        ├── README.md
         ├── VI_ESP32_ADC.ino       ← 电压(内置ADC)+电流(ACS712) 一体固件
         ├── VI_ADS1115.ino         ← 电压(ADS1115 16位)+电流 一体固件
         ├── VI_HX711.ino           ← 电压(HX711 24位)+电流 一体固件
-        ├── V_*.ino / I_ACS712.ino ← 双板分测单通道副本（电压/电流各一板）
-        ├── ohm_sensor.py          ← 欧姆定律模块（R=U/I，识别区 icon: R）
-        ├── power_sensor.py        ← 电功率模块（P=UI，识别区 icon: P）
-        └── README.md
+        └── V_*.ino / I_ACS712.ino ← 双板分测单通道副本（电压/电流各一板）
 ```
 
 ## Arduino 固件
@@ -106,8 +111,8 @@ PhysChem-DigitizerP/
 | HX711 电压采集 | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py`（含 HX711 模式） |
 | ADS1115 电压采集 | ESP32-S3 | `传感器代码/电压传感器/ADS1115_Voltage.ino` | `voltage_sensor.py`（含 ADS1115 模式） |
 | 电流 (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py`（5A/20A/30A 量程，AC/DC，零点校准） |
-| 欧姆定律 (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（内置ADC/ADS1115/HX711 三选一，电压+ACS712 电流一体；双板分测用同目录 `V_*.ino`+`I_ACS712.ino` 单通道副本） | `ohm_sensor.py`（电压/电流两个独立连接板块：模拟器·串口任意混搭，一体固件 VI_* 或双板；I-U 曲线线性拟合斜率倒数=电阻） |
-| 电功率 (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（同上） | `power_sensor.py`（P=UI，梯形积分累计电能 W） |
+| 欧姆定律 (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（内置ADC/ADS1115/HX711 三选一，电压+ACS712 电流一体；双板分测用同目录 `V_*.ino`+`I_ACS712.ino` 单通道副本） | **上位机模块开发中**（core 已备好 `VIConnection*` / `TimestampPairer` 公共组件） |
+| 电功率 (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（同上） | **上位机模块开发中** |
 
 通过 Arduino IDE 烧录。开发板管理器地址：
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
@@ -142,6 +147,13 @@ PhysChem-DigitizerP/
 - `CollapsibleCard`：自绘可折叠卡片（圆角 + 边框 + 可点击 header），标题用 `SubtitleLabel`（暗色下白色、亮色下黑色），头部背景 `card_bg`、内容区背景 `content_bg`（由 `card_style()` 提供，形成「白标题 + 灰内容区」分层），`paintEvent` / `_apply_theme_style` 主题感知；`apply_theme(theme)` 刷新箭头、全屏按钮颜色。**仅图表卡片仍在用**（需要全屏 + 浮动面板能力）。
 - `FluentCard`：基于 FluentWidgets 原生 `ExpandGroupSettingCard` 的紧凑卡片适配层，用于模块内**普通卡片**（连接控制/参数/实时数据/操作按钮等）。自带 WinUI3 原生视觉：主题自适应背景与分隔线、带旋转动画的展开箭头。API：`FluentCard(title, content_widget=None, expanded=True)` 兼容旧 `CollapsibleCard(title, content, expanded=...)` 调用；构造时自动剥离传入 content 的 `objectName='card'` + `card_style()`（避免双层边框）；也可用 `add_row(label, widget)` / `add_widget(w)` / `add_layout(l)` 从零填充；`add_header_widget(w)` 往 header 右侧追加按钮；`toggle()` / `is_expanded()` 控制折叠。内部重写了 `_adjustViewSize()`（按内容高度定高）并把 `wheelEvent` 透传给父级（解决嵌套外层 QScrollArea 的滚动冲突）。
 - `FloatingDataPanel`：绘制背景主题感知。
+
+**电学综合公共组件**（欧姆定律/电功率上位机模块开发中，core 内组件已就绪）：
+- `VIConnectionUnit`：单路「电压+电流」数据通道（配置 + SerialThread/SimulatorThread + 解析换算 + 双通道配对 + AC RMS + 零点校准 + 采样节流 + 线程安全回收）；`role`（both/voltage/current/none）标识数据角色，供电学模块按参数卡「当前连接」绑定。
+- `TimestampPairer`：双板分测配对器——两路「时间戳,ADC」流按 ±50ms 容差就近配对，超差丢旧等新防止错位累积（双板时钟基准不同，不能直接相减）。
+- `VIConnectionUnitCard`（FluentCard）：单连接卡（自定义名称/图线颜色/连接方式/采样方式/串口/单板-双板开关）。
+- `VIConnectionPanel`（FluentCard）：多连接面板（增删单元 + 双板分测开关 + 采样频率 + 连接/断开 + 配置持久化 `get_configs/set_configs`）。
+- `LINE_COLORS` / `_pick_line_color()` / `_color_icon()`：多路曲线预设色板与颜色预览图标。
 
 **双绘图引擎 `ChartPanel`**（matplotlib / pyqtgraph 统一抽象）：
 - 所有传感器模块的图表一律通过 `ChartPanel` 绘制，**不要直接使用** `Figure`/`FigureCanvas` 或 `pg.PlotWidget`。
@@ -283,7 +295,7 @@ class TemperatureSensorWidget(QWidget):
 - 动态加载依赖识别区格式严格，字段名/冒号/空格写错会导致模块加载失败
 - **退出确认框禁止在 `closeEvent` 内直接 `exec()`**：父窗口处于关闭状态时弹模态对话框会出现对话框无法激活、按钮点击无响应（表现为界面卡死，定时器仍在跑但输入进不去）；正确做法是 `event.ignore()` 取消本次关闭，再用 `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹框，确认后置 `_exit_confirmed` 并再次 `close()`（见 `MainWindow.closeEvent` / `_prompt_exit`）
 - **模块断开线程一律用 `core.stop_thread()`**（内部 `stop()` + 限时 `wait(2000)`，超时收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃）；通信线程 `running` 初值为 `True`、`run()` 首行检查，防止 `stop()` 先于 `run()` 执行时线程永不退出、`wait()` 卡死
-- **提示 / 确认弹窗禁止使用 qfluentwidgets `MessageBox` / `MessageBoxBase`**：它们基于 `MaskDialogBase`，会被 `setWindowFlags(Qt.FramelessWindowHint)` 改造成父窗口内部的 `WS_CHILD` 叠加层，在部分环境下出现弹窗可见但鼠标点击无效（表现为弹窗卡死）。统一走 `core.fluent_message_box()`（内部是 `Dialog`，独立顶层窗口）；退出确认框用 `Dialog`（`MainWindow._prompt_exit`），校准弹窗 `CalibrationMessageBox` 也已改为 `Dialog` 子类。模态弹窗 `exec()` 返回后如需释放用 `deleteLater()`（延迟销毁），**不要**用 `WA_DeleteOnClose`——它会立即删掉 C++ 对象，之后访问控件会报 `RuntimeError: Internal C++ object already deleted`
+- **退出确认框必须用顶层 `Dialog`**（`MainWindow._prompt_exit`），并配合 `closeEvent` 的 `event.ignore()` + `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹出：窗口处于关闭状态时弹模态框可能无法激活、接收不到鼠标输入（表现为界面卡死）。其余提示 / 校准弹窗保持原有 `fluent_message_box()` / `MessageBoxBase` 实现不变。模态弹窗 `exec()` 返回后如需释放用 `deleteLater()`（延迟销毁），**不要**用 `WA_DeleteOnClose`——它会立即删掉 C++ 对象，之后访问控件会报 `RuntimeError: Internal C++ object already deleted`
 
 ---
 
@@ -344,35 +356,40 @@ PhysChem-DigitizerP/
 ├── docs/images/                ← Docs images
 ├── sensor_config.json          ← Local calibration (.gitignore, runtime-generated)
 └── 传感器代码/                  ← Firmware .ino + host .py in same dir
+    ├── README.md               ← Directory overview + per-sensor index
     ├── 超声波位移传感器/
+    │   ├── README.md
     │   ├── HC-SR04esp32.ino
     │   ├── HC-SR04esp8266.ino
     │   ├── csbwithbt.ino
     │   ├── ultrasonic_displacement.py   ← Module file (with meta header)
     │   └── ultrasonic_velocity.py
     ├── ph传感器/
+    │   ├── README.md
     │   ├── ph esp32.ino
     │   ├── PH传感器原理图.pdf
     │   └── ph_sensor.py
     ├── 力传感器/
+    │   ├── README.md
     │   ├── force.ino
-    │   └── force_sensor.py
+    │   ├── force_sensor.py
+    │   └── 资料（HX711称重模块商家提供的）/   ← Vendor reference material (wiring/schematics/drivers)
     ├── 电压传感器/
+    │   ├── README.md
     │   ├── ESP32_Voltage_Sensor.ino
     │   ├── HX711_Voltage.ino
     │   ├── ADS1115_Voltage.ino
     │   └── voltage_sensor.py
-    └── 电流传感器/
-        ├── ESP32_ADC_Raw_Data.ino
-        └── current_sensor.py      ← ACS712 current (5A/20A/30A ranges, AC/DC)
-    └── 电学综合/
+    ├── 电流传感器/
+    │   ├── README.md
+    │   ├── ESP32_ADC_Raw_Data.ino
+    │   └── current_sensor.py      ← ACS712 current (5A/20A/30A ranges, AC/DC)
+    └── 电学综合/                  ← Ohm's law + electric power (host modules under development)
+        ├── README.md
         ├── VI_ESP32_ADC.ino       ← Voltage (built-in ADC) + current (ACS712), merged firmware
         ├── VI_ADS1115.ino         ← Voltage (ADS1115 16-bit) + current, merged firmware
         ├── VI_HX711.ino           ← Voltage (HX711 24-bit) + current, merged firmware
-        ├── V_*.ino / I_ACS712.ino ← Single-channel copies for dual-board measurement
-        ├── ohm_sensor.py          ← Ohm's law module (R=U/I, meta icon: R)
-        ├── power_sensor.py        ← Electric power module (P=UI, meta icon: P)
-        └── README.md
+        └── V_*.ino / I_ACS712.ino ← Single-channel copies for dual-board measurement
 ```
 
 ## Arduino firmware
@@ -391,8 +408,8 @@ Located in `传感器代码/` (Chinese directory names). Each subfolder contains
 | HX711 voltage | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py` (HX711 mode) |
 | ADS1115 voltage | ESP32-S3 | `传感器代码/电压传感器/ADS1115_Voltage.ino` | `voltage_sensor.py` (ADS1115 mode) |
 | Current (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py` (5A/20A/30A ranges, AC/DC, zero calibration) |
-| Ohm's law (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (built-in ADC / ADS1115 / HX711 + ACS712, one board; dual-board mode uses the `V_*.ino` + `I_ACS712.ino` single-channel copies in the same folder) | `ohm_sensor.py` (two independent connection panels for voltage & current — simulator/serial freely mixable, merged VI_* firmware or dual boards; linear fit of I-U curve gives 1/R) |
-| Electric power (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (same as above) | `power_sensor.py` (P=UI, trapezoidal integration accumulates energy W) |
+| Ohm's law (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (built-in ADC / ADS1115 / HX711 + ACS712, one board; dual-board mode uses the `V_*.ino` + `I_ACS712.ino` single-channel copies in the same folder) | **host module under development** (`VIConnection*` / `TimestampPairer` helpers are ready in core) |
+| Electric power (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (same as above) | **host module under development** |
 
 Flash via Arduino IDE. Board packages:
 - ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
@@ -427,6 +444,13 @@ Centralized shared code — `SerialThread`, `SimulatorThread`, `BLESerialThread`
 - `CollapsibleCard`: hand-drawn collapsible card (rounded corners + border + clickable header), title uses `SubtitleLabel`; `paintEvent` / `_apply_theme_style` are theme-aware; `apply_theme(theme)` refreshes arrow and fullscreen button colors. **Only the chart card still uses it** (it needs fullscreen + floating-panel capability).
 - `FluentCard`: a compact card adapter over the native `ExpandGroupSettingCard`, used for the modules' **regular cards** (connection control / parameters / live data / action buttons). Native WinUI3 look out of the box: theme-adaptive background & separator, rotating expand arrow with animation. API: `FluentCard(title, content_widget=None, expanded=True)` is drop-in compatible with the old `CollapsibleCard(title, content, expanded=...)` call; it automatically strips the passed content's `objectName='card'` + `card_style()` (avoids double borders); or fill from scratch with `add_row(label, widget)` / `add_widget(w)` / `add_layout(l)`; `add_header_widget(w)` appends a button to the header's right side; `toggle()` / `is_expanded()` control collapsing. It overrides `_adjustViewSize()` (sizes by content height) and forwards `wheelEvent` to the parent widget (fixes the scroll conflict when nested inside the module's outer QScrollArea).
 - `FloatingDataPanel`: theme-aware background painting.
+
+**Electrical-module shared components** (Ohm's law / electric power host modules are under development; the core helpers are already in place):
+- `VIConnectionUnit`: single "voltage + current" data channel (config + SerialThread/SimulatorThread + parsing/scaling + dual-channel pairing + AC RMS + zero calibration + sample throttling + thread-safe cleanup); the `role` field (both/voltage/current/none) marks the data role for electrical modules to bind via the parameter cards' "current connection" selector.
+- `TimestampPairer`: dual-board pairing — two "timestamp,ADC" streams are matched within a ±50 ms tolerance; out-of-tolerance old samples are dropped to prevent misalignment build-up (the two boards have independent clock bases and cannot be subtracted directly).
+- `VIConnectionUnitCard` (FluentCard): single connection card (custom name / line color / connection mode / sampling method / serial port / merged-vs-dual-board switch).
+- `VIConnectionPanel` (FluentCard): multi-connection panel (add/remove units + dual-board switch + sample rate + connect/disconnect + config persistence via `get_configs/set_configs`).
+- `LINE_COLORS` / `_pick_line_color()` / `_color_icon()`: preset palette and color-swatch icons for multi-curve charts.
 
 **Dual chart engine `ChartPanel`** (unified abstraction over matplotlib / pyqtgraph):
 - All sensor module charts are drawn exclusively through `ChartPanel` — do **not** use `Figure`/`FigureCanvas` or `pg.PlotWidget` directly.
@@ -568,4 +592,4 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - Dynamic loading depends on strict meta header format — typos in field names/colons/spaces will cause load failures
 - **Never call `exec()` on the exit-confirmation dialog directly inside `closeEvent`**: showing a modal dialog while the parent window is in the closing state can leave it unable to activate and unresponsive to button clicks (looks like a UI freeze — timers keep running but input never arrives). Instead call `event.ignore()`, then open the dialog on the next event-loop turn via `QTimer.singleShot(0, ...)`, and re-`close()` after setting `_exit_confirmed` (see `MainWindow.closeEvent` / `_prompt_exit`)
 - **Always stop module threads with `core.stop_thread()`**: it calls `stop()` + a bounded `wait(2000)` and keeps timed-out threads alive in `_retired_threads` (avoids the fail-fast crash when a running QThread gets collected); comm threads initialize `running = True` and check it on the first line of `run()` so a `stop()` issued before `run()` starts can never leave the thread running forever and hang `wait()`
-- **Never use qfluentwidgets `MessageBox` / `MessageBoxBase` for prompt/confirm popups**: they are built on `MaskDialogBase`, which `setWindowFlags(Qt.FramelessWindowHint)` turns into a `WS_CHILD` overlay inside the parent window; in some environments the dialog is visible but receives no mouse input (looks frozen). Use `core.fluent_message_box()` (a top-level `Dialog`) instead; the exit confirmation uses a top-level `Dialog` (see `MainWindow._prompt_exit`) and `CalibrationMessageBox` is now a `Dialog` subclass too. Release a modal dialog after `exec()` with `deleteLater()` (deferred); do **not** use `WA_DeleteOnClose`, which deletes the C++ object immediately and makes later widget access raise `RuntimeError: Internal C++ object already deleted`
+- **The exit-confirmation dialog must be a top-level `Dialog`** (`MainWindow._prompt_exit`), opened on the next event-loop turn via `event.ignore()` + `QTimer.singleShot(0, ...)` in `closeEvent`: a modal dialog shown while the parent window is closing may fail to activate and receive mouse input (looks like a UI freeze). All other prompt / calibration popups keep their existing `fluent_message_box()` / `MessageBoxBase` implementations. Release a modal dialog after `exec()` with `deleteLater()` (deferred); do **not** use `WA_DeleteOnClose`, which deletes the C++ object immediately and makes later widget access raise `RuntimeError: Internal C++ object already deleted`

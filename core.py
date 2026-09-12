@@ -43,7 +43,7 @@ from PySide6.QtGui import (
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
     SwitchButton, DoubleSpinBox, ToolButton, SpinBox,
-    LineEdit, TextEdit, Dialog, StrongBodyLabel,
+    LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
     ConfigSerializer,
@@ -542,22 +542,15 @@ def fluent_message_box(parent, title, text):
 
     单「确定」按钮模态对话框，标题与按钮均为中文，样式随 Fluent 主题。
 
-    使用 qfluentwidgets `Dialog`（顶层窗口）而不是 `MessageBox`：
-    MessageBox 基于 MaskDialogBase，本质是父窗口内部的 WS_CHILD 叠加层，
-    在部分环境下会出现弹窗可见但鼠标点击无效的卡死问题；Dialog 是独立
-    顶层窗口，输入与焦点处理可靠。
-
     Args:
         parent: 父窗口（各传感器模块传 self）
         title: 弹窗标题（如 "连接错误"）
         text: 提示内容
     """
-    box = Dialog(title, text, parent)
+    box = MessageBox(title, text, parent)
     box.yesButton.setText("确定")
     box.cancelButton.hide()
     box.buttonLayout.insertStretch(0, 1)
-    box.raise_()
-    box.activateWindow()
     box.exec()
 
 
@@ -5475,31 +5468,17 @@ class CalibrationDialog(QDialog):
         return points
 
 
-class CalibrationMessageBox(Dialog):
-    """校准参数编辑弹窗 — 顶层 Fluent Dialog（非 MaskDialogBase 叠加层）。
+class CalibrationMessageBox(MessageBoxBase):
+    """校准参数编辑弹窗 — 基于 Fluent-Widgets 原生 MessageBoxBase。
 
-    支持单点 / 两点 / 三点校准：模式单选实时切换输入行，确定前做
-    pH→ADC 输入校验。API 与旧 CalibrationDialog 兼容（exec 返回
-    QDialog.Accepted = 1）。
-
-    用 `Dialog`（独立顶层窗口）而不是 `MessageBoxBase`：后者基于
-    MaskDialogBase，会被 `setWindowFlags(Qt.FramelessWindowHint)` 改造成
-    父窗口内部的 WS_CHILD 叠加层，部分环境下弹窗可见但鼠标点击无效
-    （表现为弹窗卡死）。
+    WinUI3 掩码弹窗：居中浮窗 + 阴影 + 确定/取消按钮，样式随 Fluent 主题，
+    与主程序其他 MessageBox 视觉一致。支持单点 / 两点 / 三点校准：
+    模式单选实时切换输入行，确定前做 pH→ADC 输入校验。
+    API 与旧 CalibrationDialog 兼容（exec 返回 QDialog.Accepted = 1）。
     """
 
     def __init__(self, calibration_points, parent=None):
-        super().__init__(
-            "编辑校准参数",
-            "请选择校准模式并输入标准缓冲液 pH 值及其对应的 ADC 原始值：",
-            parent)
-        # 紧凑布局：默认行距 12px / 内边距 24px 过松
-        self.textLayout.setSpacing(6)
-        self.textLayout.setContentsMargins(16, 12, 16, 8)
-        self.buttonGroup.setFixedHeight(64)
-        self.buttonLayout.setContentsMargins(16, 8, 16, 8)
-        self.setFixedWidth(560)
-
+        super().__init__(parent)
         points = list(calibration_points) if calibration_points else []
         self.calibration_points = points
         self.calibration_mode = len(points) if points else 2
@@ -5507,22 +5486,19 @@ class CalibrationMessageBox(Dialog):
 
         self.yesButton.setText("确定")
         self.cancelButton.setText("取消")
-        try:
-            self.yesButton.clicked.disconnect()
-        except Exception:
-            pass
-        self.yesButton.clicked.connect(self._on_yes_clicked)
+        # 只固定宽度：竖向高度交由表单内容自适应（MessageBoxBase 未固定尺寸，
+        # 若不限宽会随掩码撑满整个父窗口）
+        self.widget.setFixedWidth(520)
 
         self._build_form()
 
-    def _on_yes_clicked(self):
-        """确定：校验通过才接受（validate 内非法时显示错误并阻止关闭）。"""
-        if self.validate():
-            self.accept()
-
     def _build_form(self):
-        # 标题 / 说明由 Dialog 的 title 与 contentLabel 提供，这里只排表单
-        view = self.textLayout
+        view = self.viewLayout
+        view.addWidget(SubtitleLabel("编辑校准参数"))
+
+        info = CaptionLabel("请选择校准模式并输入标准缓冲液 pH 值及其对应的 ADC 原始值：")
+        info.setWordWrap(True)
+        view.addWidget(info)
 
         # 校准模式单选
         modes = [
