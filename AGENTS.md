@@ -281,6 +281,9 @@ class TemperatureSensorWidget(QWidget):
 - 模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
 - BLE 功能需要 `bleak`（可选依赖），未安装时会自动降级
 - 动态加载依赖识别区格式严格，字段名/冒号/空格写错会导致模块加载失败
+- **退出确认框禁止在 `closeEvent` 内直接 `exec()`**：父窗口处于关闭状态时弹模态对话框会出现对话框无法激活、按钮点击无响应（表现为界面卡死，定时器仍在跑但输入进不去）；正确做法是 `event.ignore()` 取消本次关闭，再用 `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹框，确认后置 `_exit_confirmed` 并再次 `close()`（见 `MainWindow.closeEvent` / `_prompt_exit`）
+- **模块断开线程一律用 `core.stop_thread()`**（内部 `stop()` + 限时 `wait(2000)`，超时收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃）；通信线程 `running` 初值为 `True`、`run()` 首行检查，防止 `stop()` 先于 `run()` 执行时线程永不退出、`wait()` 卡死
+- **提示 / 确认弹窗禁止使用 qfluentwidgets `MessageBox` / `MessageBoxBase`**：它们基于 `MaskDialogBase`，会被 `setWindowFlags(Qt.FramelessWindowHint)` 改造成父窗口内部的 `WS_CHILD` 叠加层，在部分环境下出现弹窗可见但鼠标点击无效（表现为弹窗卡死）。统一走 `core.fluent_message_box()`（内部是 `Dialog`，独立顶层窗口）；退出确认框用 `Dialog`（`MainWindow._prompt_exit`），校准弹窗 `CalibrationMessageBox` 也已改为 `Dialog` 子类。模态弹窗 `exec()` 返回后如需释放用 `deleteLater()`（延迟销毁），**不要**用 `WA_DeleteOnClose`——它会立即删掉 C++ 对象，之后访问控件会报 `RuntimeError: Internal C++ object already deleted`
 
 ---
 
@@ -563,3 +566,6 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - Module filenames use English snake_case (e.g. `voltage_sensor.py`), per PEP 8
 - BLE requires `bleak` (optional dependency) — graceful fallback if missing
 - Dynamic loading depends on strict meta header format — typos in field names/colons/spaces will cause load failures
+- **Never call `exec()` on the exit-confirmation dialog directly inside `closeEvent`**: showing a modal dialog while the parent window is in the closing state can leave it unable to activate and unresponsive to button clicks (looks like a UI freeze — timers keep running but input never arrives). Instead call `event.ignore()`, then open the dialog on the next event-loop turn via `QTimer.singleShot(0, ...)`, and re-`close()` after setting `_exit_confirmed` (see `MainWindow.closeEvent` / `_prompt_exit`)
+- **Always stop module threads with `core.stop_thread()`**: it calls `stop()` + a bounded `wait(2000)` and keeps timed-out threads alive in `_retired_threads` (avoids the fail-fast crash when a running QThread gets collected); comm threads initialize `running = True` and check it on the first line of `run()` so a `stop()` issued before `run()` starts can never leave the thread running forever and hang `wait()`
+- **Never use qfluentwidgets `MessageBox` / `MessageBoxBase` for prompt/confirm popups**: they are built on `MaskDialogBase`, which `setWindowFlags(Qt.FramelessWindowHint)` turns into a `WS_CHILD` overlay inside the parent window; in some environments the dialog is visible but receives no mouse input (looks frozen). Use `core.fluent_message_box()` (a top-level `Dialog`) instead; the exit confirmation uses a top-level `Dialog` (see `MainWindow._prompt_exit`) and `CalibrationMessageBox` is now a `Dialog` subclass too. Release a modal dialog after `exec()` with `deleteLater()` (deferred); do **not** use `WA_DeleteOnClose`, which deletes the C++ object immediately and makes later widget access raise `RuntimeError: Internal C++ object already deleted`

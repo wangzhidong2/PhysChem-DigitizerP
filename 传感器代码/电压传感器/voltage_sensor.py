@@ -33,7 +33,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
-    SampleRateComboBox,
+    SampleRateComboBox, stop_thread,
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
@@ -943,12 +943,10 @@ class VoltageSensorWidget(QWidget):
 
     def disconnect_all(self):
         if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
+            stop_thread(self.serial_thread, name="电压串口线程")
             self.serial_thread = None
         if self.ble_thread:
-            self.ble_thread.stop()
-            self.ble_thread.wait()
+            stop_thread(self.ble_thread, name="电压BLE线程")
             self.ble_thread = None
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)

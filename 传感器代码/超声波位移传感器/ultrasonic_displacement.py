@@ -32,6 +32,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, SimulatorThread,
+    stop_thread,
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style,
@@ -359,8 +360,7 @@ class UltrasonicWidget(QWidget):
     def disconnect_serial(self):
         """断开串口连接"""
         if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
+            stop_thread(self.serial_thread, name="超声波位移串口线程")
             self.serial_thread = None
 
         self.connect_btn.setText("连接")

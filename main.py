@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QPushButton, QFrame, QStackedWidget, QScrollArea,
     QFileDialog,
 )
-from PySide6.QtCore import Qt, Signal, QSize, QRect
+from PySide6.QtCore import Qt, Signal, QSize, QRect, QTimer
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics, QGuiApplication
 
 # FluentWidgets — WinUI3 风格组件库（社区版，GPLv3 + 商业双协议）
@@ -40,7 +40,7 @@ from qfluentwidgets import (
     ComboBox, InfoBar, InfoBarPosition, BodyLabel,
     TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
     SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
-    SwitchSettingCard, MessageBox, qconfig, IndicatorPosition,
+    SwitchSettingCard, Dialog, qconfig, IndicatorPosition,
     LineEdit,
     CardWidget, IconWidget, PillToolButton,
     AdaptiveFlowLayout, ToolTipFilter,
@@ -1163,7 +1163,7 @@ class SettingsWidget(QWidget):
             self._suppress_persistence_confirm = False
             return
         # 确认是否覆盖：从关闭切到开启
-        box = MessageBox(
+        box = Dialog(
             "开启配置保存",
             "开启后将恢复保存配置。当前会话内的更改会随下次修改写入磁盘，"
             "可能覆盖之前保存的校准数据。\n是否继续？",
@@ -1203,7 +1203,7 @@ class SettingsWidget(QWidget):
             return  # 用户取消
         ok, msg = export_sensor_config(folder)
         if ok:
-            box = MessageBox(
+            box = Dialog(
                 "导出成功",
                 f"配置已导出到 {msg}",
                 self,
@@ -1213,7 +1213,7 @@ class SettingsWidget(QWidget):
             box.cancelButton.setStyleSheet("color: #28a745;")
             box.exec()
         else:
-            box = MessageBox(
+            box = Dialog(
                 "导出失败",
                 msg,
                 self,
@@ -1233,7 +1233,7 @@ class SettingsWidget(QWidget):
             return  # 用户取消
         ok, msg = import_sensor_config(file_path)
         if ok:
-            box = MessageBox(
+            box = Dialog(
                 "导入成功",
                 f"{msg}，重启程序后生效",
                 self,
@@ -1243,7 +1243,7 @@ class SettingsWidget(QWidget):
             box.cancelButton.setStyleSheet("color: #28a745;")
             box.exec()
         else:
-            box = MessageBox(
+            box = Dialog(
                 "导入失败",
                 msg,
                 self,
@@ -1255,7 +1255,7 @@ class SettingsWidget(QWidget):
 
     def _on_clear_config_clicked(self):
         """清除用户设置：确认后清空 sensor_config.json，保存开关置为开。"""
-        box = MessageBox(
+        box = Dialog(
             "清除用户设置",
             "将删除已保存的所有传感器校准配置，恢复默认值。\n是否继续？",
             self,
@@ -1270,7 +1270,7 @@ class SettingsWidget(QWidget):
             self._suppress_persistence_confirm = True
             qconfig.set(app_cfg.configPersistenceEnabled, True)
             self._suppress_persistence_confirm = False
-            box = MessageBox(
+            box = Dialog(
                 "已清除",
                 "用户配置已删除，重启程序后全部恢复默认值",
                 self,
@@ -1279,7 +1279,7 @@ class SettingsWidget(QWidget):
             box.cancelButton.setText("关闭")
             box.exec()
         else:
-            box = MessageBox(
+            box = Dialog(
                 "清除失败",
                 "配置文件删除失败，请查看控制台输出",
                 self,
@@ -1303,7 +1303,7 @@ class SettingsWidget(QWidget):
 
     def _on_reset_all_clicked(self):
         """恢复默认设置：确认后重置 app_config.json 和 sensor_config.json。"""
-        box = MessageBox(
+        box = Dialog(
             "恢复默认设置",
             "将清除应用配置（主题/引擎等）和所有传感器校准配置，\n"
             "恢复为出厂默认值。\n是否继续？",
@@ -1315,12 +1315,12 @@ class SettingsWidget(QWidget):
             return
         ok, msg = reset_all_config()
         if ok:
-            box = MessageBox("已恢复", msg, self)
+            box = Dialog("已恢复", msg, self)
             box.hideYesButton()
             box.cancelButton.setText("关闭")
             box.exec()
         else:
-            box = MessageBox("恢复失败", msg, self)
+            box = Dialog("恢复失败", msg, self)
             box.hideYesButton()
             box.cancelButton.setText("关闭")
             box.cancelButton.setStyleSheet("color: #dc3545;")
@@ -1379,7 +1379,7 @@ class SettingsWidget(QWidget):
             return   # 未安装引擎的选项已禁用，此处为双保险
         # 从 pyqtgraph 切换到 matplotlib 时弹确认框（pyqtgraph 推荐）
         if engine == "matplotlib" and app_cfg.chartEngine.value == "pyqtgraph":
-            box = MessageBox(
+            box = Dialog(
                 "切换到 matplotlib",
                 "matplotlib 在 PySide6 中存在一些兼容性 bug，\n"
                 "pyqtgraph 可以提供更好的兼容性与性能，\n"
@@ -1578,6 +1578,9 @@ class MainWindow(FluentWindow):
         # 主题模式（light/dark/auto）：auto 下监听 qconfig.themeChanged，
         # 系统主题变化时自动刷新自定义控件（跟随系统真实生效）
         self._theme_mode = "light"
+        # 退出确认状态：closeEvent 延迟弹框（详见 closeEvent 注释）
+        self._exit_confirmed = False
+        self._exit_dialog_open = False
         self.modules = {}  # name -> widget
         self.module_widgets = []  # 按注册顺序排列的 widget 列表
         self._nav_icons = {}  # name -> (icon_text, nav_item)，主题切换时重建图标
@@ -1791,22 +1794,53 @@ class MainWindow(FluentWindow):
     def closeEvent(self, event):
         """关闭前先弹确认框：未保存实验数据将被销毁。确认后才停止各模块线程。
 
+        注意：确认框**不能**在 closeEvent 内直接 exec()——窗口正处于关闭
+        状态时弹出模态对话框，对话框可能无法激活、按钮点击无响应（表现为
+        界面卡死）。正确做法：先 event.ignore() 取消本次关闭，再用
+        QTimer.singleShot(0) 延迟到正常事件循环里弹框；确认后置
+        _exit_confirmed 并再次 close()，此次直接走清理 + 接受关闭。
+
         子页面销毁不会触发模块自身的 closeEvent，若串口/BLE/模拟器线程
         仍在运行，QThread 对象被销毁时会触发 Qt fail-fast 闪退
         （0xC0000409）。确认退出后逐模块调用断开方法（不同模块方法名
         不同：disconnect_all / disconnect_serial）停线程。
         """
-        box = MessageBox(
+        if self._exit_confirmed:
+            self._stop_module_threads()
+            super().closeEvent(event)
+            return
+
+        event.ignore()
+        if self._exit_dialog_open:
+            return  # 已有确认框在等待，避免重复弹框
+        self._exit_dialog_open = True
+        QTimer.singleShot(0, self._prompt_exit)
+
+    def _prompt_exit(self):
+        """在正常事件循环中弹出退出确认框（避免 closeEvent 内嵌套模态循环）。
+
+        用 qfluentwidgets `Dialog`（真正的顶层窗口）而不是 `MessageBox`：
+        MessageBox 基于 MaskDialogBase，会被改造成父窗口内部的 WS_CHILD
+        叠加层，输入路由依赖 Qt 内部子控件路径，在部分环境下会出现窗口
+        能显示但鼠标点击无效（表现为弹窗卡死）。Dialog 是独立顶层窗口，
+        输入与焦点处理可靠（与 AI 分析窗口同一组件）。
+        """
+        self._exit_dialog_open = False
+        box = Dialog(
             "退出确认",
             "程序即将退出，所有未保存的实验数据将被销毁。\n确定要退出吗？",
             self,
         )
         box.yesButton.setText("确认退出")
         box.cancelButton.setText("取消")
-        if not box.exec():
-            event.ignore()
-            return
+        box.raise_()
+        box.activateWindow()
+        if box.exec():
+            self._exit_confirmed = True
+            self.close()
 
+    def _stop_module_threads(self):
+        """逐模块调用断开方法停止串口/BLE/模拟器线程（退出清理）。"""
         for name, widget in self.modules.items():
             if name in ("主页", "设置"):
                 continue
@@ -1818,7 +1852,6 @@ class MainWindow(FluentWindow):
                     except Exception as e:
                         print(f"⚠️ 退出清理 [{name}.{meth}] 失败: {e}")
                     break
-        super().closeEvent(event)
 
 
 def _set_windows_appusermodelid():

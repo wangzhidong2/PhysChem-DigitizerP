@@ -43,7 +43,7 @@ from PySide6.QtGui import (
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
     SwitchButton, DoubleSpinBox, ToolButton, SpinBox,
-    LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
+    LineEdit, TextEdit, Dialog, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
     ConfigSerializer,
@@ -233,6 +233,12 @@ class AppConfig(QConfig):
     # 进入 AI 分析时的信息框据此预填（下次实验免重复输入）
     aiExperimentInfo = ConfigItem(
         "General", "AIExperimentInfo", {},
+        serializer=JsonDictSerializer(),
+    )
+    # 按模块记住的预置系统提示词覆盖 {模块名: 提示词文本}，
+    # 由 AI 设置窗口编辑（内容与内置相同即视为未覆盖，读取时回退内置）
+    aiModulePrompts = ConfigItem(
+        "General", "AIModulePrompts", {},
         serializer=JsonDictSerializer(),
     )
 
@@ -536,15 +542,22 @@ def fluent_message_box(parent, title, text):
 
     单「确定」按钮模态对话框，标题与按钮均为中文，样式随 Fluent 主题。
 
+    使用 qfluentwidgets `Dialog`（顶层窗口）而不是 `MessageBox`：
+    MessageBox 基于 MaskDialogBase，本质是父窗口内部的 WS_CHILD 叠加层，
+    在部分环境下会出现弹窗可见但鼠标点击无效的卡死问题；Dialog 是独立
+    顶层窗口，输入与焦点处理可靠。
+
     Args:
         parent: 父窗口（各传感器模块传 self）
         title: 弹窗标题（如 "连接错误"）
         text: 提示内容
     """
-    box = MessageBox(title, text, parent)
+    box = Dialog(title, text, parent)
     box.yesButton.setText("确定")
     box.cancelButton.hide()
     box.buttonLayout.insertStretch(0, 1)
+    box.raise_()
+    box.activateWindow()
     box.exec()
 
 
@@ -1254,12 +1267,15 @@ class ChartPanel(QWidget):
             module_title, initial=load_experiment_info(module_title),
             parent=self)
         if not info_dlg.exec():
+            info_dlg.deleteLater()
             return
         experiment_info = info_dlg.get_info()
+        info_dlg.deleteLater()
         save_experiment_info(module_title, experiment_info)
         dlg = AIChatDialog(
             self._ai_data_provider, experiment_info=experiment_info, parent=self)
         dlg.exec()
+        dlg.deleteLater()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -1941,19 +1957,56 @@ def save_experiment_info(module_title, info):
         print(f"⚠️ 保存实验信息失败: {e}")
 
 
+def module_default_prompt(context):
+    """返回模块内置（出厂）系统提示词：优先新键 system_prompt，兼容旧键 prompt。"""
+    if not context:
+        return ''
+    return str(context.get('system_prompt') or context.get('prompt') or '')
+
+
+def get_module_prompt(module_title, default):
+    """返回模块当前生效的系统提示词。
+
+    用户覆盖（AIModulePrompts，含显式清空为空串）优先；未覆盖回退内置。
+    """
+    try:
+        overrides = app_cfg.aiModulePrompts.value
+        if isinstance(overrides, dict) and module_title in overrides:
+            return str(overrides.get(module_title) or '')
+    except Exception:
+        pass
+    return default
+
+
+def set_module_prompt(module_title, text, default):
+    """保存模块系统提示词覆盖；与内置相同则清除覆盖（回退内置）。
+
+    text 为空串表示用户显式清空预置提示词（保留空覆盖，不回退内置）。
+    """
+    try:
+        store = dict(app_cfg.aiModulePrompts.value or {})
+        if text == default:
+            store.pop(module_title, None)
+        else:
+            store[module_title] = text
+        qconfig.set(app_cfg.aiModulePrompts, store)
+    except Exception as e:
+        print(f"⚠️ 保存模块提示词失败: {e}")
+
+
 def build_ai_system_prompt(context, experiment_info=None):
     """组装 system 消息。
 
     分层顺序（越靠后越具体）：
-    通用规范 → 模块专属系统提示词 → 本次实验信息（名称/目的/备注）
+    通用规范 → 模块专属系统提示词（可被用户覆盖）→ 本次实验信息（名称/目的/备注）
     → 用户补充要求 → 实验配置参数 → 实验数据。
     """
     parts = [_AI_BASE_PROMPT]
     if context:
-        # 模块专属系统提示词：优先新键 system_prompt，兼容旧模块的 prompt 键
-        module_prompt = context.get('system_prompt') or context.get('prompt')
+        module_prompt = get_module_prompt(
+            str(context.get('title') or ''), module_default_prompt(context))
         if module_prompt:
-            parts.append("【模块专属系统提示词】\n" + str(module_prompt))
+            parts.append("【模块专属系统提示词】\n" + module_prompt)
     info = experiment_info or {}
     info_lines = []
     if str(info.get('name') or '').strip():
@@ -2041,6 +2094,11 @@ class AIExperimentInfoDialog(Dialog):
             f"可填写本次实验的基本信息（选填），AI 将结合这些信息分析「{module_title}」的数据",
             parent)
         self.setFixedWidth(540)
+        # 紧凑布局：减小默认行距与内边距
+        self.textLayout.setSpacing(4)
+        self.textLayout.setContentsMargins(16, 12, 16, 8)
+        self.buttonGroup.setFixedHeight(64)
+        self.buttonLayout.setContentsMargins(16, 8, 16, 8)
         info = initial or {}
 
         self.name_edit = LineEdit(self)
@@ -2061,7 +2119,6 @@ class AIExperimentInfoDialog(Dialog):
         self.notes_edit.setPlainText(str(info.get('notes') or ''))
         self.notes_edit.setMinimumHeight(56)
 
-        self.textLayout.setSpacing(8)
         self.textLayout.addWidget(BodyLabel("实验名称"))
         self.textLayout.addWidget(self.name_edit)
         self.textLayout.addWidget(BodyLabel("实验目的"))
@@ -2082,11 +2139,25 @@ class AIExperimentInfoDialog(Dialog):
 
 
 class AISettingsDialog(Dialog):
-    """AI 参数设置：端点 / Key / 模型 / 温度 / 最大输出 / 用户提示词 / 数据上限。"""
+    """AI 参数设置：端点 / Key / 模型 / 温度 / 最大输出 / 模块预置提示词 / 用户提示词 / 数据上限。
 
-    def __init__(self, parent=None):
+    context（模块数据上下文）用于显示并编辑该模块的预置系统提示词：
+    修改后按模块保存（app_config.json 的 General.AIModulePrompts），
+    「恢复默认」还原模块内置内容；未提供 context 时该区域禁用。
+    """
+
+    def __init__(self, parent=None, context=None):
         super().__init__("AI 设置", "", parent)
         self.setFixedWidth(560)
+        # 紧凑布局：默认行距 12px / 内边距 24px 过松，整体压缩
+        self.textLayout.setSpacing(4)
+        self.textLayout.setContentsMargins(16, 12, 16, 8)
+        self.buttonGroup.setFixedHeight(64)
+        self.buttonLayout.setContentsMargins(16, 8, 16, 8)
+        self._context = context or {}
+        self._module_title = str(self._context.get('title') or '')
+        self._default_module_prompt = module_default_prompt(self._context)
+        has_module_prompt = bool(self._default_module_prompt)
 
         self.endpoint_edit = LineEdit(self)
         self.endpoint_edit.setText(app_cfg.aiEndpoint.value)
@@ -2122,13 +2193,36 @@ class AISettingsDialog(Dialog):
         self.limit_spin.setValue(int(app_cfg.aiDataLimit.value))
         self.limit_spin.setToolTip("每轮附带的数据行数上限（超出均匀抽样）")
 
+        # 模块预置系统提示词：可编辑并保存（仅影响当前模块），恢复默认还原内置内容
+        self.module_prompt_edit = TextEdit(self)
+        self.module_prompt_edit.setPlainText(
+            get_module_prompt(self._module_title, self._default_module_prompt))
+        self.module_prompt_edit.setPlaceholderText(
+            "当前模块未提供预置提示词（未获取到模块上下文时禁用）")
+        self.module_prompt_edit.setMinimumHeight(84)
+        self.module_prompt_edit.setEnabled(has_module_prompt)
+
+        self.reset_module_prompt_btn = PushButton("恢复默认", self)
+        self.reset_module_prompt_btn.setFixedHeight(30)
+        self.reset_module_prompt_btn.setEnabled(has_module_prompt)
+        self.reset_module_prompt_btn.setToolTip("还原为模块内置的分析提示词")
+        self.reset_module_prompt_btn.clicked.connect(self._on_reset_module_prompt)
+
+        module_hint = CaptionLabel(
+            "可修改并保存，仅对当前模块生效；与内置相同时自动回退内置")
+        module_row = QHBoxLayout()
+        module_row.setSpacing(8)
+        module_row.addWidget(module_hint, 1)
+        module_row.addWidget(self.reset_module_prompt_btn)
+        module_row_w = QWidget(self)
+        module_row_w.setLayout(module_row)
+
         self.user_prompt_edit = TextEdit(self)
         self.user_prompt_edit.setPlainText(app_cfg.aiUserPrompt.value or "")
         self.user_prompt_edit.setPlaceholderText(
-            "自定义系统提示词（可选），叠加在模块预置提示词之后")
-        self.user_prompt_edit.setMinimumHeight(70)
+            "自定义系统提示词（可选，所有模块生效），叠加在模块预置提示词之后")
+        self.user_prompt_edit.setMinimumHeight(52)
 
-        self.textLayout.setSpacing(8)
         self.textLayout.addWidget(BodyLabel("API 端点"))
         self.textLayout.addWidget(self.endpoint_edit)
         self.textLayout.addWidget(BodyLabel("API Key"))
@@ -2151,7 +2245,10 @@ class AISettingsDialog(Dialog):
         row_w.setLayout(row)
         self.textLayout.addWidget(row_w)
 
-        self.textLayout.addWidget(BodyLabel("自定义系统提示词"))
+        self.textLayout.addWidget(BodyLabel("模块预置系统提示词"))
+        self.textLayout.addWidget(self.module_prompt_edit)
+        self.textLayout.addWidget(module_row_w)
+        self.textLayout.addWidget(BodyLabel("自定义系统提示词（用户补充）"))
         self.textLayout.addWidget(self.user_prompt_edit)
 
         self.yesButton.setText("保存")
@@ -2161,6 +2258,10 @@ class AISettingsDialog(Dialog):
         except Exception:
             pass
         self.yesButton.clicked.connect(self._on_save)
+
+    def _on_reset_module_prompt(self):
+        """恢复默认：编辑框还原为模块内置提示词（保存后清除覆盖）。"""
+        self.module_prompt_edit.setPlainText(self._default_module_prompt)
 
     def _on_save(self):
         try:
@@ -2172,6 +2273,11 @@ class AISettingsDialog(Dialog):
             qconfig.set(app_cfg.aiDataLimit, int(self.limit_spin.value()))
             qconfig.set(app_cfg.aiUserPrompt,
                         self.user_prompt_edit.toPlainText())
+            if self._module_title and self._default_module_prompt:
+                set_module_prompt(
+                    self._module_title,
+                    self.module_prompt_edit.toPlainText().strip(),
+                    self._default_module_prompt)
         except Exception as e:
             print(f"⚠️ 保存 AI 配置失败: {e}")
         self.accept()
@@ -2341,8 +2447,9 @@ class AIChatDialog(Dialog):
         return super().eventFilter(obj, event)
 
     def _on_settings(self):
-        dlg = AISettingsDialog(self)
+        dlg = AISettingsDialog(self, context=self._get_context())
         dlg.exec()
+        dlg.deleteLater()
         self._refresh_summary()
 
     def _on_sync(self):
@@ -2362,8 +2469,10 @@ class AIChatDialog(Dialog):
         dlg = AIExperimentInfoDialog(
             module_title, initial=self._experiment_info, parent=self)
         if not dlg.exec():
+            dlg.deleteLater()
             return
         self._experiment_info = dlg.get_info()
+        dlg.deleteLater()
         save_experiment_info(module_title, self._experiment_info)
         self._refresh_summary()
         self._add_bubble(
@@ -2442,6 +2551,11 @@ class AIChatDialog(Dialog):
 # ============================================================
 # 串口通信线程
 # ============================================================
+#: 退出清理时未在限时内结束的线程（保活引用，避免正在运行的 QThread
+#: 被 Python 回收触发 Qt fail-fast 崩溃）
+_retired_threads = []
+
+
 class SerialThread(QThread):
     """串口通信线程"""
     data_received = Signal(str)
@@ -2451,16 +2565,25 @@ class SerialThread(QThread):
         self.port = port
         self.baudrate = baudrate
         self.serial = None
-        self.running = False
+        # 初始即为运行态：若 stop() 在 run() 开始前被调用（刚连接就退出），
+        # run() 不会再把 running 覆盖为 True 导致线程永不退出、wait() 卡死
+        self.running = True
 
     def run(self):
         # pyserial 未安装：不发 ERROR 文本（各模块按连接失败弹窗处理）
         if not SERIAL_AVAILABLE:
             print("⚠️ pyserial 未安装，串口连接不可用")
             return
+        if not self.running:      # start() 后被立即 stop()：直接退出
+            return
         try:
             self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
-            self.running = True
+            if not self.running:  # 打开串口期间被 stop()：关掉句柄立即退出
+                try:
+                    self.serial.close()
+                except Exception:
+                    pass
+                return
             self.serial.reset_input_buffer()
 
             while self.running:
@@ -2469,6 +2592,9 @@ class SerialThread(QThread):
                         line = self.serial.readline().decode('utf-8', errors='ignore').strip()
                         if line:
                             self.data_received.emit(line)
+                    else:
+                        # 空闲时让出 CPU/GIL，避免忙等拖慢 UI 线程
+                        time.sleep(0.01)
                 except Exception as e:
                     print(f"读取串口数据错误: {e}")
                     break
@@ -2485,6 +2611,27 @@ class SerialThread(QThread):
                 self.serial.close()
         except Exception:
             pass
+
+
+def stop_thread(thread, timeout=2000, name="通信线程"):
+    """请求线程停止并限时等待，退出清理专用。
+
+    正常线程 20ms 内结束；串口打开阻塞等极端情况下超时不阻塞退出，
+    并把线程引用收进 _retired_threads 保活（正在运行的 QThread 被
+    Python 回收会触发 Qt fail-fast 崩溃）。
+    """
+    if thread is None:
+        return
+    try:
+        thread.stop()
+    except Exception as e:
+        print(f"⚠️ 停止{name}失败: {e}")
+    try:
+        if not thread.wait(timeout):
+            print(f"⚠️ {name}未在 {timeout}ms 内退出，保留引用等待其自行收尾")
+            _retired_threads.append(thread)
+    except Exception as e:
+        print(f"⚠️ 等待{name}退出失败: {e}")
 
 
 def list_serial_ports():
@@ -2536,7 +2683,8 @@ class SimulatorThread(QThread):
         self.value_max = int(value_max)
         self.interval_ms = max(10, int(interval_ms))
         self.timestamp_scale = max(1, int(timestamp_scale))
-        self.running = False
+        # 初始即为运行态：stop() 若先于 run() 执行不会被覆盖，避免卡死
+        self.running = True
         span = self.value_max - self.value_min
         self._value = float(start_value) if start_value is not None else self.value_min + span / 2.0
         # 每步基准值最大漂移量（量程的 0.5%），使曲线缓慢游走
@@ -2545,7 +2693,8 @@ class SimulatorThread(QThread):
         self._noise_amp = max(1.0, span * 0.01)
 
     def run(self):
-        self.running = True
+        if not self.running:   # start() 后立即被 stop()：直接退出
+            return
         # 与真实固件一致：连接成功后先发 START
         self.data_received.emit("START")
         start_s = time.time()
@@ -2597,7 +2746,8 @@ class BLESerialThread(QThread):
         super().__init__()
         self.device_address = device_address
         self.device_name = device_name
-        self.running = False
+        # 初始即为运行态：stop() 若先于 run() 执行不会被覆盖，避免卡死
+        self.running = True
         self._buffer = ""
         self._client = None
 
@@ -2605,8 +2755,9 @@ class BLESerialThread(QThread):
         if not BLE_AVAILABLE:
             self.data_received.emit("ERROR:bleak 库未安装，请运行 pip install bleak")
             return
+        if not self.running:   # start() 后立即被 stop()：直接退出
+            return
 
-        self.running = True
         try:
             asyncio.run(self._ble_loop())
         except asyncio.CancelledError:
@@ -5324,17 +5475,31 @@ class CalibrationDialog(QDialog):
         return points
 
 
-class CalibrationMessageBox(MessageBoxBase):
-    """校准参数编辑弹窗 — 基于 Fluent-Widgets 原生 MessageBoxBase。
+class CalibrationMessageBox(Dialog):
+    """校准参数编辑弹窗 — 顶层 Fluent Dialog（非 MaskDialogBase 叠加层）。
 
-    WinUI3 掩码弹窗：居中浮窗 + 阴影 + 确定/取消按钮，样式随 Fluent 主题，
-    与主程序其他 MessageBox 视觉一致。支持单点 / 两点 / 三点校准：
-    模式单选实时切换输入行，确定前做 pH→ADC 输入校验。
-    API 与旧 CalibrationDialog 兼容（exec 返回 QDialog.Accepted = 1）。
+    支持单点 / 两点 / 三点校准：模式单选实时切换输入行，确定前做
+    pH→ADC 输入校验。API 与旧 CalibrationDialog 兼容（exec 返回
+    QDialog.Accepted = 1）。
+
+    用 `Dialog`（独立顶层窗口）而不是 `MessageBoxBase`：后者基于
+    MaskDialogBase，会被 `setWindowFlags(Qt.FramelessWindowHint)` 改造成
+    父窗口内部的 WS_CHILD 叠加层，部分环境下弹窗可见但鼠标点击无效
+    （表现为弹窗卡死）。
     """
 
     def __init__(self, calibration_points, parent=None):
-        super().__init__(parent)
+        super().__init__(
+            "编辑校准参数",
+            "请选择校准模式并输入标准缓冲液 pH 值及其对应的 ADC 原始值：",
+            parent)
+        # 紧凑布局：默认行距 12px / 内边距 24px 过松
+        self.textLayout.setSpacing(6)
+        self.textLayout.setContentsMargins(16, 12, 16, 8)
+        self.buttonGroup.setFixedHeight(64)
+        self.buttonLayout.setContentsMargins(16, 8, 16, 8)
+        self.setFixedWidth(560)
+
         points = list(calibration_points) if calibration_points else []
         self.calibration_points = points
         self.calibration_mode = len(points) if points else 2
@@ -5342,19 +5507,22 @@ class CalibrationMessageBox(MessageBoxBase):
 
         self.yesButton.setText("确定")
         self.cancelButton.setText("取消")
-        # 只固定宽度：竖向高度交由表单内容自适应（MessageBoxBase 未固定尺寸，
-        # 若不限宽会随掩码撑满整个父窗口）
-        self.widget.setFixedWidth(520)
+        try:
+            self.yesButton.clicked.disconnect()
+        except Exception:
+            pass
+        self.yesButton.clicked.connect(self._on_yes_clicked)
 
         self._build_form()
 
-    def _build_form(self):
-        view = self.viewLayout
-        view.addWidget(SubtitleLabel("编辑校准参数"))
+    def _on_yes_clicked(self):
+        """确定：校验通过才接受（validate 内非法时显示错误并阻止关闭）。"""
+        if self.validate():
+            self.accept()
 
-        info = CaptionLabel("请选择校准模式并输入标准缓冲液 pH 值及其对应的 ADC 原始值：")
-        info.setWordWrap(True)
-        view.addWidget(info)
+    def _build_form(self):
+        # 标题 / 说明由 Dialog 的 title 与 contentLabel 提供，这里只排表单
+        view = self.textLayout
 
         # 校准模式单选
         modes = [
