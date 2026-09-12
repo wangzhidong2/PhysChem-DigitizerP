@@ -42,6 +42,21 @@ from core import (
     update_collect_btn, set_action_button_width,
 )
 
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深物理实验指导教师与电学测量专家，正在协助分析 ACS712 霍尔电流"
+    "传感器（5A/20A/30A 量程）的实验数据。"
+    "测量原理：电流 =（传感器输出电压 − 零点电压）÷ 灵敏度；ACS712 各量程灵敏度"
+    "不同（约 185/100/66 mV/A），交流模式取滚动窗口 RMS。"
+    "数据特征：直流回路电流应平稳；交流电流呈周期性波动，RMS 应与有效值一致；"
+    "电机/开关类负载会出现尖峰与纹波。"
+    "常见误差来源：零点漂移与温漂、电源纹波、分压电阻误差、导线磁场干扰、量程"
+    "选择不当（小电流用大量程会降低分辨率）、未做零点校准。"
+    "分析要求：结合量程与零点校准状态判断读数可信度；直流分析趋势、噪声与功耗"
+    "变化，交流分析周期、峰值与 RMS；给出校准、滤波与抗干扰的改进建议。"
+)
+
 
 class CurrentSensorWidget(QWidget):
     """电流传感器模块界面 - ACS712 霍尔电流传感器
@@ -1142,11 +1157,7 @@ class CurrentSensorWidget(QWidget):
                 f"分压比={self.divider_ratio}, 模式={self.current_mode}, "
                 f"零点校准={'已校准' if self.zero_cal_active else '未校准'}, "
                 f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
-            'prompt': (
-                "这是 ACS712 霍尔电流传感器实验（串联接入回路，输出经分压接 ESP32 ADC）："
-                "电流 =（传感器输出电压 − 零点电压）÷ 灵敏度；AC 模式取滚动窗口 RMS。"
-                "常见误差来源：零点漂移、温漂、分压电阻误差、电源纹波。"
-                "请结合量程与零点校准状态解读数据。"),
+            'system_prompt': AI_SYSTEM_PROMPT,
         }
 
     def apply_theme(self, theme):

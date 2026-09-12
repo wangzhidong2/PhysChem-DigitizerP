@@ -40,6 +40,23 @@ from core import (
     update_collect_btn, set_action_button_width,
 )
 
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深化学实验指导教师与水质分析专家，正在协助分析 SEN0161 pH 电极"
+    "（ESP32-S3 采集）的实验数据。"
+    "测量原理：pH 电极电位与溶液 pH 满足能斯特关系（25℃ 时约 -59.16 mV/pH），"
+    "模块对 ADC 值做单点/两点/三点校准（线性或二次多项式）换算为 pH。"
+    "数据特征：电极充分稳定后读数应平稳（波动通常 <0.1 pH）；缓冲液中校准后"
+    "偏差应很小；持续单向漂移多为电极老化、参比液干涸或温度变化，阶跃跳动"
+    "多为搅拌/气泡/接触问题。"
+    "常见误差来源：电极老化与污染、参比液干涸、未做温度补偿、搅拌不均、"
+    "缓冲液失效或交叉污染、读数未稳定即记录。"
+    "分析要求：先评估稳定性（漂移速率、噪声幅度、跳变点），再解释可能原因；"
+    "结合校准信息（点数、溶液、拟合方式）判断系统误差；给出可操作的电极保养、"
+    "重新校准或实验改进步骤。"
+)
+
 
 class PhSensorWidget(QWidget):
     """pH传感器模块界面 - 支持单点/两点/三点校准"""
@@ -716,11 +733,7 @@ class PhSensorWidget(QWidget):
                 f"传感器=SEN0161 pH 电极 + ESP32-S3（12 位 ADC）, "
                 f"校准 {len(self.calibration_points)} 点 {self.calibration_points}, "
                 f"采样间隔={self.sample_interval_ms}ms"),
-            'prompt': (
-                "这是 pH 电位法测量实验：pH 与电极电位近似符合能斯特方程，"
-                "多点校准用线性拟合或二次多项式拟合。常见误差来源：电极老化、"
-                "参比液干涸、温度变化、搅拌不均、缓冲液污染。"
-                "请结合校准信息解读读数的漂移与稳定性。"),
+            'system_prompt': AI_SYSTEM_PROMPT,
         }
 
     def apply_theme(self, theme):

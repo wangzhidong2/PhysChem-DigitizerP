@@ -43,6 +43,23 @@ from core import (
     update_collect_btn, set_action_button_width,
 )
 
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深物理实验指导教师与力学测量专家，正在协助分析 HX711（24 位 ADC）"
+    "加应变片式力/质量传感器的实验数据。"
+    "测量原理：读数 =（ADC 原始值 − 去皮 offset）× 标定系数 scale；offset 由"
+    "空载去皮获得，scale 由已知砝码标定。"
+    "数据特征：静态称重曲线应平稳，噪声通常在显示精度的 1~2 个单位内；加载与"
+    "卸载对应台阶式变化；蠕变表现为读数缓慢下沉，温度漂移表现为零点或灵敏度"
+    "随时间缓变。"
+    "常见误差来源：传感器蠕变与迟滞、温度漂移、平台振动、接线/接触电阻变化、"
+    "超量程、标定砝码不准确、未充分预热。"
+    "分析要求：评估零点漂移与噪声幅度、识别蠕变和加载台阶；对动态过程给出峰值、"
+    "变化速率与响应时间；结合标定信息判断系统误差；建议多点标定、数字滤波、"
+    "稳定平台等改进措施。"
+)
+
 
 class ForceSensorWidget(QWidget):
     """力传感器（HX711）模块界面 - 支持去皮、校准和单位切换"""
@@ -950,10 +967,7 @@ class ForceSensorWidget(QWidget):
                 f"传感器=HX711（24 位 ADC）+ 应变片, 去皮 offset={self.offset}, "
                 f"标定 scale={self.scale}, 已校准={self.calibrated}, "
                 f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
-            'prompt': (
-                "这是 HX711 + 应变片称重/测力实验：读数 =（ADC − offset）× scale，"
-                "offset 由去皮得到、scale 由已知砝码标定。常见误差来源：传感器蠕变、"
-                "温度漂移、平台振动、接线松动。请关注载荷变化、噪声幅度与称重稳定性。"),
+            'system_prompt': AI_SYSTEM_PROMPT,
         }
 
     def apply_theme(self, theme):

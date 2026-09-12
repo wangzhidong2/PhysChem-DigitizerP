@@ -170,6 +170,31 @@ class StringListSerializer(ConfigSerializer):
             return []
 
 
+class JsonDictSerializer(ConfigSerializer):
+    """JSON 字典序列化器：嵌套 dict 直接以 JSON 对象写入 app_config.json。
+
+    用于按模块名记住 AI 实验信息（实验名称/目的/条件备注），
+    deserialize 兼容旧版本可能写入的 JSON 字符串。
+    """
+
+    def serialize(self, value):
+        try:
+            return dict(value or {})
+        except Exception:
+            return {}
+
+    def deserialize(self, value):
+        try:
+            if isinstance(value, dict):
+                return dict(value)
+            if isinstance(value, str):
+                parsed = json.loads(value or "{}")
+                return dict(parsed) if isinstance(parsed, dict) else {}
+            return {}
+        except Exception:
+            return {}
+
+
 # 应用自身配置 — 独立文件存放，不受传感器配置开关影响。
 # 开关状态若存进 sensor_config.json 会出现悖论：
 # 「关闭保存」后无人写入 → 下次启动没人记得开关是关的。
@@ -204,6 +229,12 @@ class AppConfig(QConfig):
     aiUserPrompt = ConfigItem("General", "AIUserPrompt", "")
     # 附带实验数据的上限行数（超出按均匀抽样；百万上下文模型可调大）
     aiDataLimit = ConfigItem("General", "AIDataLimit", 5000)
+    # 按模块记住的实验信息 {模块名: {name, purpose, notes}}，
+    # 进入 AI 分析时的信息框据此预填（下次实验免重复输入）
+    aiExperimentInfo = ConfigItem(
+        "General", "AIExperimentInfo", {},
+        serializer=JsonDictSerializer(),
+    )
 
 
 app_cfg = AppConfig()
@@ -1199,10 +1230,13 @@ class ChartPanel(QWidget):
         self._ai_data_provider = provider
 
     def _on_ai_clicked(self):
-        """「AI分析实验」：无数据时提示，有数据则打开对话式 AI 窗口。
+        """「AI分析实验」：无数据时提示，有数据则先采集实验信息再打开 AI 窗口。
 
-        对话窗口持有数据回调（而非一次性快照）——每轮提问都实时取最新
-        数据与参数，持续采集时 AI 看到的始终是最新状态。
+        进入对话前弹出 AIExperimentInfoDialog 可填写实验名称、实验目的、
+        条件与备注（均为选填，留空可直接开始）；信息按模块记住并注入
+        system 提示词，AI 结合实验背景作答。对话窗口持有数据回调（而非
+        一次性快照）——每轮提问都实时取最新数据与参数，持续采集时 AI
+        看到的始终是最新状态。
         """
         payload = None
         if self._ai_data_provider is not None:
@@ -1215,7 +1249,16 @@ class ChartPanel(QWidget):
                 self, "AI 分析实验",
                 "当前没有可分析的数据。\n请先「开始采集」积累数据后再试。")
             return
-        dlg = AIChatDialog(self._ai_data_provider, self)
+        module_title = str(payload.get('title') or '实验')
+        info_dlg = AIExperimentInfoDialog(
+            module_title, initial=load_experiment_info(module_title),
+            parent=self)
+        if not info_dlg.exec():
+            return
+        experiment_info = info_dlg.get_info()
+        save_experiment_info(module_title, experiment_info)
+        dlg = AIChatDialog(
+            self._ai_data_provider, experiment_info=experiment_info, parent=self)
         dlg.exec()
 
     def resizeEvent(self, e):
@@ -1874,12 +1917,54 @@ def _format_ai_data(context, limit=5000):
     return "\n".join(lines)
 
 
-def build_ai_system_prompt(context):
-    """组装 system 消息：通用规范 + 模块提示词 + 用户补充 + 参数 + 数据。"""
+def load_experiment_info(module_title):
+    """读取某模块上次填写的实验信息（实验名称/目的/条件备注）。
+
+    由 ChartPanel 进入 AI 分析时调用，预填 AIExperimentInfoDialog；
+    从未填写过返回空 dict（不报错）。
+    """
+    try:
+        store = app_cfg.aiExperimentInfo.value or {}
+        info = store.get(module_title) if isinstance(store, dict) else None
+        return dict(info) if isinstance(info, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_experiment_info(module_title, info):
+    """按模块记住实验信息（写入 app_config.json，下次实验自动带回）。"""
+    try:
+        store = dict(app_cfg.aiExperimentInfo.value or {})
+        store[module_title] = dict(info or {})
+        qconfig.set(app_cfg.aiExperimentInfo, store)
+    except Exception as e:
+        print(f"⚠️ 保存实验信息失败: {e}")
+
+
+def build_ai_system_prompt(context, experiment_info=None):
+    """组装 system 消息。
+
+    分层顺序（越靠后越具体）：
+    通用规范 → 模块专属系统提示词 → 本次实验信息（名称/目的/备注）
+    → 用户补充要求 → 实验配置参数 → 实验数据。
+    """
     parts = [_AI_BASE_PROMPT]
     if context:
-        if context.get('prompt'):
-            parts.append("【本实验说明】\n" + str(context['prompt']))
+        # 模块专属系统提示词：优先新键 system_prompt，兼容旧模块的 prompt 键
+        module_prompt = context.get('system_prompt') or context.get('prompt')
+        if module_prompt:
+            parts.append("【模块专属系统提示词】\n" + str(module_prompt))
+    info = experiment_info or {}
+    info_lines = []
+    if str(info.get('name') or '').strip():
+        info_lines.append("实验名称：" + str(info['name']).strip())
+    if str(info.get('purpose') or '').strip():
+        info_lines.append("实验目的：" + str(info['purpose']).strip())
+    if str(info.get('notes') or '').strip():
+        info_lines.append("实验条件与备注：" + str(info['notes']).strip())
+    if info_lines:
+        parts.append("【本次实验信息】\n" + "\n".join(info_lines))
+    if context:
         user_prompt = (app_cfg.aiUserPrompt.value or "").strip()
         if user_prompt:
             parts.append("【用户补充要求】\n" + user_prompt)
@@ -1936,6 +2021,64 @@ class AIRequestThread(QThread):
             self.finished_ok.emit(content)
         except Exception as e:
             self.finished_err.emit(str(e))
+
+
+class AIExperimentInfoDialog(Dialog):
+    """进入 AI 分析前的实验信息采集框（全部选填）。
+
+    由 ChartPanel「AI分析实验」按钮弹出，可填写：
+    - 实验名称
+    - 实验目的
+    - 实验条件与备注
+    三个字段均为选填，留空可直接「开始分析」；信息按模块名记住
+    （app_config.json），下次进入自动预填，填写后以【本次实验信息】
+    注入 system 提示词，AI 结合背景作答。
+    """
+
+    def __init__(self, module_title, initial=None, parent=None):
+        super().__init__(
+            "实验信息",
+            f"可填写本次实验的基本信息（选填），AI 将结合这些信息分析「{module_title}」的数据",
+            parent)
+        self.setFixedWidth(540)
+        info = initial or {}
+
+        self.name_edit = LineEdit(self)
+        self.name_edit.setPlaceholderText(
+            f"实验名称（选填），如：{module_title}探究实验")
+        self.name_edit.setText(str(info.get('name') or ''))
+        self.name_edit.setClearButtonEnabled(True)
+
+        self.purpose_edit = TextEdit(self)
+        self.purpose_edit.setPlaceholderText(
+            "实验目的（选填），如：探究质量与重力的关系")
+        self.purpose_edit.setPlainText(str(info.get('purpose') or ''))
+        self.purpose_edit.setMinimumHeight(56)
+
+        self.notes_edit = TextEdit(self)
+        self.notes_edit.setPlaceholderText(
+            "实验条件与备注（选填），如：室温 25℃、使用 100g 标准砝码、采样 60 秒")
+        self.notes_edit.setPlainText(str(info.get('notes') or ''))
+        self.notes_edit.setMinimumHeight(56)
+
+        self.textLayout.setSpacing(8)
+        self.textLayout.addWidget(BodyLabel("实验名称"))
+        self.textLayout.addWidget(self.name_edit)
+        self.textLayout.addWidget(BodyLabel("实验目的"))
+        self.textLayout.addWidget(self.purpose_edit)
+        self.textLayout.addWidget(BodyLabel("实验条件与备注"))
+        self.textLayout.addWidget(self.notes_edit)
+
+        self.yesButton.setText("开始分析")
+        self.cancelButton.setText("取消")
+
+    def get_info(self):
+        """返回实验信息 dict（用于 system 提示词与按模块持久化）。"""
+        return {
+            'name': self.name_edit.text().strip(),
+            'purpose': self.purpose_edit.toPlainText().strip(),
+            'notes': self.notes_edit.toPlainText().strip(),
+        }
 
 
 class AISettingsDialog(Dialog):
@@ -2037,23 +2180,30 @@ class AISettingsDialog(Dialog):
 class AIChatDialog(Dialog):
     """对话式 AI 分析窗口。
 
+    - 进入前由 AIExperimentInfoDialog 采集实验信息（名称/目的/备注），
+      窗口内「实验信息」按钮可随时修改，每轮发送注入最新信息；
     - 每轮发送时实时调用 context_provider() 取最新数据/参数，组装 system
-      消息（通用规范 + 模块提示词 + 用户补充 + 实验参数 + 数据），再附上完整
-      对话历史；数据持续采集时无需手动刷新即是最新值；
+      消息（通用规范 + 模块专属提示词 + 本次实验信息 + 用户补充 + 参数 +
+      数据），再附上完整对话历史；数据持续采集时无需手动刷新即是最新值；
     - 右上角「设置」打开 AISettingsDialog（模型参数 / 系统提示词）；
     - 请求在后台线程执行，发送中禁用输入；关闭窗口线程自动收尾不崩溃。
     """
 
-    def __init__(self, context_provider, parent=None):
+    def __init__(self, context_provider, experiment_info=None, parent=None):
         super().__init__("AI 分析实验", "", parent)
         self._provider = context_provider   # callable() -> context dict / None
+        self._experiment_info = dict(experiment_info or {})  # 实验名称/目的/备注
         self._messages = []                 # 对话历史（不含 system）
         self._thread = None
         self.setFixedWidth(680)
         self.setMinimumHeight(520)
 
-        # ---- 顶部工具行：数据摘要 + 同步 / 清空 / 设置 ----
+        # ---- 顶部工具行：数据摘要 + 实验信息 / 同步 / 清空 / 设置 ----
         self.summary_label = CaptionLabel("")
+        self.info_btn = PushButton("实验信息", self)
+        self.info_btn.setFixedHeight(30)
+        self.info_btn.setToolTip("查看/修改实验名称、目的与备注（每轮分析生效）")
+        self.info_btn.clicked.connect(self._on_edit_info)
         self.sync_btn = PushButton("同步数据", self)
         self.sync_btn.setFixedHeight(30)
         self.sync_btn.clicked.connect(self._on_sync)
@@ -2068,6 +2218,7 @@ class AIChatDialog(Dialog):
         top = QHBoxLayout()
         top.setSpacing(8)
         top.addWidget(self.summary_label, 1)
+        top.addWidget(self.info_btn)
         top.addWidget(self.sync_btn)
         top.addWidget(self.clear_btn)
         top.addWidget(self.settings_btn)
@@ -2111,10 +2262,18 @@ class AIChatDialog(Dialog):
         self.cancelButton.setText("关闭")
 
         self._refresh_summary()
-        self._add_bubble(
-            "你好，我已经带上当前实验的数据和参数。可以直接提问，"
-            "比如：帮我总结数据趋势、这段数据有没有异常、适合用什么函数拟合。",
-            False)
+        name = self._experiment_info.get('name')
+        if name:
+            self._add_bubble(
+                f"已记录实验「{name}」，当前实验数据和参数已带上。"
+                "可以直接提问，比如：总结数据趋势、判断异常点、推荐拟合函数、"
+                "分析误差来源与改进方法。",
+                False)
+        else:
+            self._add_bubble(
+                "你好，我已经带上当前实验的数据和参数。可以直接提问，"
+                "比如：帮我总结数据趋势、这段数据有没有异常、适合用什么函数拟合。",
+                False)
 
     # ---------------- 上下文 ----------------
     def _get_context(self):
@@ -2132,8 +2291,10 @@ class AIChatDialog(Dialog):
             self.summary_label.setText("当前没有可用的实验数据")
             return
         n = len(ctx.get('points') or [])
+        name = str(self._experiment_info.get('name') or '').strip()
+        prefix = f"{name} · " if name else ""
         self.summary_label.setText(
-            f"{ctx.get('title', '实验')}：{n} 个数据点"
+            f"{prefix}{ctx.get('title', '实验')}：{n} 个数据点"
             f"（{ctx.get('x_label', 'X')} / {ctx.get('y_label', 'Y')}）")
 
     # ---------------- 气泡 ----------------
@@ -2194,6 +2355,21 @@ class AIChatDialog(Dialog):
         else:
             self._add_bubble("当前没有可用的实验数据。", False)
 
+    def _on_edit_info(self):
+        """查看/修改实验信息：确认后按模块保存，之后的每轮分析生效。"""
+        ctx = self._get_context() or {}
+        module_title = str(ctx.get('title') or '实验')
+        dlg = AIExperimentInfoDialog(
+            module_title, initial=self._experiment_info, parent=self)
+        if not dlg.exec():
+            return
+        self._experiment_info = dlg.get_info()
+        save_experiment_info(module_title, self._experiment_info)
+        self._refresh_summary()
+        self._add_bubble(
+            f"已更新实验信息：{self._experiment_info.get('name', '')}。"
+            "之后的提问将基于新的实验信息。", False)
+
     def _on_clear(self):
         self._messages = []
         while self.chat_layout.count() > 1:
@@ -2229,7 +2405,8 @@ class AIChatDialog(Dialog):
         self._refresh_summary()
         self._set_busy(True)
 
-        msgs = ([{'role': 'system', 'content': build_ai_system_prompt(ctx)}]
+        msgs = ([{'role': 'system',
+                  'content': build_ai_system_prompt(ctx, self._experiment_info)}]
                 + self._messages)
         # 线程不挂 parent：发送中关闭窗口时线程继续运行，完成后自毁
         # （挂 parent 会随对话框析构触发「QThread destroyed while running」

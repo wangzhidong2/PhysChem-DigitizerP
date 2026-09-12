@@ -42,6 +42,21 @@ from core import (
     update_collect_btn, set_action_button_width,
 )
 
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深物理实验指导教师与电子测量专家，正在协助分析电压采集实验数据"
+    "（ESP32 内置 ADC / HX711 24 位 / ADS1115 16 位，信号经分压电路接入）。"
+    "测量原理：被测电压 = ADC 换算电压 × 分压比 ÷ 放大倍数；ADC 的位数、PGA 增益、"
+    "参考电压与采样率共同决定分辨率、量程与噪声水平。"
+    "数据特征：稳定电源应呈平直曲线；电池等电源呈缓慢下降趋势；ADC 量化台阶与"
+    "随机噪声叠加在真实信号上，读数分辨能力受位数与量程限制。"
+    "常见误差来源：分压电阻精度与温漂、ADC 非线性与噪声、参考电压漂移、未共地或"
+    "接地环路、输入超量程、ADS1115 PGA 配置不当。"
+    "分析要求：结合分压比与 ADC 参数评估分辨率与量程是否匹配；区分真实趋势与"
+    "量化/噪声；给出硬件校准、软件滤波、更换更高精度 ADC 或调整 PGA 的具体建议。"
+)
+
 
 class VoltageSensorWidget(QWidget):
     """电压传感器模块界面 - 支持ADC位数选择和电压分压放大比"""
@@ -1133,11 +1148,7 @@ class VoltageSensorWidget(QWidget):
                 f"ADS1115 PGA={self.ads1115_pga}/通道={self.ads1115_channel}, "
                 f"HX711 AVDD={self.hx711_avdd}V/通道={self.hx711_channel}, "
                 f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
-            'prompt': (
-                "这是电压采集实验（ESP32 内置 ADC / HX711 24 位 / ADS1115 16 位，"
-                "信号经分压电路接入）：被测电压 = ADC 换算电压 × 分压比 ÷ 放大倍数。"
-                "常见误差来源：分压电阻精度、ADC 非线性与噪声、参考电压漂移、未共地干扰。"
-                "请结合分压比与采样方式解读数据。"),
+            'system_prompt': AI_SYSTEM_PROMPT,
         }
 
     def apply_theme(self, theme):
