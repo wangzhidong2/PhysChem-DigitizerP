@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel, SpinBox,
+    BodyLabel, CaptionLabel, SpinBox, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -32,11 +32,28 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, SimulatorThread,
+    stop_thread,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+)
+
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深物理实验指导教师与运动学分析专家，正在协助分析 HC-SR04 超声波"
+    "差分回波计算的速度实验数据。"
+    "测量原理：v = (t0 − t1)/2 × vs / [(t1 + t0)/2 + Δt]（差分法）；距离量化"
+    "误差会被时间差放大，速度噪声通常明显大于距离噪声。"
+    "数据特征：匀速运动的速度应围绕真值随机波动；加速/减速过程应呈单调变化；"
+    "野值多来自丢波、多径反射或目标姿态突变。"
+    "常见误差来源：回波时间测量抖动、目标非匀速、反射面角度、温度对声速的影响、"
+    "差分时间过小导致误差放大。"
+    "分析要求：区分真实加速度与测量噪声（建议分组平均，或对位移做线性/二次拟合"
+    "后求导再比较）；给出速度不确定度估计；必要时建议增大采样间隔、多周期平均"
+    "或温度修正等改进措施。"
 )
 
 
@@ -176,7 +193,7 @@ class UltrasonicVelocityWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：实时数据（可折叠） ==========
@@ -195,7 +212,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.velocity_stats_label = CaptionLabel("速度统计: 暂无数据")
         data_card_layout.addWidget(self.velocity_stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
         layout.addWidget(card_data)
 
         # ========== 卡片3：速度-时间曲线（可全屏） ==========
@@ -217,6 +234,7 @@ class UltrasonicVelocityWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换；上下双子图）
         self.chart = ChartPanel(n_plots=2)
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -271,7 +289,7 @@ class UltrasonicVelocityWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -351,8 +369,7 @@ class UltrasonicVelocityWidget(QWidget):
     def disconnect_serial(self):
         """断开串口连接"""
         if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
+            stop_thread(self.serial_thread, name="超声波速度串口线程")
             self.serial_thread = None
 
         self.connect_btn.setText("连接")
@@ -590,6 +607,21 @@ class UltrasonicVelocityWidget(QWidget):
         self.current_data_label.setText("当前数据: 等待数据...")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.velocity_data:
+            return None
+        return {
+            'title': '超声波速度',
+            'x_label': '时间 (秒)',
+            'y_label': '速度 (cm/s)',
+            'points': list(zip(self.time_data, self.velocity_data)),
+            'params': (
+                f"传感器=HC-SR04 超声波, 速度=相邻两次回波差分, "
+                f"采样间隔={self.sample_interval_ms}ms"),
+            'system_prompt': AI_SYSTEM_PROMPT,
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""

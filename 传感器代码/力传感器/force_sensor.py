@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -23,7 +23,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel,
+    BodyLabel, CaptionLabel, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -33,7 +33,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
-    SampleRateComboBox, CalibrationDialog,
+    SampleRateComboBox, CalibrationDialog, stop_thread,
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
@@ -41,6 +41,23 @@ from core import (
     BLE_AVAILABLE, _get_config_file_path,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+)
+
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深物理实验指导教师与力学测量专家，正在协助分析 HX711（24 位 ADC）"
+    "加应变片式力/质量传感器的实验数据。"
+    "测量原理：读数 =（ADC 原始值 − 去皮 offset）× 标定系数 scale；offset 由"
+    "空载去皮获得，scale 由已知砝码标定。"
+    "数据特征：静态称重曲线应平稳，噪声通常在显示精度的 1~2 个单位内；加载与"
+    "卸载对应台阶式变化；蠕变表现为读数缓慢下沉，温度漂移表现为零点或灵敏度"
+    "随时间缓变。"
+    "常见误差来源：传感器蠕变与迟滞、温度漂移、平台振动、接线/接触电阻变化、"
+    "超量程、标定砝码不准确、未充分预热。"
+    "分析要求：评估零点漂移与噪声幅度、识别蠕变和加载台阶；对动态过程给出峰值、"
+    "变化速率与响应时间；结合标定信息判断系统误差；建议多点标定、数字滤波、"
+    "稳定平台等改进措施。"
 )
 
 
@@ -269,7 +286,7 @@ class ForceSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：校准与去皮（可折叠） ==========
@@ -324,7 +341,7 @@ class ForceSensorWidget(QWidget):
         unit_row.addStretch()
         cal_card_layout.addLayout(unit_row)
 
-        card_cal = FluentCard("校准与去皮", card_cal_content, expanded=True)
+        card_cal = FluentCard("校准与去皮", card_cal_content, expanded=True, icon=FIF.EDIT)
 
         # ========== 卡片3：实时数据（可折叠） ==========
         card_data_content = QWidget()
@@ -356,7 +373,7 @@ class ForceSensorWidget(QWidget):
         self.stats_label = CaptionLabel("统计信息：暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
 
         # 校准与去皮 + 实时数据 并排同一行
         cards_row = QHBoxLayout()
@@ -384,6 +401,7 @@ class ForceSensorWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -438,7 +456,7 @@ class ForceSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -606,12 +624,10 @@ class ForceSensorWidget(QWidget):
 
     def disconnect_all(self):
         if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
+            stop_thread(self.serial_thread, name="力串口线程")
             self.serial_thread = None
         if self.ble_thread:
-            self.ble_thread.stop()
-            self.ble_thread.wait()
+            stop_thread(self.ble_thread, name="力BLE线程")
             self.ble_thread = None
 
         self.connect_btn.setText("连接")
@@ -935,6 +951,22 @@ class ForceSensorWidget(QWidget):
         self.current_raw_label.setText("原始ADC: ------")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.force_data:
+            return None
+        return {
+            'title': '力传感器',
+            'x_label': '时间 (秒)',
+            'y_label': self.get_chart_ylabel(),
+            'points': list(zip(self.time_data, self.force_data)),
+            'params': (
+                f"传感器=HX711（24 位 ADC）+ 应变片, 去皮 offset={self.offset}, "
+                f"标定 scale={self.scale}, 已校准={self.calibrated}, "
+                f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
+            'system_prompt': AI_SYSTEM_PROMPT,
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""

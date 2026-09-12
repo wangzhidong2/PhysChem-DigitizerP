@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel,
+    BodyLabel, CaptionLabel, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -32,12 +32,30 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, CalibrationMessageBox, SimulatorThread,
+    stop_thread,
     load_sensor_config, save_sensor_config, _get_config_file_path,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+)
+
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深化学实验指导教师与水质分析专家，正在协助分析 SEN0161 pH 电极"
+    "（ESP32-S3 采集）的实验数据。"
+    "测量原理：pH 电极电位与溶液 pH 满足能斯特关系（25℃ 时约 -59.16 mV/pH），"
+    "模块对 ADC 值做单点/两点/三点校准（线性或二次多项式）换算为 pH。"
+    "数据特征：电极充分稳定后读数应平稳（波动通常 <0.1 pH）；缓冲液中校准后"
+    "偏差应很小；持续单向漂移多为电极老化、参比液干涸或温度变化，阶跃跳动"
+    "多为搅拌/气泡/接触问题。"
+    "常见误差来源：电极老化与污染、参比液干涸、未做温度补偿、搅拌不均、"
+    "缓冲液失效或交叉污染、读数未稳定即记录。"
+    "分析要求：先评估稳定性（漂移速率、噪声幅度、跳变点），再解释可能原因；"
+    "结合校准信息（点数、溶液、拟合方式）判断系统误差；给出可操作的电极保养、"
+    "重新校准或实验改进步骤。"
 )
 
 
@@ -256,7 +274,7 @@ class PhSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：校准参数（可折叠） ==========
@@ -282,7 +300,7 @@ class PhSensorWidget(QWidget):
         cal_btn_row.addStretch()
         cal_card_layout.addLayout(cal_btn_row)
 
-        card_cal = FluentCard("校准参数", card_cal_content, expanded=True)
+        card_cal = FluentCard("校准参数", card_cal_content, expanded=True, icon=FIF.EDIT)
 
         # ========== 卡片3：实时数据（可折叠） ==========
         card_data_content = QWidget()
@@ -309,7 +327,7 @@ class PhSensorWidget(QWidget):
         self.stats_label = CaptionLabel("统计信息：暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
 
         # 校准参数 + 实时数据 并排同一行（顶部对齐，各自按内容高度，不强制等高）
         cards_row = QHBoxLayout()
@@ -337,6 +355,7 @@ class PhSensorWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -392,7 +411,7 @@ class PhSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -475,8 +494,7 @@ class PhSensorWidget(QWidget):
     def disconnect_serial(self):
         """断开串口连接"""
         if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
+            stop_thread(self.serial_thread, name="pH串口线程")
             self.serial_thread = None
 
         self.connect_btn.setText("连接")
@@ -701,6 +719,22 @@ class PhSensorWidget(QWidget):
 
             fluent_message_box(self, "成功",
                                    "校准参数已更新并保存！\n新的校准曲线将立即生效。\n下次启动程序时会自动加载此配置。")
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.ph_data:
+            return None
+        return {
+            'title': 'pH传感器',
+            'x_label': '时间 (秒)',
+            'y_label': 'pH值',
+            'points': list(zip(self.time_data, self.ph_data)),
+            'params': (
+                f"传感器=SEN0161 pH 电极 + ESP32-S3（12 位 ADC）, "
+                f"校准 {len(self.calibration_points)} 点 {self.calibration_points}, "
+                f"采样间隔={self.sample_interval_ms}ms"),
+            'system_prompt': AI_SYSTEM_PROMPT,
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""

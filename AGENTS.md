@@ -137,7 +137,7 @@ PhysChem-DigitizerP/
 
 ### core.py 组成
 
-集中存放共享代码——`SerialThread`、`SimulatorThread`、`BLESerialThread`、`scan_ble_devices`、`load/save/export/import/clear_sensor_config`、`reset_all_config`、`system_accent_color` / `SystemAccentListener`、`CalibrationDialog`、`CalibrationMessageBox`、`SampleRateDialog`、`SampleRateComboBox`、现代化样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`/`page_bg_style`/`scroll_area_style`）。
+集中存放共享代码——`SerialThread`、`SimulatorThread`、`BLESerialThread`、`scan_ble_devices`、`load/save/export/import/clear_sensor_config`、`reset_all_config`、`system_accent_color` / `SystemAccentListener`、`CalibrationDialog`、`CalibrationMessageBox`、`SampleRateDialog`、`SampleRateComboBox`、AI 分析（`AIRequestThread` / `AIExperimentInfoDialog` / `AISettingsDialog` / `AIChatDialog` / `build_ai_system_prompt`）、现代化样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`/`page_bg_style`/`scroll_area_style`）。
 
 **主题基础设施**（亮/暗主题全链路支持）：
 - `_theme_colors()`：按 `isDarkTheme()` 返回当前主题对应的语义颜色字典（`page_bg`/`card_bg`/`content_bg`/`text_primary`/`accent` 等）。
@@ -170,12 +170,21 @@ PhysChem-DigitizerP/
 - 占位模式（`_engine is None`）：`_build_placeholder_widget()` 显示"未检测到图表引擎"提示（含安装命令），绘制 API 变为空操作（事务仍记录到 `_last`），`clear_chart()` / `apply_chart_theme()` / `set_engine()` 全部安全。
 - 设置页与 `MainWindow.change_chart_engine` 都以 `chart_engine_available()` 守卫，未安装引擎的切换请求会被拒绝。
 
+**AI 分析实验**（图表卡右上角浮动按钮，仅 `ChartPanel` 提供）：
+- 入口流程：点击「AI分析实验」→ 取模块数据回调（无数据弹提示先采集）→ **`AIExperimentInfoDialog` 可填写实验名称/实验目的/条件备注（均为选填，留空可直接开始）** → 确认后打开 `AIChatDialog`。实验信息按模块名存入 `app_config.json` 的 `General.AIExperimentInfo`（`JsonDictSerializer`），下次进入自动预填；窗口内「实验信息」按钮可随时修改。
+- 数据接入：模块在 `__init__` 调用 `chart.set_ai_data_provider(self._ai_data)`；回调返回 `{title, x_label, y_label, points, params, system_prompt}`，无数据返回 `None`。
+- system 提示词分层（`build_ai_system_prompt(context, experiment_info)`）：通用规范 `_AI_BASE_PROMPT` → 模块专属 `system_prompt`（兼容旧键 `prompt`）→【本次实验信息】→ 用户补充 `aiUserPrompt` →【实验配置参数】→【实验数据】（超 `aiDataLimit` 行均匀抽样）。
+- 每个模块定制系统提示词：模块顶部定义 `AI_SYSTEM_PROMPT` 常量（角色 + 测量原理/公式 + 数据特征 + 误差来源 + 分析要求），`_ai_data()` 以 `'system_prompt': AI_SYSTEM_PROMPT` 返回。
+- 对话窗口：左右气泡 / Enter 发送（Shift+Enter 换行）/ 同步数据 / 清空对话 / 实验信息 / 右上角设置（`AISettingsDialog`：端点、Key、模型、温度、max_tokens、数据行上限、自定义提示词）。每轮发送实时调用 provider 取最新数据（非快照）。
+- 请求由 `AIRequestThread` 后台线程用标准库 `urllib` 发送到 OpenAI 兼容 `/chat/completions`（零第三方依赖）；线程不挂 parent，发送中关窗自动收尾，避免 QThread 析构崩溃。
+
 ### 模块能力要点
 
 - `VoltageSensorWidget` 支持：HX711 24 位 ADC 模式（通道 A/B、增益 128/32）、ADS1115 16 位模式（PGA 增益、通道选择）、kV/V/mV 单位切换、去皮（Tare）功能。
 - `ForceSensorWidget` 支持：去皮（Tare）、两点校准、有线串口和 BLE 两种连接方式。
 - `PhSensorWidget` 支持：单点 / 两点 / 三点校准（Nernst 斜率 / 线性拟合 / 二次多项式拟合）。
 - `CurrentSensorWidget` 支持：ACS712 5A/20A/30A 量程切换、AC/DC 测量、零点校准。
+- **AI 分析**：6 个传感器模块均注册 `_ai_data()` 数据回调并定义模块专属 `AI_SYSTEM_PROMPT`（测量原理/数据特征/误差来源/分析要求），进入分析前由 `AIExperimentInfoDialog` 采集实验名称等信息。
 - **主题支持**：所有传感器模块均实现 `apply_theme(theme)` 方法，委托 `core.apply_module_theme()` 刷新页面/卡片/QLabel 颜色，并调用 `ChartPanel.apply_chart_theme()` 切换图表背景/轴色（双引擎均生效）。页面标题统一使用 FluentWidgets `TitleLabel`，滚动区/页面背景使用 `scroll_area_style()` / `page_bg_style()`。
 - 配置持久化：`load_sensor_config()` / `save_sensor_config()` 读写 `sensor_config.json`。
 - 无自动化测试——`test_serial.py` 仅为手动诊断工具。
@@ -256,6 +265,11 @@ class TemperatureSensorWidget(QWidget):
 2. 绘制走 `begin()` → `plot()`/`hline()`/`set_labels()`/... → `end()` 事务流程，切换引擎时 `ChartPanel` 会自动重放最近一次事务。
 3. 多子图场景用 `ChartPanel(n_plots=N)`，各调用通过 `index` 参数指定子图。
 
+**AI 分析接入要点**（新模块建议遵守）：
+1. 在 `__init__` 中 `self.chart.set_ai_data_provider(self._ai_data)`；`_ai_data()` 返回 `{title, x_label, y_label, points, params, system_prompt}`，无数据返回 `None`。
+2. 在模块顶部定义 `AI_SYSTEM_PROMPT` 常量，写清角色、测量原理与公式、正常数据特征、常见误差来源、期望的分析方式；`_ai_data()` 通过 `'system_prompt'` 返回（旧键 `'prompt'` 仍兼容）。
+3. 实验信息（名称/目的/备注）由 core 统一采集与持久化，模块无需处理；数据每轮实时取最新值，不要在模块内做快照缓存。
+
 ### 识别区字段说明
 
 | 字段 | 必填 | 说明 |
@@ -279,6 +293,9 @@ class TemperatureSensorWidget(QWidget):
 - 模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
 - BLE 功能需要 `bleak`（可选依赖），未安装时会自动降级
 - 动态加载依赖识别区格式严格，字段名/冒号/空格写错会导致模块加载失败
+- **退出确认框禁止在 `closeEvent` 内直接 `exec()`**：父窗口处于关闭状态时弹模态对话框会出现对话框无法激活、按钮点击无响应（表现为界面卡死，定时器仍在跑但输入进不去）；正确做法是 `event.ignore()` 取消本次关闭，再用 `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹框，确认后置 `_exit_confirmed` 并再次 `close()`（见 `MainWindow.closeEvent` / `_prompt_exit`）
+- **模块断开线程一律用 `core.stop_thread()`**（内部 `stop()` + 限时 `wait(2000)`，超时收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃）；通信线程 `running` 初值为 `True`、`run()` 首行检查，防止 `stop()` 先于 `run()` 执行时线程永不退出、`wait()` 卡死
+- **退出确认框必须用顶层 `Dialog`**（`MainWindow._prompt_exit`），并配合 `closeEvent` 的 `event.ignore()` + `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹出：窗口处于关闭状态时弹模态框可能无法激活、接收不到鼠标输入（表现为界面卡死）。其余提示 / 校准弹窗保持原有 `fluent_message_box()` / `MessageBoxBase` 实现不变。模态弹窗 `exec()` 返回后如需释放用 `deleteLater()`（延迟销毁），**不要**用 `WA_DeleteOnClose`——它会立即删掉 C++ 对象，之后访问控件会报 `RuntimeError: Internal C++ object already deleted`
 
 ---
 
@@ -417,7 +434,7 @@ Flash via Arduino IDE. Board packages:
 
 ### core.py composition
 
-Centralized shared code — `SerialThread`, `SimulatorThread`, `BLESerialThread`, `scan_ble_devices`, `load/save/export/import/clear_sensor_config`, `reset_all_config`, `system_accent_color` / `SystemAccentListener`, `CalibrationDialog`, `CalibrationMessageBox`, `SampleRateDialog`, `SampleRateComboBox`, modern style functions (`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`/`page_bg_style`/`scroll_area_style`).
+Centralized shared code — `SerialThread`, `SimulatorThread`, `BLESerialThread`, `scan_ble_devices`, `load/save/export/import/clear_sensor_config`, `reset_all_config`, `system_accent_color` / `SystemAccentListener`, `CalibrationDialog`, `CalibrationMessageBox`, `SampleRateDialog`, `SampleRateComboBox`, AI analysis (`AIRequestThread` / `AIExperimentInfoDialog` / `AISettingsDialog` / `AIChatDialog` / `build_ai_system_prompt`), modern style functions (`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`/`page_bg_style`/`scroll_area_style`).
 
 **Theme infrastructure** (full light/dark theme support):
 - `_theme_colors()`: returns a dict of semantic colors for the current theme based on `isDarkTheme()` (`page_bg`/`card_bg`/`text_primary`/`accent`, etc.).
@@ -450,12 +467,21 @@ Centralized shared code — `SerialThread`, `SimulatorThread`, `BLESerialThread`
 - Placeholder mode (`_engine is None`): `_build_placeholder_widget()` shows a "no chart engine detected" hint (with install commands); drawing APIs become no-ops (transactions are still recorded into `_last`); `clear_chart()` / `apply_chart_theme()` / `set_engine()` are all safe.
 - Both the settings page and `MainWindow.change_chart_engine` guard with `chart_engine_available()` — switch requests for uninstalled engines are rejected.
 
+**AI experiment analysis** (floating button at the chart card's top-right, provided by `ChartPanel` only):
+- Flow: click "AI分析实验" → call the module data provider (prompt to acquire data first if empty) → **`AIExperimentInfoDialog` lets you fill in experiment name / purpose / notes (all optional — leave blank to start directly)** → `AIChatDialog` opens. Info is stored per module in `app_config.json` under `General.AIExperimentInfo` (`JsonDictSerializer`) and pre-filled next time; the in-window "实验信息" button edits it anytime.
+- Module wiring: call `chart.set_ai_data_provider(self._ai_data)` in `__init__`; the callback returns `{title, x_label, y_label, points, params, system_prompt}` (or `None` when empty).
+- System prompt layering (`build_ai_system_prompt(context, experiment_info)`): base prompt `_AI_BASE_PROMPT` → per-module `system_prompt` (legacy `prompt` key still supported) → experiment info → user `aiUserPrompt` → config params → data (uniformly down-sampled above `aiDataLimit` rows).
+- Per-module system prompts: define an `AI_SYSTEM_PROMPT` constant (role + measurement principle/formula + data characteristics + error sources + analysis guidance) and return it via `'system_prompt'`.
+- Chat window: left/right bubbles, Enter to send (Shift+Enter newline), sync data, clear chat, experiment info, settings (`AISettingsDialog`: endpoint, key, model, temperature, max tokens, data row limit, custom prompt). Every request re-reads the latest data through the provider (no snapshot).
+- `AIRequestThread` posts to any OpenAI-compatible `/chat/completions` endpoint with the stdlib `urllib` (zero third-party deps); the thread has no parent so closing the window mid-request is safe (avoids a QThread-destroyed-while-running crash).
+
 ### Module capability notes
 
 - `VoltageSensorWidget` supports: HX711 24-bit ADC mode (channel A/B, gain 128/32), ADS1115 16-bit mode (PGA gain, channel selection), kV/V/mV unit switching, Tare function.
 - `ForceSensorWidget` supports: Tare, two-point calibration, wired serial and BLE connections.
 - `PhSensorWidget` supports: single-point / two-point / three-point calibration (Nernst slope / linear fit / quadratic polynomial fit).
 - `CurrentSensorWidget` supports: ACS712 5A/20A/30A range switching, AC/DC measurement, zero calibration.
+- **AI analysis**: all 6 sensor modules register an `_ai_data()` callback and define a module-specific `AI_SYSTEM_PROMPT` (principle / data characteristics / error sources / analysis guidance); `AIExperimentInfoDialog` collects the experiment name and other info before entering analysis.
 - **Theme support**: all sensor modules implement `apply_theme(theme)`, delegating to `core.apply_module_theme()` to refresh page/card/QLabel colors and calling `ChartPanel.apply_chart_theme()` to switch chart background/axis colors (works on both engines). Page titles uniformly use FluentWidgets `TitleLabel`; scroll area / page background use `scroll_area_style()` / `page_bg_style()`.
 - Config persistence: `load_sensor_config()` / `save_sensor_config()` write to `sensor_config.json`.
 - No automated tests — `test_serial.py` is a manual diagnostic tool.
@@ -536,6 +562,11 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 2. Draw via the `begin()` → `plot()`/`hline()`/`set_labels()`/... → `end()` transaction flow; on engine switch `ChartPanel` automatically replays the last transaction.
 3. For multi-plot layouts use `ChartPanel(n_plots=N)` and target sub-plots via the `index` parameter.
 
+**AI analysis integration rules** (recommended for new modules):
+1. Call `self.chart.set_ai_data_provider(self._ai_data)` in `__init__`; return `{title, x_label, y_label, points, params, system_prompt}` (or `None` when there is no data).
+2. Define an `AI_SYSTEM_PROMPT` constant at module top (role, principle/formula, normal data characteristics, error sources, expected analysis); return it via `'system_prompt'` (legacy `'prompt'` still supported).
+3. Experiment info (name/purpose/notes) is collected and persisted by core — modules need not handle it; always read the latest data per request instead of caching snapshots.
+
 ### Meta header fields
 
 | Field | Required | Description |
@@ -559,3 +590,6 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - Module filenames use English snake_case (e.g. `voltage_sensor.py`), per PEP 8
 - BLE requires `bleak` (optional dependency) — graceful fallback if missing
 - Dynamic loading depends on strict meta header format — typos in field names/colons/spaces will cause load failures
+- **Never call `exec()` on the exit-confirmation dialog directly inside `closeEvent`**: showing a modal dialog while the parent window is in the closing state can leave it unable to activate and unresponsive to button clicks (looks like a UI freeze — timers keep running but input never arrives). Instead call `event.ignore()`, then open the dialog on the next event-loop turn via `QTimer.singleShot(0, ...)`, and re-`close()` after setting `_exit_confirmed` (see `MainWindow.closeEvent` / `_prompt_exit`)
+- **Always stop module threads with `core.stop_thread()`**: it calls `stop()` + a bounded `wait(2000)` and keeps timed-out threads alive in `_retired_threads` (avoids the fail-fast crash when a running QThread gets collected); comm threads initialize `running = True` and check it on the first line of `run()` so a `stop()` issued before `run()` starts can never leave the thread running forever and hang `wait()`
+- **The exit-confirmation dialog must be a top-level `Dialog`** (`MainWindow._prompt_exit`), opened on the next event-loop turn via `event.ignore()` + `QTimer.singleShot(0, ...)` in `closeEvent`: a modal dialog shown while the parent window is closing may fail to activate and receive mouse input (looks like a UI freeze). All other prompt / calibration popups keep their existing `fluent_message_box()` / `MessageBoxBase` implementations. Release a modal dialog after `exec()` with `deleteLater()` (deferred); do **not** use `WA_DeleteOnClose`, which deletes the C++ object immediately and makes later widget access raise `RuntimeError: Internal C++ object already deleted`

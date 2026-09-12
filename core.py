@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # -*- coding: utf-8 -*-
@@ -31,9 +31,10 @@ from collections import deque
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
     QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
-    QApplication,
+    QApplication, QScrollArea,
 )
-from PySide6.QtCore import Qt, Signal, QThread, QPoint, QTimer, QAbstractNativeEventFilter
+from PySide6.QtCore import (Qt, Signal, QThread, QPoint, QTimer, QEvent,
+                            QAbstractNativeEventFilter)
 from PySide6.QtGui import (
     QFont, QColor, QPainter, QPen, QBrush, QPainterPath,
     QFontMetrics, QTextOption,
@@ -41,7 +42,7 @@ from PySide6.QtGui import (
 
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
-    SwitchButton, DoubleSpinBox, ToolButton,
+    SwitchButton, DoubleSpinBox, ToolButton, SpinBox,
     LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
     TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
     isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
@@ -169,6 +170,31 @@ class StringListSerializer(ConfigSerializer):
             return []
 
 
+class JsonDictSerializer(ConfigSerializer):
+    """JSON 字典序列化器：嵌套 dict 直接以 JSON 对象写入 app_config.json。
+
+    用于按模块名记住 AI 实验信息（实验名称/目的/条件备注），
+    deserialize 兼容旧版本可能写入的 JSON 字符串。
+    """
+
+    def serialize(self, value):
+        try:
+            return dict(value or {})
+        except Exception:
+            return {}
+
+    def deserialize(self, value):
+        try:
+            if isinstance(value, dict):
+                return dict(value)
+            if isinstance(value, str):
+                parsed = json.loads(value or "{}")
+                return dict(parsed) if isinstance(parsed, dict) else {}
+            return {}
+        except Exception:
+            return {}
+
+
 # 应用自身配置 — 独立文件存放，不受传感器配置开关影响。
 # 开关状态若存进 sensor_config.json 会出现悖论：
 # 「关闭保存」后无人写入 → 下次启动没人记得开关是关的。
@@ -191,6 +217,29 @@ class AppConfig(QConfig):
     pinnedModules = ConfigItem(
         "General", "PinnedModules", [],
         serializer=StringListSerializer(),
+    )
+    # AI 分析实验：OpenAI 兼容端点 + API Key + 模型（图表卡「AI分析实验」按钮用）
+    aiEndpoint = ConfigItem("General", "AIEndpoint", "")
+    aiApiKey = ConfigItem("General", "AIApiKey", "")
+    aiModel = ConfigItem("General", "AIModel", "deepseek-v4-flash")
+    # 生成参数：温度（0~2）与最大输出 token（0=不限制）
+    aiTemperature = ConfigItem("General", "AITemperature", 0.3)
+    aiMaxTokens = ConfigItem("General", "AIMaxTokens", 0)
+    # 用户自定义系统提示词（叠加在模块预置提示词之后）
+    aiUserPrompt = ConfigItem("General", "AIUserPrompt", "")
+    # 附带实验数据的上限行数（超出按均匀抽样；百万上下文模型可调大）
+    aiDataLimit = ConfigItem("General", "AIDataLimit", 5000)
+    # 按模块记住的实验信息 {模块名: {name, purpose, notes}}，
+    # 进入 AI 分析时的信息框据此预填（下次实验免重复输入）
+    aiExperimentInfo = ConfigItem(
+        "General", "AIExperimentInfo", {},
+        serializer=JsonDictSerializer(),
+    )
+    # 按模块记住的预置系统提示词覆盖 {模块名: 提示词文本}，
+    # 由 AI 设置窗口编辑（内容与内置相同即视为未覆盖，读取时回退内置）
+    aiModulePrompts = ConfigItem(
+        "General", "AIModulePrompts", {},
+        serializer=JsonDictSerializer(),
     )
 
 
@@ -586,6 +635,13 @@ class ChartPanel(QWidget):
         self._outlier_label = None    # 已移除点数计数
         self._outlier_masks = None    # 每子图掩码列表（None=未启用剔除）
         self._outlier_stack = []      # 撤销栈：每项为上一步的多子图掩码列表
+        # AI 分析实验：右上角浮动按钮 + 模块数据提供回调
+        self._ai_data_provider = None   # callable() -> dict 或 None（模块注册）
+        self._ai_btn = PushButton("AI分析实验", self)
+        self._ai_btn.setFixedSize(116, 30)
+        self._ai_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._ai_btn.setToolTip("把当前实验数据发送给 AI 分析（需配置 API 端点与 Key）")
+        self._ai_btn.clicked.connect(self._on_ai_clicked)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay = lay
@@ -1167,6 +1223,59 @@ class ChartPanel(QWidget):
         else:
             self.figure.clear()
             self._widget.draw()
+
+    # ---------------- AI 分析实验 ----------------
+    def set_ai_data_provider(self, provider):
+        """注册实验数据回调（模块在 __init__ 调用）。
+
+        provider() 返回 dict 或 None：
+            {'title', 'x_label', 'y_label',
+             'points': [(x, y), ...], 'extra': str(可选)}
+        无数据时返回 None（按钮点击会提示先采集）。
+        """
+        self._ai_data_provider = provider
+
+    def _on_ai_clicked(self):
+        """「AI分析实验」：无数据时提示，有数据则先采集实验信息再打开 AI 窗口。
+
+        进入对话前弹出 AIExperimentInfoDialog 可填写实验名称、实验目的、
+        条件与备注（均为选填，留空可直接开始）；信息按模块记住并注入
+        system 提示词，AI 结合实验背景作答。对话窗口持有数据回调（而非
+        一次性快照）——每轮提问都实时取最新数据与参数，持续采集时 AI
+        看到的始终是最新状态。
+        """
+        payload = None
+        if self._ai_data_provider is not None:
+            try:
+                payload = self._ai_data_provider()
+            except Exception as e:
+                print(f"⚠️ AI 数据回调异常: {e}")
+        if not payload or not payload.get('points'):
+            fluent_message_box(
+                self, "AI 分析实验",
+                "当前没有可分析的数据。\n请先「开始采集」积累数据后再试。")
+            return
+        module_title = str(payload.get('title') or '实验')
+        info_dlg = AIExperimentInfoDialog(
+            module_title, initial=load_experiment_info(module_title),
+            parent=self)
+        if not info_dlg.exec():
+            info_dlg.deleteLater()
+            return
+        experiment_info = info_dlg.get_info()
+        info_dlg.deleteLater()
+        save_experiment_info(module_title, experiment_info)
+        dlg = AIChatDialog(
+            self._ai_data_provider, experiment_info=experiment_info, parent=self)
+        dlg.exec()
+        dlg.deleteLater()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if getattr(self, '_ai_btn', None) is not None:
+            # 浮动按钮钉在图表右上角（不占布局，主题由 Fluent 组件自动适配）
+            self._ai_btn.move(self.width() - self._ai_btn.width() - 12, 12)
+            self._ai_btn.raise_()
 
     # ------------ 视图窗口控制 + 曲线拟合 + 离群点剔除（仅 pyqtgraph） ------------
     def get_analysis_panel(self):
@@ -1776,8 +1885,670 @@ class ChartPanel(QWidget):
 
 
 # ============================================================
+# AI 分析实验（OpenAI 兼容端点；图表卡「AI分析实验」按钮）
+# ============================================================
+# 通用分析规范（每次请求都带上；模块预置提示词 / 用户补充叠加其后）
+_AI_BASE_PROMPT = (
+    "你是严谨的物理/化学实验数据分析助手，正在与应用内的实验采集模块对话。"
+    "用户是实验操作者，会就当前实验数据提问，也可能要求统计、拟合、误差分析"
+    "或实验改进建议。实验数据与配置参数由系统自动附带在系统消息中，请基于"
+    "这些真实数据回答，不要编造数据中没有的信息；数据不足时明确说明还缺什么。"
+    "回答用中文，简洁准确；涉及计算时给出关键步骤和结果。"
+)
+
+
+def _ai_fmt_num(v):
+    """数值紧凑格式化；非数值（None/字符串等异常数据）原样输出防崩溃。"""
+    try:
+        return f"{float(v):.4g}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _format_ai_data(context, limit=5000):
+    """把实验数据整理为文本表；超过 limit 行时均匀抽样保持趋势。"""
+    pts = context.get('points') or []
+    n = len(pts)
+    limit = max(100, int(limit or 5000))
+    step = max(1, (n + limit - 1) // limit)
+    rows = pts[::step]
+    lines = [
+        f"实验: {context.get('title', '')}",
+        f"数据列: {context.get('x_label', 'X')}, {context.get('y_label', 'Y')}",
+        f"数据点总数: {n}（均匀抽样至 {len(rows)} 行）",
+        "数据:",
+    ]
+    for x, y in rows:
+        lines.append(f"{_ai_fmt_num(x)}, {_ai_fmt_num(y)}")
+    extra = context.get('extra')
+    if extra:
+        lines.append("补充说明: " + str(extra))
+    return "\n".join(lines)
+
+
+def load_experiment_info(module_title):
+    """读取某模块上次填写的实验信息（实验名称/目的/条件备注）。
+
+    由 ChartPanel 进入 AI 分析时调用，预填 AIExperimentInfoDialog；
+    从未填写过返回空 dict（不报错）。
+    """
+    try:
+        store = app_cfg.aiExperimentInfo.value or {}
+        info = store.get(module_title) if isinstance(store, dict) else None
+        return dict(info) if isinstance(info, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_experiment_info(module_title, info):
+    """按模块记住实验信息（写入 app_config.json，下次实验自动带回）。"""
+    try:
+        store = dict(app_cfg.aiExperimentInfo.value or {})
+        store[module_title] = dict(info or {})
+        qconfig.set(app_cfg.aiExperimentInfo, store)
+    except Exception as e:
+        print(f"⚠️ 保存实验信息失败: {e}")
+
+
+def module_default_prompt(context):
+    """返回模块内置（出厂）系统提示词：优先新键 system_prompt，兼容旧键 prompt。"""
+    if not context:
+        return ''
+    return str(context.get('system_prompt') or context.get('prompt') or '')
+
+
+def get_module_prompt(module_title, default):
+    """返回模块当前生效的系统提示词。
+
+    用户覆盖（AIModulePrompts，含显式清空为空串）优先；未覆盖回退内置。
+    """
+    try:
+        overrides = app_cfg.aiModulePrompts.value
+        if isinstance(overrides, dict) and module_title in overrides:
+            return str(overrides.get(module_title) or '')
+    except Exception:
+        pass
+    return default
+
+
+def set_module_prompt(module_title, text, default):
+    """保存模块系统提示词覆盖；与内置相同则清除覆盖（回退内置）。
+
+    text 为空串表示用户显式清空预置提示词（保留空覆盖，不回退内置）。
+    """
+    try:
+        store = dict(app_cfg.aiModulePrompts.value or {})
+        if text == default:
+            store.pop(module_title, None)
+        else:
+            store[module_title] = text
+        qconfig.set(app_cfg.aiModulePrompts, store)
+    except Exception as e:
+        print(f"⚠️ 保存模块提示词失败: {e}")
+
+
+def build_ai_system_prompt(context, experiment_info=None):
+    """组装 system 消息。
+
+    分层顺序（越靠后越具体）：
+    通用规范 → 模块专属系统提示词（可被用户覆盖）→ 本次实验信息（名称/目的/备注）
+    → 用户补充要求 → 实验配置参数 → 实验数据。
+    """
+    parts = [_AI_BASE_PROMPT]
+    if context:
+        module_prompt = get_module_prompt(
+            str(context.get('title') or ''), module_default_prompt(context))
+        if module_prompt:
+            parts.append("【模块专属系统提示词】\n" + module_prompt)
+    info = experiment_info or {}
+    info_lines = []
+    if str(info.get('name') or '').strip():
+        info_lines.append("实验名称：" + str(info['name']).strip())
+    if str(info.get('purpose') or '').strip():
+        info_lines.append("实验目的：" + str(info['purpose']).strip())
+    if str(info.get('notes') or '').strip():
+        info_lines.append("实验条件与备注：" + str(info['notes']).strip())
+    if info_lines:
+        parts.append("【本次实验信息】\n" + "\n".join(info_lines))
+    if context:
+        user_prompt = (app_cfg.aiUserPrompt.value or "").strip()
+        if user_prompt:
+            parts.append("【用户补充要求】\n" + user_prompt)
+        if context.get('params'):
+            parts.append("【实验配置参数】\n" + str(context['params']))
+        parts.append("【实验数据】\n" + _format_ai_data(
+            context, app_cfg.aiDataLimit.value))
+    return "\n\n".join(parts)
+
+
+class AIRequestThread(QThread):
+    """把对话消息发送到 OpenAI 兼容端点（后台线程，不阻塞 UI）。"""
+
+    finished_ok = Signal(str)   # AI 回复正文
+    finished_err = Signal(str)  # 错误描述
+
+    def __init__(self, endpoint, api_key, model, messages,
+                 temperature=0.3, max_tokens=0):
+        super().__init__()
+        self.endpoint = endpoint
+        self.api_key = api_key
+        self.model = model
+        self.messages = messages
+        self.temperature = float(temperature)
+        self.max_tokens = int(max_tokens)
+
+    def run(self):
+        try:
+            import json
+            import urllib.request
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            body = {
+                "model": self.model or "deepseek-v4-flash",
+                "messages": self.messages,
+                "temperature": self.temperature,
+            }
+            if self.max_tokens > 0:
+                body["max_tokens"] = self.max_tokens
+            req = urllib.request.Request(
+                self.endpoint,
+                data=json.dumps(body).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            try:
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                # 非标准响应结构：原样返回 JSON 便于排查
+                content = json.dumps(data, ensure_ascii=False, indent=2)
+            self.finished_ok.emit(content)
+        except Exception as e:
+            self.finished_err.emit(str(e))
+
+
+class AIExperimentInfoDialog(Dialog):
+    """进入 AI 分析前的实验信息采集框（全部选填）。
+
+    由 ChartPanel「AI分析实验」按钮弹出，可填写：
+    - 实验名称
+    - 实验目的
+    - 实验条件与备注
+    三个字段均为选填，留空可直接「开始分析」；信息按模块名记住
+    （app_config.json），下次进入自动预填，填写后以【本次实验信息】
+    注入 system 提示词，AI 结合背景作答。
+    """
+
+    def __init__(self, module_title, initial=None, parent=None):
+        super().__init__(
+            "实验信息",
+            f"可填写本次实验的基本信息（选填），AI 将结合这些信息分析「{module_title}」的数据",
+            parent)
+        self.setFixedWidth(540)
+        # 紧凑布局：减小默认行距与内边距
+        self.textLayout.setSpacing(4)
+        self.textLayout.setContentsMargins(16, 12, 16, 8)
+        self.buttonGroup.setFixedHeight(64)
+        self.buttonLayout.setContentsMargins(16, 8, 16, 8)
+        info = initial or {}
+
+        self.name_edit = LineEdit(self)
+        self.name_edit.setPlaceholderText(
+            f"实验名称（选填），如：{module_title}探究实验")
+        self.name_edit.setText(str(info.get('name') or ''))
+        self.name_edit.setClearButtonEnabled(True)
+
+        self.purpose_edit = TextEdit(self)
+        self.purpose_edit.setPlaceholderText(
+            "实验目的（选填），如：探究质量与重力的关系")
+        self.purpose_edit.setPlainText(str(info.get('purpose') or ''))
+        self.purpose_edit.setMinimumHeight(56)
+
+        self.notes_edit = TextEdit(self)
+        self.notes_edit.setPlaceholderText(
+            "实验条件与备注（选填），如：室温 25℃、使用 100g 标准砝码、采样 60 秒")
+        self.notes_edit.setPlainText(str(info.get('notes') or ''))
+        self.notes_edit.setMinimumHeight(56)
+
+        self.textLayout.addWidget(BodyLabel("实验名称"))
+        self.textLayout.addWidget(self.name_edit)
+        self.textLayout.addWidget(BodyLabel("实验目的"))
+        self.textLayout.addWidget(self.purpose_edit)
+        self.textLayout.addWidget(BodyLabel("实验条件与备注"))
+        self.textLayout.addWidget(self.notes_edit)
+
+        self.yesButton.setText("开始分析")
+        self.cancelButton.setText("取消")
+
+    def get_info(self):
+        """返回实验信息 dict（用于 system 提示词与按模块持久化）。"""
+        return {
+            'name': self.name_edit.text().strip(),
+            'purpose': self.purpose_edit.toPlainText().strip(),
+            'notes': self.notes_edit.toPlainText().strip(),
+        }
+
+
+class AISettingsDialog(Dialog):
+    """AI 参数设置：端点 / Key / 模型 / 温度 / 最大输出 / 模块预置提示词 / 用户提示词 / 数据上限。
+
+    context（模块数据上下文）用于显示并编辑该模块的预置系统提示词：
+    修改后按模块保存（app_config.json 的 General.AIModulePrompts），
+    「恢复默认」还原模块内置内容；未提供 context 时该区域禁用。
+    """
+
+    def __init__(self, parent=None, context=None):
+        super().__init__("AI 设置", "", parent)
+        self.setFixedWidth(560)
+        # 紧凑布局：默认行距 12px / 内边距 24px 过松，整体压缩
+        self.textLayout.setSpacing(4)
+        self.textLayout.setContentsMargins(16, 12, 16, 8)
+        self.buttonGroup.setFixedHeight(64)
+        self.buttonLayout.setContentsMargins(16, 8, 16, 8)
+        self._context = context or {}
+        self._module_title = str(self._context.get('title') or '')
+        self._default_module_prompt = module_default_prompt(self._context)
+        has_module_prompt = bool(self._default_module_prompt)
+
+        self.endpoint_edit = LineEdit(self)
+        self.endpoint_edit.setText(app_cfg.aiEndpoint.value)
+        self.endpoint_edit.setPlaceholderText(
+            "OpenAI 兼容端点，如 https://api.deepseek.com/v1/chat/completions")
+        self.endpoint_edit.setToolTip(
+            "任意 OpenAI 兼容 /chat/completions 端点（含本地 Ollama 等）")
+
+        self.key_edit = LineEdit(self)
+        self.key_edit.setText(app_cfg.aiApiKey.value)
+        self.key_edit.setEchoMode(LineEdit.EchoMode.Password)
+        self.key_edit.setPlaceholderText("API Key（本地端点可留空）")
+
+        self.model_edit = LineEdit(self)
+        self.model_edit.setText(app_cfg.aiModel.value)
+        self.model_edit.setPlaceholderText("模型名，如 deepseek-v4-flash / qwen2.5")
+
+        self.temp_spin = DoubleSpinBox(self)
+        self.temp_spin.setRange(0.0, 2.0)
+        self.temp_spin.setDecimals(2)
+        self.temp_spin.setSingleStep(0.1)
+        self.temp_spin.setValue(float(app_cfg.aiTemperature.value))
+
+        self.maxtok_spin = SpinBox(self)
+        self.maxtok_spin.setRange(0, 200000)
+        self.maxtok_spin.setSingleStep(256)
+        self.maxtok_spin.setValue(int(app_cfg.aiMaxTokens.value))
+        self.maxtok_spin.setToolTip("单次回复的最大 token 数，0 = 不限制")
+
+        self.limit_spin = SpinBox(self)
+        self.limit_spin.setRange(100, 200000)
+        self.limit_spin.setSingleStep(500)
+        self.limit_spin.setValue(int(app_cfg.aiDataLimit.value))
+        self.limit_spin.setToolTip("每轮附带的数据行数上限（超出均匀抽样）")
+
+        # 模块预置系统提示词：可编辑并保存（仅影响当前模块），恢复默认还原内置内容
+        self.module_prompt_edit = TextEdit(self)
+        self.module_prompt_edit.setPlainText(
+            get_module_prompt(self._module_title, self._default_module_prompt))
+        self.module_prompt_edit.setPlaceholderText(
+            "当前模块未提供预置提示词（未获取到模块上下文时禁用）")
+        self.module_prompt_edit.setMinimumHeight(84)
+        self.module_prompt_edit.setEnabled(has_module_prompt)
+
+        self.reset_module_prompt_btn = PushButton("恢复默认", self)
+        self.reset_module_prompt_btn.setFixedHeight(30)
+        self.reset_module_prompt_btn.setEnabled(has_module_prompt)
+        self.reset_module_prompt_btn.setToolTip("还原为模块内置的分析提示词")
+        self.reset_module_prompt_btn.clicked.connect(self._on_reset_module_prompt)
+
+        module_hint = CaptionLabel(
+            "可修改并保存，仅对当前模块生效；与内置相同时自动回退内置")
+        module_row = QHBoxLayout()
+        module_row.setSpacing(8)
+        module_row.addWidget(module_hint, 1)
+        module_row.addWidget(self.reset_module_prompt_btn)
+        module_row_w = QWidget(self)
+        module_row_w.setLayout(module_row)
+
+        self.user_prompt_edit = TextEdit(self)
+        self.user_prompt_edit.setPlainText(app_cfg.aiUserPrompt.value or "")
+        self.user_prompt_edit.setPlaceholderText(
+            "自定义系统提示词（可选，所有模块生效），叠加在模块预置提示词之后")
+        self.user_prompt_edit.setMinimumHeight(52)
+
+        self.textLayout.addWidget(BodyLabel("API 端点"))
+        self.textLayout.addWidget(self.endpoint_edit)
+        self.textLayout.addWidget(BodyLabel("API Key"))
+        self.textLayout.addWidget(self.key_edit)
+        self.textLayout.addWidget(BodyLabel("模型"))
+        self.textLayout.addWidget(self.model_edit)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(BodyLabel("温度"))
+        row.addWidget(self.temp_spin)
+        row.addSpacing(12)
+        row.addWidget(BodyLabel("最大输出 token"))
+        row.addWidget(self.maxtok_spin)
+        row.addSpacing(12)
+        row.addWidget(BodyLabel("数据行上限"))
+        row.addWidget(self.limit_spin)
+        row.addStretch(1)
+        row_w = QWidget(self)
+        row_w.setLayout(row)
+        self.textLayout.addWidget(row_w)
+
+        self.textLayout.addWidget(BodyLabel("模块预置系统提示词"))
+        self.textLayout.addWidget(self.module_prompt_edit)
+        self.textLayout.addWidget(module_row_w)
+        self.textLayout.addWidget(BodyLabel("自定义系统提示词（用户补充）"))
+        self.textLayout.addWidget(self.user_prompt_edit)
+
+        self.yesButton.setText("保存")
+        self.cancelButton.setText("取消")
+        try:
+            self.yesButton.clicked.disconnect()
+        except Exception:
+            pass
+        self.yesButton.clicked.connect(self._on_save)
+
+    def _on_reset_module_prompt(self):
+        """恢复默认：编辑框还原为模块内置提示词（保存后清除覆盖）。"""
+        self.module_prompt_edit.setPlainText(self._default_module_prompt)
+
+    def _on_save(self):
+        try:
+            qconfig.set(app_cfg.aiEndpoint, self.endpoint_edit.text().strip())
+            qconfig.set(app_cfg.aiApiKey, self.key_edit.text().strip())
+            qconfig.set(app_cfg.aiModel, self.model_edit.text().strip())
+            qconfig.set(app_cfg.aiTemperature, float(self.temp_spin.value()))
+            qconfig.set(app_cfg.aiMaxTokens, int(self.maxtok_spin.value()))
+            qconfig.set(app_cfg.aiDataLimit, int(self.limit_spin.value()))
+            qconfig.set(app_cfg.aiUserPrompt,
+                        self.user_prompt_edit.toPlainText())
+            if self._module_title and self._default_module_prompt:
+                set_module_prompt(
+                    self._module_title,
+                    self.module_prompt_edit.toPlainText().strip(),
+                    self._default_module_prompt)
+        except Exception as e:
+            print(f"⚠️ 保存 AI 配置失败: {e}")
+        self.accept()
+
+
+class AIChatDialog(Dialog):
+    """对话式 AI 分析窗口。
+
+    - 进入前由 AIExperimentInfoDialog 采集实验信息（名称/目的/备注），
+      窗口内「实验信息」按钮可随时修改，每轮发送注入最新信息；
+    - 每轮发送时实时调用 context_provider() 取最新数据/参数，组装 system
+      消息（通用规范 + 模块专属提示词 + 本次实验信息 + 用户补充 + 参数 +
+      数据），再附上完整对话历史；数据持续采集时无需手动刷新即是最新值；
+    - 右上角「设置」打开 AISettingsDialog（模型参数 / 系统提示词）；
+    - 请求在后台线程执行，发送中禁用输入；关闭窗口线程自动收尾不崩溃。
+    """
+
+    def __init__(self, context_provider, experiment_info=None, parent=None):
+        super().__init__("AI 分析实验", "", parent)
+        self._provider = context_provider   # callable() -> context dict / None
+        self._experiment_info = dict(experiment_info or {})  # 实验名称/目的/备注
+        self._messages = []                 # 对话历史（不含 system）
+        self._thread = None
+        self.setFixedWidth(680)
+        self.setMinimumHeight(520)
+
+        # ---- 顶部工具行：数据摘要 + 实验信息 / 同步 / 清空 / 设置 ----
+        self.summary_label = CaptionLabel("")
+        self.info_btn = PushButton("实验信息", self)
+        self.info_btn.setFixedHeight(30)
+        self.info_btn.setToolTip("查看/修改实验名称、目的与备注（每轮分析生效）")
+        self.info_btn.clicked.connect(self._on_edit_info)
+        self.sync_btn = PushButton("同步数据", self)
+        self.sync_btn.setFixedHeight(30)
+        self.sync_btn.clicked.connect(self._on_sync)
+        self.clear_btn = PushButton("清空对话", self)
+        self.clear_btn.setFixedHeight(30)
+        self.clear_btn.clicked.connect(self._on_clear)
+        self.settings_btn = ToolButton(FluentIcon.SETTING, self)
+        self.settings_btn.setFixedSize(30, 30)
+        self.settings_btn.setToolTip("AI 设置（模型参数 / 系统提示词）")
+        self.settings_btn.clicked.connect(self._on_settings)
+
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(self.summary_label, 1)
+        top.addWidget(self.info_btn)
+        top.addWidget(self.sync_btn)
+        top.addWidget(self.clear_btn)
+        top.addWidget(self.settings_btn)
+        top_w = QWidget(self)
+        top_w.setLayout(top)
+        self.textLayout.addWidget(top_w)
+
+        # ---- 对话区（滚动的左右气泡） ----
+        self.chat_scroll = QScrollArea(self)
+        self.chat_scroll.setWidgetResizable(True)
+        self.chat_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.chat_scroll.setMinimumHeight(320)
+        self.chat_body = QWidget()
+        self.chat_layout = QVBoxLayout(self.chat_body)
+        self.chat_layout.setContentsMargins(4, 4, 4, 4)
+        self.chat_layout.setSpacing(8)
+        self.chat_layout.addStretch(1)
+        self.chat_scroll.setWidget(self.chat_body)
+        self.textLayout.addWidget(self.chat_scroll, 1)
+
+        # ---- 输入区（Enter 发送，Shift+Enter 换行） ----
+        self.input_edit = TextEdit(self)
+        self.input_edit.setPlaceholderText(
+            "输入问题，Enter 发送（Shift+Enter 换行）…")
+        self.input_edit.setFixedHeight(64)
+        self.input_edit.installEventFilter(self)
+        self.send_btn = PrimaryPushButton("发送", self)
+        self.send_btn.setFixedSize(80, 64)
+        self.send_btn.clicked.connect(self._on_send)
+
+        bottom = QHBoxLayout()
+        bottom.setSpacing(8)
+        bottom.addWidget(self.input_edit, 1)
+        bottom.addWidget(self.send_btn)
+        bottom_w = QWidget(self)
+        bottom_w.setLayout(bottom)
+        self.textLayout.addWidget(bottom_w)
+
+        self.yesButton.hide()
+        self.cancelButton.setText("关闭")
+
+        self._refresh_summary()
+        name = self._experiment_info.get('name')
+        if name:
+            self._add_bubble(
+                f"已记录实验「{name}」，当前实验数据和参数已带上。"
+                "可以直接提问，比如：总结数据趋势、判断异常点、推荐拟合函数、"
+                "分析误差来源与改进方法。",
+                False)
+        else:
+            self._add_bubble(
+                "你好，我已经带上当前实验的数据和参数。可以直接提问，"
+                "比如：帮我总结数据趋势、这段数据有没有异常、适合用什么函数拟合。",
+                False)
+
+    # ---------------- 上下文 ----------------
+    def _get_context(self):
+        if self._provider is None:
+            return None
+        try:
+            return self._provider()
+        except Exception as e:
+            print(f"⚠️ AI 数据回调异常: {e}")
+            return None
+
+    def _refresh_summary(self):
+        ctx = self._get_context()
+        if not ctx or not ctx.get('points'):
+            self.summary_label.setText("当前没有可用的实验数据")
+            return
+        n = len(ctx.get('points') or [])
+        name = str(self._experiment_info.get('name') or '').strip()
+        prefix = f"{name} · " if name else ""
+        self.summary_label.setText(
+            f"{prefix}{ctx.get('title', '实验')}：{n} 个数据点"
+            f"（{ctx.get('x_label', 'X')} / {ctx.get('y_label', 'Y')}）")
+
+    # ---------------- 气泡 ----------------
+    def _add_bubble(self, text, is_user):
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setMaximumWidth(560)
+        c = _theme_colors()
+        if is_user:
+            label.setStyleSheet(
+                f"background-color: {c['accent']}; color: #ffffff;"
+                " border-radius: 8px; padding: 8px 12px;")
+        else:
+            label.setStyleSheet(
+                f"background-color: {c['hover_bg']};"
+                f" color: {c['text_primary']};"
+                " border-radius: 8px; padding: 8px 12px;")
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        if is_user:
+            row.addStretch(1)
+            row.addWidget(label)
+        else:
+            row.addWidget(label)
+            row.addStretch(1)
+        row_w = QWidget(self.chat_body)
+        row_w.setLayout(row)
+        self.chat_layout.insertWidget(self.chat_layout.count() - 1, row_w)
+        self._scroll_to_bottom()
+
+    def _scroll_to_bottom(self):
+        vsb = self.chat_scroll.verticalScrollBar()
+        QTimer.singleShot(0, lambda: vsb.setValue(vsb.maximum()))
+
+    # ---------------- 交互 ----------------
+    def eventFilter(self, obj, event):
+        if obj is self.input_edit and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                    self._on_send()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _on_settings(self):
+        dlg = AISettingsDialog(self, context=self._get_context())
+        dlg.exec()
+        dlg.deleteLater()
+        self._refresh_summary()
+
+    def _on_sync(self):
+        ctx = self._get_context()
+        if ctx and ctx.get('points'):
+            self._refresh_summary()
+            self._add_bubble(
+                f"已同步最新数据（{len(ctx['points'])} 个数据点），"
+                "之后提问会基于最新数据。", False)
+        else:
+            self._add_bubble("当前没有可用的实验数据。", False)
+
+    def _on_edit_info(self):
+        """查看/修改实验信息：确认后按模块保存，之后的每轮分析生效。"""
+        ctx = self._get_context() or {}
+        module_title = str(ctx.get('title') or '实验')
+        dlg = AIExperimentInfoDialog(
+            module_title, initial=self._experiment_info, parent=self)
+        if not dlg.exec():
+            dlg.deleteLater()
+            return
+        self._experiment_info = dlg.get_info()
+        dlg.deleteLater()
+        save_experiment_info(module_title, self._experiment_info)
+        self._refresh_summary()
+        self._add_bubble(
+            f"已更新实验信息：{self._experiment_info.get('name', '')}。"
+            "之后的提问将基于新的实验信息。", False)
+
+    def _on_clear(self):
+        self._messages = []
+        while self.chat_layout.count() > 1:
+            item = self.chat_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._refresh_summary()
+
+    def _set_busy(self, busy):
+        self.send_btn.setEnabled(not busy)
+        self.send_btn.setText("分析中…" if busy else "发送")
+        self.settings_btn.setEnabled(not busy)
+
+    def _on_send(self):
+        if self._thread is not None and self._thread.isRunning():
+            return
+        text = self.input_edit.toPlainText().strip()
+        if not text:
+            return
+        endpoint = (app_cfg.aiEndpoint.value or "").strip()
+        if not endpoint:
+            self._add_bubble("请先点右上角「设置」填写 API 端点。", False)
+            return
+        ctx = self._get_context()
+        if not ctx or not ctx.get('points'):
+            self._add_bubble("当前没有可用的实验数据，请先采集一些数据。", False)
+            return
+
+        self.input_edit.clear()
+        self._add_bubble(text, True)
+        self._messages.append({'role': 'user', 'content': text})
+        self._refresh_summary()
+        self._set_busy(True)
+
+        msgs = ([{'role': 'system',
+                  'content': build_ai_system_prompt(ctx, self._experiment_info)}]
+                + self._messages)
+        # 线程不挂 parent：发送中关闭窗口时线程继续运行，完成后自毁
+        # （挂 parent 会随对话框析构触发「QThread destroyed while running」
+        #  的 Qt fail-fast 崩溃 0xC0000409）
+        self._thread = AIRequestThread(
+            endpoint,
+            (app_cfg.aiApiKey.value or "").strip(),
+            (app_cfg.aiModel.value or "").strip(),
+            msgs,
+            temperature=app_cfg.aiTemperature.value,
+            max_tokens=app_cfg.aiMaxTokens.value,
+        )
+        self._thread.finished_ok.connect(self._on_done_ok)
+        self._thread.finished_err.connect(self._on_done_err)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.start()
+
+    def _on_done_ok(self, content):
+        self._messages.append({'role': 'assistant', 'content': content})
+        self._add_bubble(content, False)
+        self._set_busy(False)
+        self._thread = None
+
+    def _on_done_err(self, err_text):
+        # 失败的一轮从历史里移除，避免污染后续上下文
+        if self._messages and self._messages[-1]['role'] == 'user':
+            self._messages.pop()
+        self._add_bubble(f"请求失败：{err_text}", False)
+        self._set_busy(False)
+        self._thread = None
+
+
+# ============================================================
 # 串口通信线程
 # ============================================================
+#: 退出清理时未在限时内结束的线程（保活引用，避免正在运行的 QThread
+#: 被 Python 回收触发 Qt fail-fast 崩溃）
+_retired_threads = []
+
+
 class SerialThread(QThread):
     """串口通信线程"""
     data_received = Signal(str)
@@ -1787,16 +2558,25 @@ class SerialThread(QThread):
         self.port = port
         self.baudrate = baudrate
         self.serial = None
-        self.running = False
+        # 初始即为运行态：若 stop() 在 run() 开始前被调用（刚连接就退出），
+        # run() 不会再把 running 覆盖为 True 导致线程永不退出、wait() 卡死
+        self.running = True
 
     def run(self):
         # pyserial 未安装：不发 ERROR 文本（各模块按连接失败弹窗处理）
         if not SERIAL_AVAILABLE:
             print("⚠️ pyserial 未安装，串口连接不可用")
             return
+        if not self.running:      # start() 后被立即 stop()：直接退出
+            return
         try:
             self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
-            self.running = True
+            if not self.running:  # 打开串口期间被 stop()：关掉句柄立即退出
+                try:
+                    self.serial.close()
+                except Exception:
+                    pass
+                return
             self.serial.reset_input_buffer()
 
             while self.running:
@@ -1805,6 +2585,9 @@ class SerialThread(QThread):
                         line = self.serial.readline().decode('utf-8', errors='ignore').strip()
                         if line:
                             self.data_received.emit(line)
+                    else:
+                        # 空闲时让出 CPU/GIL，避免忙等拖慢 UI 线程
+                        time.sleep(0.01)
                 except Exception as e:
                     print(f"读取串口数据错误: {e}")
                     break
@@ -1821,6 +2604,27 @@ class SerialThread(QThread):
                 self.serial.close()
         except Exception:
             pass
+
+
+def stop_thread(thread, timeout=2000, name="通信线程"):
+    """请求线程停止并限时等待，退出清理专用。
+
+    正常线程 20ms 内结束；串口打开阻塞等极端情况下超时不阻塞退出，
+    并把线程引用收进 _retired_threads 保活（正在运行的 QThread 被
+    Python 回收会触发 Qt fail-fast 崩溃）。
+    """
+    if thread is None:
+        return
+    try:
+        thread.stop()
+    except Exception as e:
+        print(f"⚠️ 停止{name}失败: {e}")
+    try:
+        if not thread.wait(timeout):
+            print(f"⚠️ {name}未在 {timeout}ms 内退出，保留引用等待其自行收尾")
+            _retired_threads.append(thread)
+    except Exception as e:
+        print(f"⚠️ 等待{name}退出失败: {e}")
 
 
 def list_serial_ports():
@@ -1872,7 +2676,8 @@ class SimulatorThread(QThread):
         self.value_max = int(value_max)
         self.interval_ms = max(10, int(interval_ms))
         self.timestamp_scale = max(1, int(timestamp_scale))
-        self.running = False
+        # 初始即为运行态：stop() 若先于 run() 执行不会被覆盖，避免卡死
+        self.running = True
         span = self.value_max - self.value_min
         self._value = float(start_value) if start_value is not None else self.value_min + span / 2.0
         # 每步基准值最大漂移量（量程的 0.5%），使曲线缓慢游走
@@ -1881,7 +2686,8 @@ class SimulatorThread(QThread):
         self._noise_amp = max(1.0, span * 0.01)
 
     def run(self):
-        self.running = True
+        if not self.running:   # start() 后立即被 stop()：直接退出
+            return
         # 与真实固件一致：连接成功后先发 START
         self.data_received.emit("START")
         start_s = time.time()
@@ -1933,7 +2739,8 @@ class BLESerialThread(QThread):
         super().__init__()
         self.device_address = device_address
         self.device_name = device_name
-        self.running = False
+        # 初始即为运行态：stop() 若先于 run() 执行不会被覆盖，避免卡死
+        self.running = True
         self._buffer = ""
         self._client = None
 
@@ -1941,8 +2748,9 @@ class BLESerialThread(QThread):
         if not BLE_AVAILABLE:
             self.data_received.emit("ERROR:bleak 库未安装，请运行 pip install bleak")
             return
+        if not self.running:   # start() 后立即被 stop()：直接退出
+            return
 
-        self.running = True
         try:
             asyncio.run(self._ble_loop())
         except asyncio.CancelledError:
@@ -2884,8 +3692,10 @@ class FluentCard(ExpandGroupSettingCard):
     """
     ICON = None  # 子类可替换 header 图标（FluentIcon）
 
-    def __init__(self, title, content_widget=None, expanded=True, parent=None):
-        super().__init__(self.__class__.ICON or FluentIcon.FOLDER, title, None, parent)
+    def __init__(self, title, content_widget=None, expanded=True, parent=None,
+                 icon=None):
+        super().__init__(icon or self.__class__.ICON or FluentIcon.FOLDER,
+                         title, None, parent)
 
         # 内容容器：紧凑布局
         self.content = QWidget()
@@ -4184,7 +4994,7 @@ def update_collect_btn(btn, collecting):
             " padding: 0 14px 0 36px; }"
             f" QPushButton:hover {{ background-color: {hov}; }}"
             f" QPushButton:disabled {{ background-color: {bg};"
-            " color: #888888; }}"
+            " color: #888888; }"
         )
     else:
         # 未采集 → 开始：主题色底 + 白字（Primary 视觉）
@@ -4193,8 +5003,8 @@ def update_collect_btn(btn, collecting):
             " border: none; border-radius: 6px;"
             " padding: 0 14px 0 36px; }"
             f" QPushButton:hover {{ background-color: {c['accent_hover']}; }}"
-            " QPushButton:disabled {{ background-color: #888888;"
-            " color: #dddddd; }}"
+            " QPushButton:disabled { background-color: #888888;"
+            " color: #dddddd; }"
         )
     btn.setStyleSheet(qss)
 

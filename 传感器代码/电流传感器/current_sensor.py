@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -23,7 +23,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel, SpinBox, DoubleSpinBox,
+    BodyLabel, CaptionLabel, SpinBox, DoubleSpinBox, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -33,13 +33,28 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
-    SampleRateComboBox,
+    SampleRateComboBox, stop_thread,
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     BLE_AVAILABLE, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+)
+
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深物理实验指导教师与电学测量专家，正在协助分析 ACS712 霍尔电流"
+    "传感器（5A/20A/30A 量程）的实验数据。"
+    "测量原理：电流 =（传感器输出电压 − 零点电压）÷ 灵敏度；ACS712 各量程灵敏度"
+    "不同（约 185/100/66 mV/A），交流模式取滚动窗口 RMS。"
+    "数据特征：直流回路电流应平稳；交流电流呈周期性波动，RMS 应与有效值一致；"
+    "电机/开关类负载会出现尖峰与纹波。"
+    "常见误差来源：零点漂移与温漂、电源纹波、分压电阻误差、导线磁场干扰、量程"
+    "选择不当（小电流用大量程会降低分辨率）、未做零点校准。"
+    "分析要求：结合量程与零点校准状态判断读数可信度；直流分析趋势、噪声与功耗"
+    "变化，交流分析周期、峰值与 RMS；给出校准、滤波与抗干扰的改进建议。"
 )
 
 
@@ -303,7 +318,7 @@ class CurrentSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：ACS712 参数（可折叠） ==========
@@ -448,7 +463,7 @@ class CurrentSensorWidget(QWidget):
         ac_row.addStretch()
         acs_card_layout.addLayout(ac_row)
 
-        card_acs = FluentCard("ACS712 参数", card_acs_content, expanded=True)
+        card_acs = FluentCard("ACS712 参数", card_acs_content, expanded=True, icon=FIF.SETTING)
         layout.addWidget(card_acs)
 
         # ========== 卡片3：实时数据（可折叠） ==========
@@ -486,7 +501,7 @@ class CurrentSensorWidget(QWidget):
         self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
         layout.addWidget(card_data)
 
         # ========== 卡片4：图表 + 数据记录（可折叠） ==========
@@ -508,6 +523,7 @@ class CurrentSensorWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -574,7 +590,7 @@ class CurrentSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -865,12 +881,10 @@ class CurrentSensorWidget(QWidget):
 
     def disconnect_all(self):
         if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
+            stop_thread(self.serial_thread, name="电流串口线程")
             self.serial_thread = None
         if self.ble_thread:
-            self.ble_thread.stop()
-            self.ble_thread.wait()
+            stop_thread(self.ble_thread, name="电流BLE线程")
             self.ble_thread = None
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
@@ -1125,6 +1139,24 @@ class CurrentSensorWidget(QWidget):
         self.stats_label.setText("统计: 暂无数据")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.current_data:
+            return None
+        return {
+            'title': '电流传感器',
+            'x_label': '时间 (秒)',
+            'y_label': f'电流 ({self.current_unit})',
+            'points': list(zip(self.time_data, [self.to_current_unit(c) for c in self.current_data])),
+            'params': (
+                f"传感器=ACS712 {self.acs_range} 量程（灵敏度 {self.sensitivity:.3f} V/A）, "
+                f"VCC={self.vcc}V, 零点电压={self.v_quiescent:.4f}V, "
+                f"分压比={self.divider_ratio}, 模式={self.current_mode}, "
+                f"零点校准={'已校准' if self.zero_cal_active else '未校准'}, "
+                f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
+            'system_prompt': AI_SYSTEM_PROMPT,
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""

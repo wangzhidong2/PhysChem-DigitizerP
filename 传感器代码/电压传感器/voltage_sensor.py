@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -23,7 +23,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel, DoubleSpinBox, SwitchButton,
+    BodyLabel, CaptionLabel, DoubleSpinBox, SwitchButton, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -33,13 +33,28 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
-    SampleRateComboBox,
+    SampleRateComboBox, stop_thread,
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     BLE_AVAILABLE, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+)
+
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深物理实验指导教师与电子测量专家，正在协助分析电压采集实验数据"
+    "（ESP32 内置 ADC / HX711 24 位 / ADS1115 16 位，信号经分压电路接入）。"
+    "测量原理：被测电压 = ADC 换算电压 × 分压比 ÷ 放大倍数；ADC 的位数、PGA 增益、"
+    "参考电压与采样率共同决定分辨率、量程与噪声水平。"
+    "数据特征：稳定电源应呈平直曲线；电池等电源呈缓慢下降趋势；ADC 量化台阶与"
+    "随机噪声叠加在真实信号上，读数分辨能力受位数与量程限制。"
+    "常见误差来源：分压电阻精度与温漂、ADC 非线性与噪声、参考电压漂移、未共地或"
+    "接地环路、输入超量程、ADS1115 PGA 配置不当。"
+    "分析要求：结合分压比与 ADC 参数评估分辨率与量程是否匹配；区分真实趋势与"
+    "量化/噪声；给出硬件校准、软件滤波、更换更高精度 ADC 或调整 PGA 的具体建议。"
 )
 
 
@@ -321,7 +336,7 @@ class VoltageSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：ADC 与电路参数（可折叠） ==========
@@ -507,7 +522,7 @@ class VoltageSensorWidget(QWidget):
         tare_row.addStretch()
         adc_card_layout.addLayout(tare_row)
 
-        card_adc = FluentCard("ADC 与电路参数", card_adc_content, expanded=True)
+        card_adc = FluentCard("ADC 与电路参数", card_adc_content, expanded=True, icon=FIF.SETTING)
         layout.addWidget(card_adc)
 
         # ========== 卡片3：实时数据（可折叠） ==========
@@ -540,7 +555,7 @@ class VoltageSensorWidget(QWidget):
         self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
         layout.addWidget(card_data)
 
         # ========== 卡片4：图表 + 数据记录（可折叠） ==========
@@ -562,6 +577,7 @@ class VoltageSensorWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -628,7 +644,7 @@ class VoltageSensorWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -927,12 +943,10 @@ class VoltageSensorWidget(QWidget):
 
     def disconnect_all(self):
         if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
+            stop_thread(self.serial_thread, name="电压串口线程")
             self.serial_thread = None
         if self.ble_thread:
-            self.ble_thread.stop()
-            self.ble_thread.wait()
+            stop_thread(self.ble_thread, name="电压BLE线程")
             self.ble_thread = None
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
@@ -1116,6 +1130,24 @@ class VoltageSensorWidget(QWidget):
         self.stats_label.setText("统计信息: 暂无数据")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.voltage_data:
+            return None
+        return {
+            'title': '电压传感器',
+            'x_label': '时间 (秒)',
+            'y_label': f'电压 ({self.current_unit})',
+            'points': list(zip(self.time_data, [self.to_current_unit(v) for v in self.voltage_data])),
+            'params': (
+                f"采样方式={'ADS1115 16位' if self.adc_bits == 16 else ('HX711 24位' if self.adc_bits == 24 else f'ESP32 内置 ADC {self.adc_bits}位')}, "
+                f"分压比={self.divider_ratio}, 放大倍数={self.amp_ratio}, "
+                f"ADS1115 PGA={self.ads1115_pga}/通道={self.ads1115_channel}, "
+                f"HX711 AVDD={self.hx711_avdd}V/通道={self.hx711_channel}, "
+                f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
+            'system_prompt': AI_SYSTEM_PROMPT,
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""

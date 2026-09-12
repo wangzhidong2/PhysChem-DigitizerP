@@ -1,4 +1,4 @@
-# Copyright (c) 2026 wangzhidong2
+﻿# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel,
+    BodyLabel, CaptionLabel, FluentIcon as FIF,
 )
 import numpy as np
 
@@ -32,12 +32,29 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 from core import (
     fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, SimulatorThread,
+    stop_thread,
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style,
     modern_combo_style, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+)
+
+# AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
+# 由 core.build_ai_system_prompt 组装进 system 消息）
+AI_SYSTEM_PROMPT = (
+    "你是一位资深物理实验指导教师与运动学分析专家，正在协助分析 HC-SR04 超声波"
+    "测距/位移实验数据。"
+    "测量原理：距离 = 回波时间(µs) ÷ 58（cm）；声速约 340 m/s 且随温度变化"
+    "（每升高 1℃ 约 +0.6 m/s，对应约 0.17%/℃）。"
+    "数据特征：静止目标读数有 ±0.3 cm 级抖动；小于 2 cm 或大于 400 cm 会输出"
+    "无效值或突变；快速运动时可能丢波产生离群点。"
+    "常见误差来源：测量面倾斜或柔软、多径反射与遮挡、温度影响、量程边界、"
+    "测量周期与运动速度不匹配。"
+    "分析要求：先标注/剔除野值并说明判据，再分析位移趋势、速度与稳定性；结合"
+    "实验场景（如自由落体、匀速小车、振动）判断是否符合理想模型；给出实验改进"
+    "与误差修正建议（温度修正、多次平均、调整采样率等）。"
 )
 
 
@@ -165,7 +182,7 @@ class UltrasonicWidget(QWidget):
 
         conn_row.addStretch()
         card_layout.addLayout(conn_row)
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True)
+        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         layout.addWidget(card_conn)
 
         # ========== 卡片2：实时数据（可折叠） ==========
@@ -184,7 +201,7 @@ class UltrasonicWidget(QWidget):
         self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
 
-        card_data = FluentCard("实时数据", card_data_content, expanded=True)
+        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
         layout.addWidget(card_data)
 
         # ========== 卡片3：图表 + 数据记录（可折叠） ==========
@@ -206,6 +223,7 @@ class UltrasonicWidget(QWidget):
 
         # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
         self.chart = ChartPanel()
+        self.chart.set_ai_data_provider(self._ai_data)
         # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
         left_col.addWidget(self.chart.get_analysis_panel())
         content_row.addLayout(left_col, stretch=0)
@@ -261,7 +279,7 @@ class UltrasonicWidget(QWidget):
         actions_layout.addWidget(self.clear_btn)
 
         actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True)
+        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
         layout.addWidget(card_actions)
 
         layout.addStretch()
@@ -342,8 +360,7 @@ class UltrasonicWidget(QWidget):
     def disconnect_serial(self):
         """断开串口连接"""
         if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
+            stop_thread(self.serial_thread, name="超声波位移串口线程")
             self.serial_thread = None
 
         self.connect_btn.setText("连接")
@@ -523,6 +540,21 @@ class UltrasonicWidget(QWidget):
         self.current_data_label.setText("等待数据...")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
+
+    def _ai_data(self):
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
+        if not self.data_points:
+            return None
+        return {
+            'title': '超声波位移',
+            'x_label': '时间 (秒)',
+            'y_label': '距离 (厘米)',
+            'points': list(zip(self.timestamps, self.data_points)),
+            'params': (
+                f"传感器=HC-SR04 超声波, 距离换算=回波时间(µs)/58, "
+                f"采样间隔={self.sample_interval_ms}ms"),
+            'system_prompt': AI_SYSTEM_PROMPT,
+        }
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
