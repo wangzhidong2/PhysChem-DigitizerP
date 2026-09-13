@@ -82,9 +82,17 @@ default_calibration = [
 
 1. 烧录固件，按上文接线
 2. 运行 `main.py`，进入 pH 传感器模块
-3. 连接串口，开始采集
-4. 必要时先校准（见第 4 章）
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/7ffd67db-caee-4ab9-8378-493115b576e9/image.png 'image.png')
+3. 选择串口模式，连接串口，开始采集
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/f7adc178-cd21-425c-bb88-af598fc7530b/image.png 'image.png')
+4. 最好用标准缓冲溶液先校准（见第 4 章）
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/840c6be8-d679-4a29-8507-01ec5fb45502/image.png 'image.png')
+
 5. 观察实时 pH 值与曲线，数据可存为 CSV
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/a52f3f87-5d1b-40bd-a916-5ae6b96ba284/image.png 'image.png')
+6. 可以接入AI进行实验分析
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/395976cf-49b9-4dac-928b-7026784f8b8c/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/cf9b7081-a494-4a85-8f7f-48d91a3fa72f/image.png 'image.png')
 
 ## 6.电极保养
 
@@ -121,6 +129,6 @@ default_calibration = [
 | 波特率 | 115200 |
 
 
-## 图表分析（仅 pyqtgraph）
+## 图表分析（仅 pyqtgraph，matplotlib还没有来得及）
 
 图表卡左侧有个分析栏，能滚窗口、拟合曲线（线性/二次/三次/对数/幂函数，方程和 R² 直接标在图上）、剔除离群点（剔错了可以撤销，原始数据不动）。设置页能换图表引擎，换完曲线自动重画。详见[传感器代码总览](../README.md)。
