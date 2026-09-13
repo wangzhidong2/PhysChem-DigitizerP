@@ -1966,8 +1966,38 @@ def _apply_taskbar_identity(window):
         print(f"⚠️ 设置任务栏身份失败: {e}")
 
 
+def _install_qt_warning_filter():
+    """过滤两条已知无害的 Qt 内部告警，避免控制台刷屏（不影响功能）。
+
+    - QFont::setPointSize: Point size <= 0 ...：Qt 富文本/Markdown 文本引擎
+      在像素字号字体（qfluentwidgets 组件统一用像素字号）上换算点值时触发。
+    - QWidgetWindow(...) must be a top level window.：Qt 为窗口设置 transient
+      parent 时对 qfluentwidgets 掩码对话框（AI 分析/校准等）父窗口的内部
+      检查，对话框功能与显示不受影响。
+
+    仅屏蔽这两条文案；其余 Qt 消息原样交给安装前的处理器（无则写 stderr）。
+    """
+    from PySide6.QtCore import qInstallMessageHandler
+
+    suppressed = ("QFont::setPointSize: Point size <= 0",
+                  "must be a top level window")
+    state = {"prev": None}
+
+    def handler(msg_type, context, message):
+        if any(k in message for k in suppressed):
+            return
+        prev = state["prev"]
+        if prev is not None:
+            prev(msg_type, context, message)
+        else:
+            sys.stderr.write(message + "\n")
+
+    state["prev"] = qInstallMessageHandler(handler)
+
+
 def main():
     _set_windows_appusermodelid()
+    _install_qt_warning_filter()
     app = QApplication(sys.argv)
     # 应用图标（.ico 同时设在 app 和 window 上）
     icon_path = str(Path(__file__).parent / "docs" / "images" / "icon.ico")

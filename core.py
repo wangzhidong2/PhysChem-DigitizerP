@@ -1250,15 +1250,20 @@ class ChartPanel(QWidget):
                 payload = self._ai_data_provider()
             except Exception as e:
                 print(f"⚠️ AI 数据回调异常: {e}")
+        # 对话框 parent 用顶层窗口：qfluentwidgets 掩码对话框会以 parent 为
+        # 基准铺满遮罩；传 ChartPanel 这类子控件会导致窗口 transient parent
+        # 指向非顶层句柄（Qt 告警 “must be a top level window”）且遮罩尺寸
+        # 只覆盖图表区
+        host = self.window()
         if not payload or not payload.get('points'):
             fluent_message_box(
-                self, "AI 分析实验",
+                host, "AI 分析实验",
                 "当前没有可分析的数据。\n请先「开始采集」积累数据后再试。")
             return
         module_title = str(payload.get('title') or '实验')
         info_dlg = AIExperimentInfoDialog(
             module_title, initial=load_experiment_info(module_title),
-            parent=self)
+            parent=host)
         if not info_dlg.exec():
             info_dlg.deleteLater()
             return
@@ -1266,7 +1271,7 @@ class ChartPanel(QWidget):
         info_dlg.deleteLater()
         save_experiment_info(module_title, experiment_info)
         dlg = AIChatDialog(
-            self._ai_data_provider, experiment_info=experiment_info, parent=self)
+            self._ai_data_provider, experiment_info=experiment_info, parent=host)
         dlg.exec()
         dlg.deleteLater()
 
@@ -2400,8 +2405,15 @@ class AIChatDialog(Dialog):
     def _add_bubble(self, text, is_user):
         label = QLabel(text)
         label.setWordWrap(True)
+        # 富文本：AI 回复按 Markdown 渲染（Qt 内置 GitHub 方言，支持标题、
+        # 列表、粗体、代码块、表格、链接等）；用户输入保持纯文本，避免其
+        # 内容被当作标记解析。AI 输出不可信，链接只放行 http/https。
+        label.setTextFormat(
+            Qt.TextFormat.PlainText if is_user else Qt.TextFormat.MarkdownText)
         label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        label.linkActivated.connect(self._on_bubble_link)
         label.setMaximumWidth(560)
         c = _theme_colors()
         if is_user:
@@ -2425,6 +2437,18 @@ class AIChatDialog(Dialog):
         row_w.setLayout(row)
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, row_w)
         self._scroll_to_bottom()
+
+    @staticmethod
+    def _on_bubble_link(url):
+        """气泡内链接点击：仅放行 http/https，用系统默认浏览器打开。
+
+        AI 回复内容不可信，file:// 等本地协议一律忽略，避免误开本地文件。
+        """
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        u = QUrl(url)
+        if u.scheme().lower() in ("http", "https"):
+            QDesktopServices.openUrl(u)
 
     def _scroll_to_bottom(self):
         vsb = self.chat_scroll.verticalScrollBar()
