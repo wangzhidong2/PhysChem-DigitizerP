@@ -39,7 +39,10 @@ from core import (
     modern_combo_style, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+    get_logger,
 )
+
+log = get_logger("ultrasonic_displacement")
 
 # AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
 # 由 core.build_ai_system_prompt 组装进 system 消息）
@@ -330,6 +333,7 @@ class UltrasonicWidget(QWidget):
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
 
+            log.info("模拟器已连接")
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_data_label.setText("模拟器已连接，等待数据...")
@@ -352,6 +356,7 @@ class UltrasonicWidget(QWidget):
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
 
+            log.info("串口已连接: %s", port)
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_data_label.setText("已连接，等待数据...")
@@ -365,6 +370,7 @@ class UltrasonicWidget(QWidget):
             stop_thread(self.serial_thread, name="超声波位移串口线程")
             self.serial_thread = None
 
+        log.info("已断开连接")
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
         self.current_data_label.setText("已断开")
@@ -395,6 +401,7 @@ class UltrasonicWidget(QWidget):
         self.last_sample_time_ms = 0  # 重置采样时间
 
         self._collecting = True
+        log.info("开始采集")
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
 
@@ -405,6 +412,7 @@ class UltrasonicWidget(QWidget):
         self._collecting = False
         self._refresh_collect_btn()
         self.save_btn.setEnabled(len(self.data_points) > 0)
+        log.info("停止采集，共 %d 个数据点", len(self.data_points))
 
         self.current_data_label.setText("采集已停止")
 
@@ -412,6 +420,7 @@ class UltrasonicWidget(QWidget):
         """处理接收到的数据"""
         # 检查是否是错误信息
         if data.startswith("ERROR:"):
+            log.error("设备错误: %s", data[6:])
             fluent_message_box(self, "串口错误", data[6:])
             self.disconnect_serial()
             return
@@ -529,8 +538,10 @@ class UltrasonicWidget(QWidget):
                 for i, (timestamp, distance) in enumerate(zip(self.timestamps, self.data_points)):
                     f.write(f"{timestamp*1000:.0f},{distance:.3f}\n")
 
+            log.info("数据已保存到: %s（%d 点）", filename, len(self.data_points))
             fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
+            log.error("保存失败: %s", e)
             fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
@@ -540,6 +551,7 @@ class UltrasonicWidget(QWidget):
         self.data_text.clear()
         self.stats_label.setText("暂无数据")
         self.current_data_label.setText("等待数据...")
+        log.info("已清除数据")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
 

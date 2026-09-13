@@ -38,7 +38,10 @@ from core import (
     CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+    get_logger,
 )
+
+log = get_logger("ultrasonic_velocity")
 
 # AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
 # 由 core.build_ai_system_prompt 组装进 system 消息）
@@ -340,6 +343,7 @@ class UltrasonicVelocityWidget(QWidget):
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
 
+            log.info("模拟器已连接")
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_data_label.setText("当前数据: 模拟器已连接，等待数据...")
@@ -362,6 +366,7 @@ class UltrasonicVelocityWidget(QWidget):
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
 
+            log.info("串口已连接: %s", port)
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_data_label.setText("当前数据: 已连接，等待数据...")
@@ -375,6 +380,7 @@ class UltrasonicVelocityWidget(QWidget):
             stop_thread(self.serial_thread, name="超声波速度串口线程")
             self.serial_thread = None
 
+        log.info("已断开连接")
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
         self.current_data_label.setText("当前数据: 已断开")
@@ -406,6 +412,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.last_sample_time_ms = 0  # 重置采样时间
 
         self._collecting = True
+        log.info("开始采集")
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
 
@@ -416,6 +423,8 @@ class UltrasonicVelocityWidget(QWidget):
         self._collecting = False
         self._refresh_collect_btn()
         self.save_btn.setEnabled(len(self.distance_data) > 0)
+        log.info("停止采集，共 %d 个距离点 / %d 个速度点",
+                 len(self.distance_data), len(self.velocity_data))
 
         self.current_data_label.setText("当前数据: 采集已停止")
 
@@ -423,6 +432,7 @@ class UltrasonicVelocityWidget(QWidget):
         """处理接收到的数据 - 回声定位法计算速度"""
         # 检查是否是错误信息
         if data.startswith("ERROR:"):
+            log.error("设备错误: %s", data[6:])
             fluent_message_box(self, "串口错误", data[6:])
             self.disconnect_serial()
             return
@@ -539,7 +549,7 @@ class UltrasonicVelocityWidget(QWidget):
             return velocity_cm_s
 
         except Exception as e:
-            print(f"速度计算错误: {e}")
+            log.warning("速度计算错误: %s", e)
             return None
 
     def update_stats(self):
@@ -595,8 +605,10 @@ class UltrasonicVelocityWidget(QWidget):
                     velocity_str = f"{velocity:.3f}" if velocity is not None else ""
                     f.write(f"{time_val:.3f},{distance:.3f},{velocity_str}\n")
 
+            log.info("数据已保存到: %s（%d 点）", filename, len(self.distance_data))
             fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
+            log.error("保存失败: %s", e)
             fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
@@ -608,6 +620,7 @@ class UltrasonicVelocityWidget(QWidget):
         self.data_text.clear()
         self.velocity_stats_label.setText("速度统计: 暂无数据")
         self.current_data_label.setText("当前数据: 等待数据...")
+        log.info("已清除数据")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
 

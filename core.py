@@ -18,11 +18,13 @@ core.py — PhysChem-DigitizerP 公共模块
 """
 
 import os
+import sys
 import json
 import time
 import random
 import asyncio
 import bisect
+import logging
 import threading
 import importlib
 import importlib.util
@@ -40,15 +42,20 @@ from PySide6.QtGui import (
     QFontMetrics, QTextOption,
 )
 
-from qfluentwidgets import (
-    PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
-    SwitchButton, DoubleSpinBox, ToolButton, SpinBox,
-    LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
-    TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
-    isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
-    ConfigSerializer,
-    ExpandGroupSettingCard, FluentIcon, RadioButton, SettingCard,
-)
+# FluentWidgets — WinUI3 风格组件库（导入时它会向 stdout 打印一行 Pro 推广
+# 横幅；应用要求控制台默认完全静默，这里在导入期间临时重定向 stdout 吞掉）
+import io as _io
+import contextlib as _contextlib
+with _contextlib.redirect_stdout(_io.StringIO()):
+    from qfluentwidgets import (
+        PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
+        SwitchButton, DoubleSpinBox, ToolButton, SpinBox,
+        LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
+        TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
+        isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
+        ConfigSerializer,
+        ExpandGroupSettingCard, FluentIcon, RadioButton, SettingCard,
+    )
 
 # pyserial 为可选依赖：未安装时程序仍可运行（模拟器模式不受影响），
 # 串口连接相关功能优雅降级（列表为空 + 连接时弹提示装库）
@@ -59,8 +66,7 @@ try:
 except ImportError:
     serial = None
     SERIAL_AVAILABLE = False
-    # 启动控制台提示（用户指定文案）：未装库不致命，模拟器照常可用
-    print("未安装pyserial，何意味？你想不连接下位机吗（狗头）？")
+    # 提示延迟到日志系统就绪后输出（见下方 setup_logging 之后）
 
 # ============================================================
 # matplotlib 全局字体设置（图表引擎为 matplotlib 时才需要；
@@ -94,11 +100,7 @@ def _detect_chart_engine(name):
 #: 都不可用时 ChartPanel 显示「请安装图表引擎」占位，程序其余功能不受影响
 CHART_ENGINE_AVAILABLE = {name: _detect_chart_engine(name) for name in CHART_ENGINES}
 
-# 启动控制台提示（用户指定文案）：打印图表引擎安装状态
-for _engine in CHART_ENGINES:
-    print(f"图表引擎 {_engine}: {'✓ 已安装' if CHART_ENGINE_AVAILABLE[_engine] else '✗ 未安装'}")
-if not any(CHART_ENGINE_AVAILABLE.values()):
-    print("？？？你为什么不安装图表引擎？行，那你别想看实时图表了（狗头）")
+# 安装状态提示延迟到日志系统就绪后输出（见下方 setup_logging 之后）
 
 
 def chart_engine_available(engine):
@@ -135,6 +137,9 @@ _APP_CONFIG_DEFAULT = {
         "ConfigPersistenceEnabled": True,
         "ThemeColorMode": "custom",
         "PinnedModules": [],
+        "LogEnabled": True,
+        "LogLevel": "info",
+        "LogMaxEntries": 5000,
     },
     "QFluentWidgets": {
         "FontFamilies": ["Segoe UI", "Microsoft YaHei", "PingFang SC"],
@@ -203,6 +208,15 @@ class AppConfig(QConfig):
     # 传感器配置持久化开关：False 时不读取也不写入 sensor_config.json，
     # 所有更改仅本次会话有效（默认开启，保持原有行为）
     configPersistenceEnabled = ConfigItem("General", "ConfigPersistenceEnabled", True)
+    # 运行日志：默认开启；控制台始终输出，开启时同时写入项目根 logs.json
+    logEnabled = ConfigItem("General", "LogEnabled", True)
+    # 日志详细度：warning=简略（仅警告/错误）/ info=标准（应用事件）/ debug=详细
+    logLevel = OptionsConfigItem(
+        "General", "LogLevel", "info",
+        OptionsValidator(["warning", "info", "debug"]),
+    )
+    # logs.json 最大保留条数（超出后自动裁剪最旧记录）
+    logMaxEntries = ConfigItem("General", "LogMaxEntries", 5000)
     # 主题色模式：system=跟随系统强调色（Windows）/ custom=自定义（默认蓝色）
     themeColorMode = OptionsConfigItem(
         "General", "ThemeColorMode", "custom",
@@ -248,15 +262,246 @@ app_cfg = AppConfig()
 # 首次启动（app_config.json 不存在）：先写入默认配置再加载，
 # 保证默认主题色为蓝色（qfluentwidgets 库默认是青色 #009faa，不符合项目主题）
 _app_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_config.json')
+_created_default_app_config = False
 if not os.path.exists(_app_config_path):
     try:
         with open(_app_config_path, 'w', encoding='utf-8') as _f:
             json.dump(_APP_CONFIG_DEFAULT, _f, ensure_ascii=False, indent=4)
-        print(f"✓ 已生成默认应用配置：{_app_config_path}")
+        _created_default_app_config = True   # 提示延迟到日志系统就绪后输出
     except Exception as _e:
-        print(f"⚠️ 生成默认应用配置失败: {_e}")
+        _app_config_create_error = _e
+    else:
+        _app_config_create_error = None
+else:
+    _app_config_create_error = None
 
 qconfig.load(_app_config_path, app_cfg)
+
+
+# ============================================================
+# 运行日志（标准库 logging，零依赖，线程安全）
+#
+# 由设置页「运行日志」开关控制（默认开启，app_config.json 的 General.*）：
+# - LogEnabled   ：是否写入 logs.json；控制台始终输出（关闭时仅不落盘）
+# - LogLevel     ：warning / info / debug 三档详细度（开启后生效，默认 info）
+# - LogMaxEntries：logs.json 最大保留条数，超出后裁剪最旧记录
+# 日志文件为项目根目录 logs.json，JSON Lines 格式（每条一行 JSON 对象），
+# 跨会话追加、即写即刷；文件属于本机运行数据，已在 .gitignore 中忽略。
+# ============================================================
+LOG_FILENAME = 'logs.json'
+_LOG_LEVELS = {
+    'warning': logging.WARNING,
+    'info': logging.INFO,
+    'debug': logging.DEBUG,
+}
+
+#: 应用根 logger：所有代码统一使用 get_logger('模块名') 获取子 logger，
+#: 根 logger 默认只挂 NullHandler（避免无 handler 时触发 logging.lastResort
+#: 把 WARNING+ 打到 stderr，从而保证「关闭时完全静默」）
+_root_log = logging.getLogger('physchem')
+_root_log.addHandler(logging.NullHandler())
+_root_log.propagate = False
+
+_json_log_handler = None
+_console_log_handler = None
+_logging_active = False   # 已挂 handler 状态：避免 core/main 两次 setup 重复记录
+
+
+class _SourceFormatter(logging.Formatter):
+    """把 physchem.xxx 命名空间前缀裁掉，只显示模块名。"""
+
+    def format(self, record):
+        record.source = record.name.split('.', 1)[-1]
+        return super().format(record)
+
+
+class JsonLinesLogHandler(logging.Handler):
+    """把日志逐条追加到 logs.json（JSON Lines，UTF-8，立即 flush）。
+
+    跨会话追加；总行数超出上限（含 10% 余量）时重写文件、只保留最新
+    max_entries 条，避免每次写入都裁剪。文件写入加锁，串口/BLE 等
+    后台线程记录同样安全。
+    """
+
+    def __init__(self, path, max_entries=5000):
+        super().__init__()
+        self.path = path
+        self.max_entries = self._normalize_max_entries(max_entries)
+        self._lock = threading.Lock()
+        with self._lock:
+            self._count = self._count_lines() if os.path.exists(path) else 0
+
+    @staticmethod
+    def _normalize_max_entries(max_entries):
+        """配置文件被手工改坏时回退默认值，避免启动即异常。"""
+        try:
+            return max(100, int(max_entries))
+        except (TypeError, ValueError):
+            return 5000
+
+    def _count_lines(self):
+        try:
+            with open(self.path, 'r', encoding='utf-8') as f:
+                return sum(1 for _ in f)
+        except Exception:
+            return 0
+
+    def set_max_entries(self, max_entries):
+        self.max_entries = self._normalize_max_entries(max_entries)
+        with self._lock:
+            self._trim(force=True)
+
+    def emit(self, record):
+        try:
+            entry = {
+                'time': time.strftime('%Y-%m-%d %H:%M:%S',
+                                      time.localtime(record.created))
+                        + f'.{int(record.msecs):03d}',
+                'level': record.levelname,
+                'source': record.name.split('.', 1)[-1],
+                'message': record.getMessage(),
+            }
+            line = json.dumps(entry, ensure_ascii=False)
+            with self._lock:
+                with open(self.path, 'a', encoding='utf-8') as f:
+                    f.write(line + '\n')
+                self._count += 1
+                self._trim()
+        except Exception:
+            self.handleError(record)
+
+    def _trim(self, force=False):
+        """裁剪最旧记录（调用方须持有 self._lock）。"""
+        margin = max(10, self.max_entries // 10)   # 10% 余量，避免每次写入都重写
+        if not force and self._count <= self.max_entries + margin:
+            return
+        try:
+            with open(self.path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            if len(lines) <= self.max_entries:
+                self._count = len(lines)
+                return
+            lines = lines[-self.max_entries:]
+            tmp = self.path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+            os.replace(tmp, self.path)
+            self._count = len(lines)
+        except Exception:
+            pass
+
+
+def get_logger(name='core'):
+    """获取应用子 logger（如 get_logger('voltage_sensor')）。"""
+    return logging.getLogger('physchem.%s' % name) if name else _root_log
+
+
+#: core.py 自身日志（来源显示为 core；子 logger 通过根 logger 的 handler 输出）
+log = get_logger('core')
+
+
+def get_log_file_path():
+    """logs.json 的绝对路径（项目根目录，与 sensor_config.json 同目录）。
+
+    可用环境变量 PHYSCHEM_LOG_FILE 覆盖（自动化测试/多实例隔离用）。
+    """
+    override = os.environ.get('PHYSCHEM_LOG_FILE')
+    if override:
+        return override
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), LOG_FILENAME)
+
+
+def _current_log_level():
+    # 文件记录未开启时，控制台固定「标准」（保留原有启动/模块/配置提示）；
+    # 开启后才采用用户选择的详细度（控制台与文件一致）。
+    # 用 _logging_active 而非 app_cfg，避免调用方必须先改配置项的时序耦合。
+    if not _logging_active:
+        return logging.INFO
+    return _LOG_LEVELS.get(str(app_cfg.logLevel.value).lower(), logging.INFO)
+
+
+def _ensure_log_handlers():
+    """创建（懒初始化）控制台与 JSON Lines 两个 handler。"""
+    global _console_log_handler, _json_log_handler
+    if _console_log_handler is None:
+        h = logging.StreamHandler(sys.stdout)
+        h.setFormatter(_SourceFormatter(
+            '[%(asctime)s.%(msecs)03d] [%(levelname)s] %(source)s: %(message)s',
+            '%H:%M:%S'))
+        _console_log_handler = h
+    if _json_log_handler is None:
+        _json_log_handler = JsonLinesLogHandler(
+            get_log_file_path(), int(app_cfg.logMaxEntries.value or 5000))
+    return _console_log_handler, _json_log_handler
+
+
+def _apply_log_level():
+    level = _current_log_level()
+    for h in (_console_log_handler, _json_log_handler):
+        if h is not None:
+            h.setLevel(level)
+
+
+def set_log_enabled(enabled):
+    """切换「写入 logs.json」：控制台始终输出，开关只决定是否落盘。
+
+    关闭（默认）：控制台照常显示运行日志（保留原有启动/模块/配置提示），
+    不生成 logs.json，详细度固定为「标准」；
+    开启：控制台按所选详细度输出，并同步写入项目目录 logs.json。
+    """
+    global _logging_active
+    console, json_handler = _ensure_log_handlers()
+    _root_log.setLevel(logging.DEBUG)    # 记录全部，由 handler 级别过滤
+    if console not in _root_log.handlers:
+        _root_log.addHandler(console)    # 控制台始终输出
+    if enabled:
+        if json_handler not in _root_log.handlers:
+            _root_log.addHandler(json_handler)
+        if not _logging_active:
+            log.info('运行日志已开始写入 logs.json（级别=%s，最多 %d 条）',
+                     app_cfg.logLevel.value, json_handler.max_entries)
+        _logging_active = True
+    else:
+        if json_handler in _root_log.handlers:
+            _root_log.removeHandler(json_handler)
+        _logging_active = False
+    _apply_log_level()
+
+
+def set_log_level(level):
+    """运行时切换详细度（warning / info / debug）。"""
+    level = str(level).lower()
+    if level not in _LOG_LEVELS:
+        return
+    app_cfg.logLevel.value = level
+    _apply_log_level()
+
+
+def set_log_max_entries(max_entries):
+    """运行时调整 logs.json 最大保留条数（立即裁剪超出的旧记录）。"""
+    if _json_log_handler is not None:
+        _json_log_handler.set_max_entries(max_entries)
+
+
+def setup_logging():
+    """按 app_config.json 初始化日志（core 导入时与 main() 启动时各调一次）。"""
+    set_log_enabled(bool(app_cfg.logEnabled.value))
+
+
+# ---- 启动诊断（日志系统就绪后输出；关闭时控制台完全静默）----
+setup_logging()
+if _created_default_app_config:
+    log.info('✓ 已生成默认应用配置：%s', _app_config_path)
+if _app_config_create_error is not None:
+    log.error('生成默认应用配置失败: %s', _app_config_create_error)
+if not SERIAL_AVAILABLE:
+    # 用户指定文案：未装库不致命，模拟器照常可用
+    log.warning('未安装pyserial，何意味？你想不连接下位机吗（狗头）？')
+for _engine in CHART_ENGINES:
+    log.info('图表引擎 %s: %s', _engine,
+             '✓ 已安装' if CHART_ENGINE_AVAILABLE[_engine] else '✗ 未安装')
+if not any(CHART_ENGINE_AVAILABLE.values()):
+    log.warning('？？？你为什么不安装图表引擎？行，那你别想看实时图表了（狗头）')
 
 
 def _get_config_file_path():
@@ -282,7 +527,7 @@ def load_sensor_config(module_name):
     """
     # 持久化开关关闭：不读取旧配置，各模块使用默认值
     if not app_cfg.configPersistenceEnabled.value:
-        print(f"ℹ️ 配置保存已关闭，[{module_name}] 跳过读取，使用默认值")
+        log.info("配置保存已关闭，[%s] 跳过读取，使用默认值", module_name)
         return {}
 
     config_path = _get_config_file_path()
@@ -292,15 +537,15 @@ def load_sensor_config(module_name):
                 all_config = json.load(f)
             module_config = all_config.get(module_name, {})
             if module_config:
-                print(f"✓ 已加载 [{module_name}] 配置")
+                log.info("✓ 已加载 [%s] 配置", module_name)
             else:
-                print(f"ℹ️ [{module_name}] 无已保存配置，使用默认值")
+                log.info("[%s] 无已保存配置，使用默认值", module_name)
             return module_config
         else:
-            print(f"ℹ️ 配置文件不存在：{config_path}，所有模块使用默认值")
+            log.info("配置文件不存在：%s，所有模块使用默认值", config_path)
             return {}
     except Exception as e:
-        print(f"⚠️ 读取配置文件失败：{e}")
+        log.warning("读取配置文件失败：%s", e)
         return {}
 
 
@@ -332,10 +577,10 @@ def save_sensor_config(module_name, config_dict):
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(all_config, f, ensure_ascii=False, indent=2)
 
-        print(f"✓ [{module_name}] 配置已保存到 {config_path}")
+        log.info("[%s] 配置已保存到 %s", module_name, config_path)
         return True
     except Exception as e:
-        print(f"⚠️ 保存 [{module_name}] 配置失败: {e}")
+        log.warning("保存 [%s] 配置失败: %s", module_name, e)
         return False
 
 
@@ -357,10 +602,10 @@ def export_sensor_config(target_dir):
     try:
         dest = os.path.join(target_dir, CONFIG_FILENAME)
         shutil.copy2(config_path, dest)
-        print(f"✓ 配置已导出到 {dest}")
+        log.info("配置已导出到 %s", dest)
         return True, dest
     except Exception as e:
-        print(f"⚠️ 导出配置失败: {e}")
+        log.warning("导出配置失败: %s", e)
         return False, str(e)
 
 
@@ -403,10 +648,10 @@ def import_sensor_config(source_file):
             except OSError:
                 pass
             raise
-        print(f"✓ 配置已从 {source_file} 导入到 {config_path}")
+        log.info("配置已从 %s 导入到 %s", source_file, config_path)
         return True, f"已导入 {len(data)} 个模块的配置"
     except Exception as e:
-        print(f"⚠️ 导入配置失败: {e}")
+        log.warning("导入配置失败: %s", e)
         return False, f"写入配置文件失败: {e}"
 
 
@@ -423,12 +668,12 @@ def clear_sensor_config():
     try:
         if os.path.exists(config_path):
             os.remove(config_path)
-            print(f"✓ 已清除用户配置文件：{config_path}")
+            log.info("已清除用户配置文件：%s", config_path)
         else:
-            print("ℹ️ 配置文件不存在，无需清除")
+            log.info("配置文件不存在，无需清除")
         return True
     except Exception as e:
-        print(f"⚠️ 清除配置文件失败: {e}")
+        log.warning("清除配置文件失败: %s", e)
         return False
 
 
@@ -448,7 +693,7 @@ def reset_all_config():
     try:
         with open(app_config_path, 'w', encoding='utf-8') as f:
             json.dump(_APP_CONFIG_DEFAULT, f, ensure_ascii=False, indent=4)
-        print(f"✓ 已恢复应用配置：{app_config_path}")
+        log.info("已恢复应用配置：%s", app_config_path)
     except Exception as e:
         return False, f"恢复应用配置失败: {e}"
 
@@ -457,7 +702,7 @@ def reset_all_config():
     try:
         if os.path.exists(sensor_config_path):
             os.remove(sensor_config_path)
-            print(f"✓ 已清除传感器配置：{sensor_config_path}")
+            log.info("已清除传感器配置：%s", sensor_config_path)
     except Exception as e:
         return False, f"删除传感器配置失败: {e}"
 
@@ -1249,7 +1494,7 @@ class ChartPanel(QWidget):
             try:
                 payload = self._ai_data_provider()
             except Exception as e:
-                print(f"⚠️ AI 数据回调异常: {e}")
+                log.warning("AI 数据回调异常: %s", e)
         # 对话框 parent 用顶层窗口：qfluentwidgets 掩码对话框会以 parent 为
         # 基准铺满遮罩；传 ChartPanel 这类子控件会导致窗口 transient parent
         # 指向非顶层句柄（Qt 告警 “must be a top level window”）且遮罩尺寸
@@ -1956,7 +2201,7 @@ def save_experiment_info(module_title, info):
         store[module_title] = dict(info or {})
         qconfig.set(app_cfg.aiExperimentInfo, store)
     except Exception as e:
-        print(f"⚠️ 保存实验信息失败: {e}")
+        log.warning("保存实验信息失败: %s", e)
 
 
 def module_default_prompt(context):
@@ -1993,7 +2238,7 @@ def set_module_prompt(module_title, text, default):
             store[module_title] = text
         qconfig.set(app_cfg.aiModulePrompts, store)
     except Exception as e:
-        print(f"⚠️ 保存模块提示词失败: {e}")
+        log.warning("保存模块提示词失败: %s", e)
 
 
 def build_ai_system_prompt(context, experiment_info=None):
@@ -2281,7 +2526,7 @@ class AISettingsDialog(Dialog):
                     self.module_prompt_edit.toPlainText().strip(),
                     self._default_module_prompt)
         except Exception as e:
-            print(f"⚠️ 保存 AI 配置失败: {e}")
+            log.warning("保存 AI 配置失败: %s", e)
         self.accept()
 
 
@@ -2390,7 +2635,7 @@ class AIChatDialog(Dialog):
         try:
             return self._provider()
         except Exception as e:
-            print(f"⚠️ AI 数据回调异常: {e}")
+            log.warning("AI 数据回调异常: %s", e)
             return None
 
     def _refresh_summary(self):
@@ -2593,7 +2838,7 @@ class SerialThread(QThread):
     def run(self):
         # pyserial 未安装：不发 ERROR 文本（各模块按连接失败弹窗处理）
         if not SERIAL_AVAILABLE:
-            print("⚠️ pyserial 未安装，串口连接不可用")
+            log.warning("pyserial 未安装，串口连接不可用")
             return
         if not self.running:      # start() 后被立即 stop()：直接退出
             return
@@ -2617,10 +2862,10 @@ class SerialThread(QThread):
                         # 空闲时让出 CPU/GIL，避免忙等拖慢 UI 线程
                         time.sleep(0.01)
                 except Exception as e:
-                    print(f"读取串口数据错误: {e}")
+                    log.error("读取串口数据错误: %s", e)
                     break
         except Exception as e:
-            print(f"串口错误: {e}")
+            log.error("串口错误: %s", e)
             self.data_received.emit(f"ERROR:{e}")
 
     def stop(self):
@@ -2646,13 +2891,13 @@ def stop_thread(thread, timeout=2000, name="通信线程"):
     try:
         thread.stop()
     except Exception as e:
-        print(f"⚠️ 停止{name}失败: {e}")
+        log.warning("停止%s失败: %s", name, e)
     try:
         if not thread.wait(timeout):
-            print(f"⚠️ {name}未在 {timeout}ms 内退出，保留引用等待其自行收尾")
+            log.warning("%s未在 %dms 内退出，保留引用等待其自行收尾", name, timeout)
             _retired_threads.append(thread)
     except Exception as e:
-        print(f"⚠️ 等待{name}退出失败: {e}")
+        log.warning("等待%s退出失败: %s", name, e)
 
 
 def list_serial_ports():
@@ -2666,7 +2911,7 @@ def list_serial_ports():
     try:
         return [(p.device, p.description or "") for p in serial.tools.list_ports.comports()]
     except Exception as e:
-        print(f"⚠️ 枚举串口失败: {e}")
+        log.error("枚举串口失败: %s", e)
         return []
 
 
@@ -2755,7 +3000,7 @@ try:
 except ImportError:
     BLE_AVAILABLE = False
     # 启动控制台提示（用户指定文案）：蓝牙功能优雅降级，其余不受影响
-    print("未安装bleak，蓝牙连接不可用。")
+    log.warning("未安装bleak，蓝牙连接不可用。")
 
 
 class BLESerialThread(QThread):
@@ -2839,7 +3084,7 @@ class BLESerialThread(QThread):
                 if line:
                     self.data_received.emit(line)
         except Exception as e:
-            print(f"BLE 数据处理错误: {e}")
+            log.warning("BLE 数据处理错误: %s", e)
 
     def _on_disconnected(self, client):
         if self.running:
@@ -2867,7 +3112,7 @@ def scan_ble_devices():
             result.append((name, d.address))
         return sorted(result, key=lambda x: x[0])
     except Exception as e:
-        print(f"BLE 扫描错误: {e}")
+        log.error("BLE 扫描错误: %s", e)
         return []
 
 

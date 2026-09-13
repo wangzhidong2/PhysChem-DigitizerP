@@ -29,22 +29,29 @@ from PySide6.QtWidgets import (
     QPushButton, QFrame, QStackedWidget, QScrollArea,
     QFileDialog,
 )
-from PySide6.QtCore import Qt, Signal, QSize, QRect, QTimer
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics, QGuiApplication
+from PySide6.QtCore import Qt, Signal, QSize, QRect, QTimer, QUrl
+from PySide6.QtGui import (QFont, QIcon, QPixmap, QPainter, QColor,
+                           QFontMetrics, QGuiApplication, QDesktopServices)
 
 # FluentWidgets — WinUI3 风格组件库（社区版，GPLv3 + 商业双协议）
 # 文档：https://qfluentwidgets.com/
-from qfluentwidgets import (
-    FluentWindow, FluentIcon as FIF, NavigationItemPosition,
-    Theme, setTheme, PushButton, PrimaryPushButton,
-    ComboBox, InfoBar, InfoBarPosition, BodyLabel,
-    TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
-    SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
-    SwitchSettingCard, MessageBox, Dialog, qconfig, IndicatorPosition,
-    LineEdit,
-    CardWidget, IconWidget, PillToolButton,
-    AdaptiveFlowLayout, ToolTipFilter,
-)
+# 导入时它会向 stdout 打印一行 Pro 推广横幅；应用要求控制台默认完全静默
+# （运行日志开关关闭时），这里在导入期间临时重定向 stdout 吞掉
+import io as _io
+import contextlib as _contextlib
+with _contextlib.redirect_stdout(_io.StringIO()):
+    from qfluentwidgets import (
+        FluentWindow, FluentIcon as FIF, NavigationItemPosition,
+        Theme, setTheme, PushButton, PrimaryPushButton,
+        ComboBox, InfoBar, InfoBarPosition, BodyLabel,
+        TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
+        SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
+        SwitchSettingCard, SwitchButton, SpinBox, MessageBox, Dialog,
+        qconfig, IndicatorPosition,
+        LineEdit,
+        CardWidget, IconWidget, PillToolButton,
+        AdaptiveFlowLayout, ToolTipFilter,
+    )
 
 
 class ZhSwitchSettingCard(SwitchSettingCard):
@@ -69,7 +76,11 @@ from core import (
     ChartPanel, chart_engine_available, resolve_chart_engine,
     clear_sensor_config, export_sensor_config, import_sensor_config, reset_all_config,
     DEFAULT_THEME_COLOR, system_accent_color, set_app_theme_color,
+    get_logger, get_log_file_path, setup_logging,
+    set_log_enabled, set_log_level, set_log_max_entries,
 )
+
+log = get_logger("main")
 
 
 # ============================================================
@@ -215,7 +226,7 @@ def parse_module_meta(file_path):
             # 只读前 50 行，识别区在文件头
             head = ''.join(f.readline() for _ in range(50))
     except Exception as e:
-        print(f"⚠️ 读取模块文件失败 {file_path}: {e}")
+        log.warning("读取模块文件失败 %s: %s", file_path, e)
         return None
 
     m = META_PATTERN.search(head)
@@ -257,7 +268,7 @@ def scan_modules(modules_dir):
     """
     discovered = []
     if not os.path.isdir(modules_dir):
-        print(f"⚠️ 模块目录不存在: {modules_dir}")
+        log.warning("模块目录不存在: %s", modules_dir)
         return discovered
 
     # 遍历 传感器代码/ 下的每个子目录
@@ -274,14 +285,14 @@ def scan_modules(modules_dir):
 
             meta = parse_module_meta(py_file)
             if not meta:
-                print(f"⏭️ 跳过（无识别区）: {py_file}")
+                log.info("跳过（无识别区）: %s", py_file)
                 continue
 
             # importlib 动态加载
             mod_name = f"_sensor_module_{base[:-3]}"
             spec = importlib.util.spec_from_file_location(mod_name, py_file)
             if spec is None or spec.loader is None:
-                print(f"⚠️ 无法加载模块: {py_file}")
+                log.warning("无法加载模块: %s", py_file)
                 continue
 
             mod = importlib.util.module_from_spec(spec)
@@ -289,12 +300,12 @@ def scan_modules(modules_dir):
                 sys.modules[mod_name] = mod
                 spec.loader.exec_module(mod)
             except Exception as e:
-                print(f"❌ 模块加载失败 {py_file}: {e}")
+                log.error("模块加载失败 %s: %s", py_file, e)
                 continue
 
             class_name = meta['class']
             if not hasattr(mod, class_name):
-                print(f"❌ 模块未定义类 {class_name}: {py_file}")
+                log.error("模块未定义类 %s: %s", class_name, py_file)
                 continue
 
             discovered.append({
@@ -305,7 +316,8 @@ def scan_modules(modules_dir):
                 'module': mod,
                 'file_path': py_file,
             })
-            print(f"✓ 已加载模块: {meta['name']} ({meta['category']}) <- {base}")
+            log.info("✓ 已加载模块: %s (%s) <- %s",
+                     meta['name'], meta['category'], base)
 
     discovered.sort(key=lambda x: (x['category'], x['name']))
     return discovered
@@ -557,7 +569,7 @@ class HomePageWidget(QWidget):
         try:
             qconfig.set(app_cfg.pinnedModules, pinned)
         except Exception as e:
-            print(f"⚠️ 保存置顶配置失败: {e}")
+            log.warning("保存置顶配置失败: %s", e)
         self._rebuild_module_cards()
 
     @staticmethod
@@ -625,7 +637,7 @@ class HomePageWidget(QWidget):
             try:
                 tile.refresh_icon()
             except Exception as e:
-                print(f"⚠️ 磁贴图标主题刷新失败 [{tile._name}]: {e}")
+                log.warning("磁贴图标主题刷新失败 [%s]: %s", tile._name, e)
 
 
 # ============================================================
@@ -932,7 +944,7 @@ class SettingsWidget(QWidget):
     theme_change_requested = Signal(str)  # 'light' / 'dark'
     engine_change_requested = Signal(str)  # 'matplotlib' / 'pyqtgraph'
 
-    APP_VERSION = "1.5"
+    APP_VERSION = "1.6"
 
     def __init__(self):
         super().__init__()
@@ -979,6 +991,8 @@ class SettingsWidget(QWidget):
         group_personal.addSettingCard(self._theme_card)
         group_personal.addSettingCard(self._build_theme_color_card())
         group_personal.addSettingCard(self._build_persistence_card())
+        group_personal.addSettingCard(self._build_log_card())
+        group_personal.addSettingCard(self._build_log_detail_card())
         group_personal.addSettingCard(self._build_config_management_card())
         group_personal.addSettingCard(self._build_reset_all_card())
         group_personal.addSettingCard(self._build_engine_card())
@@ -1174,6 +1188,104 @@ class SettingsWidget(QWidget):
         if not box.exec():
             # 拒绝：切回关闭（qconfig.set 会同步翻转开关 UI 并落盘）
             qconfig.set(app_cfg.configPersistenceEnabled, False)
+
+    def _build_log_card(self):
+        """运行日志卡片：控制台始终输出；开关控制是否写入 logs.json。
+
+        控制台保留原有启动/模块/配置等提示；开启（默认）时额外把运行日志以
+        JSON Lines 追加写入项目目录 logs.json（跨会话、超上限裁剪最旧记录）。
+        """
+        card = SettingCard(
+            FIF.HISTORY, "运行日志",
+            "控制台始终显示运行日志；开启后同时写入项目目录 logs.json（默认开启）",
+            None)
+        self._log_switch = SwitchButton(card)
+        self._log_switch.setOnText("开")
+        self._log_switch.setOffText("关")
+        self._log_switch.setChecked(bool(app_cfg.logEnabled.value))
+        self._log_switch.checkedChanged.connect(self._on_log_switch_changed)
+        card.hBoxLayout.addWidget(self._log_switch)
+        card.hBoxLayout.addSpacing(10)
+
+        self._open_log_btn = PushButton("打开日志", card)
+        self._open_log_btn.setFixedHeight(30)
+        self._open_log_btn.setToolTip("用系统默认程序打开项目目录下的 logs.json")
+        self._open_log_btn.clicked.connect(self._on_open_log_clicked)
+        card.hBoxLayout.addWidget(self._open_log_btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _build_log_detail_card(self):
+        """日志详细度卡片：详细度下拉 + 最大保留条数（随即时生效并持久化）。"""
+        card = SettingCard(
+            FIF.FONT, "日志详细度",
+            "控制台与日志文件的详细度：简略=仅警告/错误；标准=应用事件；详细=含串口原始数据", None)
+        self._log_level_values = ["warning", "info", "debug"]
+        self._log_level_combo = ComboBox(card)
+        self._log_level_combo.addItems(["简略", "标准", "详细"])
+        current = str(app_cfg.logLevel.value).lower()
+        self._log_level_combo.setCurrentIndex(
+            self._log_level_values.index(current)
+            if current in self._log_level_values else 1)
+        self._log_level_combo.currentIndexChanged.connect(self._on_log_level_changed)
+        card.hBoxLayout.addWidget(self._log_level_combo)
+        card.hBoxLayout.addSpacing(10)
+
+        self._log_max_spin = SpinBox(card)
+        self._log_max_spin.setRange(100, 200000)
+        self._log_max_spin.setSingleStep(100)
+        try:
+            max_entries = int(app_cfg.logMaxEntries.value)
+        except (TypeError, ValueError):
+            max_entries = 5000      # 配置文件被手工改坏时回退默认值
+        self._log_max_spin.setValue(max_entries)
+        self._log_max_spin.setSuffix(" 条")
+        self._log_max_spin.setToolTip("logs.json 最大保留条数，超出后自动裁剪最旧记录")
+        self._log_max_spin.valueChanged.connect(self._on_log_max_changed)
+        card.hBoxLayout.addWidget(self._log_max_spin)
+        card.hBoxLayout.addSpacing(16)
+        self._sync_log_detail_enabled()
+        return card
+
+    def _sync_log_detail_enabled(self):
+        """详细度控件仅在运行日志开启时可用。"""
+        enabled = bool(app_cfg.logEnabled.value)
+        if getattr(self, '_log_level_combo', None) is not None:
+            self._log_level_combo.setEnabled(enabled)
+        if getattr(self, '_log_max_spin', None) is not None:
+            self._log_max_spin.setEnabled(enabled)
+
+    def _on_log_switch_changed(self, checked: bool):
+        qconfig.set(app_cfg.logEnabled, bool(checked))
+        set_log_enabled(bool(checked))
+        self._sync_log_detail_enabled()
+
+    def _on_log_level_changed(self, idx: int):
+        if not (0 <= idx < len(self._log_level_values)):
+            return
+        level = self._log_level_values[idx]
+        qconfig.set(app_cfg.logLevel, level)
+        set_log_level(level)
+
+    def _on_log_max_changed(self, value: int):
+        qconfig.set(app_cfg.logMaxEntries, int(value))
+        set_log_max_entries(int(value))
+
+    def _on_open_log_clicked(self):
+        """用系统默认程序打开 logs.json；文件不存在时提示先开启日志。"""
+        path = get_log_file_path()
+        if not os.path.exists(path):
+            InfoBar.warning(
+                title="暂无日志文件",
+                content="请先开启「运行日志」并产生记录后重试",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.BOTTOM_RIGHT,
+                duration=2500,
+                parent=self,
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _build_config_management_card(self):
         """传感器配置管理卡片：清除、导出、导入传感器校准配置。"""
@@ -1622,7 +1734,7 @@ class MainWindow(FluentWindow):
             try:
                 widget = cls()
             except Exception as e:
-                print(f"❌ 实例化模块 {info['name']} 失败: {e}")
+                log.error("实例化模块 %s 失败: %s", info['name'], e)
                 continue
 
             # FluentWindow.addSubInterface 要求 widget 有 objectName
@@ -1714,7 +1826,7 @@ class MainWindow(FluentWindow):
             self.current_theme = actual
             self._refresh_custom_theme(actual)
         except Exception as e:
-            print(f"⚠️ 跟随系统主题刷新失败: {e}")
+            log.warning("跟随系统主题刷新失败: %s", e)
 
     def _refresh_custom_theme(self, theme):
         """按当前亮/暗主题刷新自定义 widget 颜色（不调用 setTheme）。
@@ -1728,21 +1840,21 @@ class MainWindow(FluentWindow):
             try:
                 nav_item.setIcon(make_text_icon(icon_text))
             except Exception as e:
-                print(f"⚠️ 重建模块 {name} 导航图标失败: {e}")
+                log.warning("重建模块 %s 导航图标失败: %s", name, e)
 
         # 先刷新设置页（主题下拉框需要反向同步当前主题）
         if "设置" in self.modules:
             try:
                 self.modules["设置"].apply_theme(theme)
             except Exception as e:
-                print(f"⚠️ 设置页主题切换失败: {e}")
+                log.warning("设置页主题切换失败: %s", e)
 
         # 主页（卡片、滚动区背景）
         if "主页" in self.modules:
             try:
                 self.modules["主页"].apply_theme(theme)
             except Exception as e:
-                print(f"⚠️ 主页主题切换失败: {e}")
+                log.warning("主页主题切换失败: %s", e)
 
         # 各传感器模块若支持主题切换则一并刷新
         for name, widget in self.modules.items():
@@ -1752,7 +1864,7 @@ class MainWindow(FluentWindow):
                 try:
                     widget.apply_theme(theme)
                 except Exception as e:
-                    print(f"⚠️ 模块 {name} 主题切换失败: {e}")
+                    log.warning("模块 %s 主题切换失败: %s", name, e)
 
     def apply_theme(self, theme):
         """切换 FluentWidgets 主题（light/dark）。
@@ -1773,7 +1885,7 @@ class MainWindow(FluentWindow):
         未安装的引擎请求在此拦截（设置页已灰显，此处为双保险）。
         """
         if not chart_engine_available(engine):
-            print(f"⚠️ 图表引擎 {engine} 未安装，忽略切换请求")
+            log.warning("图表引擎 %s 未安装，忽略切换请求", engine)
             return
         count = 0
         for name, widget in self.modules.items():
@@ -1784,8 +1896,8 @@ class MainWindow(FluentWindow):
                     panel.set_engine(engine)
                     count += 1
                 except Exception as e:
-                    print(f"⚠️ [{name}] 图表引擎切换失败: {e}")
-        print(f"✓ 图表引擎已切换为 {engine}（{count} 个图表面板）")
+                    log.warning("[%s] 图表引擎切换失败: %s", name, e)
+        log.info("✓ 图表引擎已切换为 %s（%d 个图表面板）", engine, count)
 
     def apply_modern_style(self):
         self.current_theme = "light"
@@ -1850,7 +1962,7 @@ class MainWindow(FluentWindow):
                     try:
                         dispose()
                     except Exception as e:
-                        print(f"⚠️ 退出清理 [{name}.{meth}] 失败: {e}")
+                        log.warning("退出清理 [%s.%s] 失败: %s", name, meth, e)
                     break
 
 
@@ -1963,7 +2075,7 @@ def _apply_taskbar_identity(window):
             SetValue(store, byref(PROPERTYKEY(appid_fmtid, pid)), byref(pv))
         Commit(store)
     except Exception as e:
-        print(f"⚠️ 设置任务栏身份失败: {e}")
+        log.warning("设置任务栏身份失败: %s", e)
 
 
 def _install_qt_warning_filter():
@@ -1998,6 +2110,7 @@ def _install_qt_warning_filter():
 def main():
     _set_windows_appusermodelid()
     _install_qt_warning_filter()
+    setup_logging()          # 按 app_config.json 初始化运行日志（默认静默）
     app = QApplication(sys.argv)
     # 应用图标（.ico 同时设在 app 和 window 上）
     icon_path = str(Path(__file__).parent / "docs" / "images" / "icon.ico")
@@ -2014,7 +2127,7 @@ def main():
         if app_cfg.themeColorMode.value == "system":
             set_app_theme_color(system_accent_color(), save=False)
     except Exception as e:
-        print(f"⚠️ 应用系统主题色失败: {e}")
+        log.warning("应用系统主题色失败: %s", e)
     # 监听 Windows 系统强调色变化（仅「跟随系统主题色」模式生效）；
     # 引用挂在 app 上防止被垃圾回收
     try:
@@ -2022,7 +2135,7 @@ def main():
         app._system_accent_listener = SystemAccentListener()
         app.installNativeEventFilter(app._system_accent_listener)
     except Exception as e:
-        print(f"⚠️ 安装系统强调色监听失败: {e}")
+        log.warning("安装系统强调色监听失败: %s", e)
     # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
     window.setWindowIcon(app_icon)

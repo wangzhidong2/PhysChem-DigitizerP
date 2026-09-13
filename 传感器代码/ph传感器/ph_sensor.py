@@ -39,7 +39,10 @@ from core import (
     CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+    get_logger,
 )
+
+log = get_logger("ph_sensor")
 
 # AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
 # 由 core.build_ai_system_prompt 组装进 system 消息）
@@ -462,6 +465,7 @@ class PhSensorWidget(QWidget):
                 start_value=2281)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            log.info("模拟器已连接")
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_ph_label.setText("pH: --.-")
@@ -483,6 +487,7 @@ class PhSensorWidget(QWidget):
             self.serial_thread = SerialThread(port)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            log.info("串口已连接: %s", port)
 
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
@@ -498,6 +503,7 @@ class PhSensorWidget(QWidget):
             stop_thread(self.serial_thread, name="pH串口线程")
             self.serial_thread = None
 
+        log.info("已断开连接")
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
         self.current_ph_label.setText("pH: --.-")
@@ -529,6 +535,7 @@ class PhSensorWidget(QWidget):
         self.last_sample_time_ms = 0  # 重置采样时间
 
         self._collecting = True
+        log.info("开始采集")
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
 
@@ -540,6 +547,7 @@ class PhSensorWidget(QWidget):
         self._collecting = False
         self._refresh_collect_btn()
         self.save_btn.setEnabled(len(self.ph_data) > 0)
+        log.info("停止采集，共 %d 个数据点", len(self.ph_data))
 
         if len(self.ph_data) > 0:
             avg_ph = np.mean(self.ph_data)
@@ -548,6 +556,7 @@ class PhSensorWidget(QWidget):
     def handle_data(self, data):
         """处理接收到的数据"""
         if data.startswith("ERROR:"):
+            log.error("设备错误: %s", data[6:])
             fluent_message_box(self, "串口错误", data[6:])
             self.disconnect_serial()
             return
@@ -673,10 +682,12 @@ class PhSensorWidget(QWidget):
                     zip(self.time_data, self.ph_data, self.adc_data)):
                     f.write(f"{time_val:.3f},{adc_val},{ph_val:.3f}\n")
 
+            log.info("数据已保存到：%s（%d 点）", filename, len(self.ph_data))
             fluent_message_box(self, "成功",
                                    f"数据已保存到：{filename}\n"
                                    f"共 {len(self.ph_data)} 个数据点")
         except Exception as e:
+            log.error("保存失败：%s", e)
             fluent_message_box(self, "错误", f"保存失败：{e}")
 
     def on_sample_interval_changed(self, interval_ms):
@@ -690,6 +701,7 @@ class PhSensorWidget(QWidget):
         self.time_data.clear()
         self.adc_data.clear()
         self.data_text.clear()
+        log.info("已清除数据")
         self.stats_label.setText("统计信息：暂无数据")
         self.current_ph_label.setText("pH: --.-")
         self.current_adc_label.setText("ADC: ----")
@@ -717,6 +729,7 @@ class PhSensorWidget(QWidget):
 
             # 保存配置到文件
             self.save_config()
+            log.info("校准参数已更新：%s 点 %s", self.calibration_mode, new_points)
 
             fluent_message_box(self, "成功",
                                    "校准参数已更新并保存！\n新的校准曲线将立即生效。\n下次启动程序时会自动加载此配置。")

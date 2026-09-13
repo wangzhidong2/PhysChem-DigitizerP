@@ -40,7 +40,10 @@ from core import (
     BLE_AVAILABLE, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+    get_logger,
 )
+
+log = get_logger("voltage_sensor")
 
 # AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
 # 由 core.build_ai_system_prompt 组装进 system 消息）
@@ -781,6 +784,7 @@ class VoltageSensorWidget(QWidget):
             # 取消去皮
             self.tare_active = False
             self.tare_offset_v = 0.0
+            log.info("已取消去皮")
             self.save_config()
             self.update_tare_status_label()
             # 重新计算已有数据（按新偏移重算 voltage_data）
@@ -794,6 +798,7 @@ class VoltageSensorWidget(QWidget):
             recent = self.voltage_data[-10:] if len(self.voltage_data) >= 10 else self.voltage_data
             self.tare_offset_v = float(np.mean(recent))
             self.tare_active = True
+            log.info("已去皮，空载偏移=%.6g V", self.tare_offset_v)
             self.save_config()
             self.update_tare_status_label()
             self.recompute_voltage_data()
@@ -855,7 +860,7 @@ class VoltageSensorWidget(QWidget):
             if not devices:
                 self.ble_device_combo.addItem("未找到设备")
         except Exception as e:
-            print(f"BLE 扫描错误: {e}")
+            log.error("BLE 扫描错误: %s", e)
         finally:
             self.ble_scan_btn.setEnabled(BLE_AVAILABLE)
             self.ble_scan_btn.setText("扫描BLE")
@@ -887,6 +892,7 @@ class VoltageSensorWidget(QWidget):
                 interval_ms=self.sample_interval_ms)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            log.info("模拟器已连接")
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_voltage_label.setText("--.- V")
@@ -907,6 +913,7 @@ class VoltageSensorWidget(QWidget):
             self.serial_thread = SerialThread(port)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            log.info("串口已连接: %s", port)
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_voltage_label.setText("--.- V")
@@ -933,6 +940,7 @@ class VoltageSensorWidget(QWidget):
             self.ble_thread.data_received.connect(self.handle_data)
             self.ble_thread.connection_status.connect(self.on_ble_status)
             self.ble_thread.start()
+            log.info("BLE 连接中: %s", address)
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_voltage_label.setText("BLE连接中...")
@@ -942,6 +950,7 @@ class VoltageSensorWidget(QWidget):
 
     def on_ble_status(self, status):
         if status == "connected":
+            log.info("BLE 已连接")
             self.current_voltage_label.setText("电压: BLE已连接，等待数据...")
             self.current_raw_label.setText("原始ADC: 等待数据...")
 
@@ -952,6 +961,7 @@ class VoltageSensorWidget(QWidget):
         if self.ble_thread:
             stop_thread(self.ble_thread, name="电压BLE线程")
             self.ble_thread = None
+        log.info("已断开连接")
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
         self.tare_btn.setEnabled(False)
@@ -983,6 +993,7 @@ class VoltageSensorWidget(QWidget):
         self.data_text.clear()
         self.last_sample_time_ms = 0  # 重置采样时间
         self._collecting = True
+        log.info("开始采集")
         self._refresh_collect_btn()
         self.tare_btn.setEnabled(True)
         self.save_btn.setEnabled(False)
@@ -993,12 +1004,14 @@ class VoltageSensorWidget(QWidget):
         self._collecting = False
         self._refresh_collect_btn()
         self.save_btn.setEnabled(len(self.voltage_data) > 0)
+        log.info("停止采集，共 %d 个数据点", len(self.voltage_data))
         if len(self.voltage_data) > 0:
             avg_v = np.mean(self.voltage_data)
             self.current_voltage_label.setText(f"{self.format_voltage(avg_v)} {self.current_unit}")
 
     def handle_data(self, data):
         if data.startswith("ERROR:"):
+            log.error("设备错误: %s", data[6:])
             fluent_message_box(self, "连接错误", data[6:])
             self.disconnect_all()
             return
@@ -1119,8 +1132,10 @@ class VoltageSensorWidget(QWidget):
                 for i, (timestamp, voltage) in enumerate(zip(self.time_data, self.voltage_data)):
                     raw = self.raw_data[i] if i < len(self.raw_data) else 0
                     f.write(f"{timestamp:.3f},{raw},{self.to_current_unit(voltage):.6f}\n")
+            log.info("数据已保存到: %s（%d 点）", filename, len(self.voltage_data))
             fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
+            log.error("保存失败: %s", e)
             fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
@@ -1128,6 +1143,7 @@ class VoltageSensorWidget(QWidget):
         self.time_data.clear()
         self.raw_data.clear()
         self.data_text.clear()
+        log.info("已清除数据")
         self.current_voltage_label.setText(f"--.- {self.current_unit}")
         self.current_raw_label.setText("原始ADC: ------")
         self.current_vadc_label.setText(f"ADC端电压: --.- {self.current_unit}")

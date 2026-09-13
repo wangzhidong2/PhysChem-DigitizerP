@@ -40,7 +40,10 @@ from core import (
     BLE_AVAILABLE, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
+    get_logger,
 )
+
+log = get_logger("current_sensor")
 
 # AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
 # 由 core.build_ai_system_prompt 组装进 system 消息）
@@ -711,6 +714,7 @@ class CurrentSensorWidget(QWidget):
             # 取消零点校准
             self.zero_cal_active = False
             self.v_quiescent = self.vcc / 2.0
+            log.info("已取消零点校准（零点恢复 VCC/2）")
             self.vquies_spin.blockSignals(True)
             self.vquies_spin.setValue(self.v_quiescent)
             self.vquies_spin.blockSignals(False)
@@ -726,6 +730,7 @@ class CurrentSensorWidget(QWidget):
             recent = self.vsensor_data[-10:] if len(self.vsensor_data) >= 10 else self.vsensor_data
             self.v_quiescent = float(np.mean(recent))
             self.zero_cal_active = True
+            log.info("零点校准完成，零点电压=%.4f V", self.v_quiescent)
             self.vquies_spin.blockSignals(True)
             self.vquies_spin.setValue(self.v_quiescent)
             self.vquies_spin.blockSignals(False)
@@ -791,7 +796,7 @@ class CurrentSensorWidget(QWidget):
             if not devices:
                 self.ble_device_combo.addItem("未找到设备")
         except Exception as e:
-            print(f"BLE 扫描错误: {e}")
+            log.error("BLE 扫描错误: %s", e)
         finally:
             self.ble_scan_btn.setEnabled(BLE_AVAILABLE)
             self.ble_scan_btn.setText("扫描BLE")
@@ -823,6 +828,7 @@ class CurrentSensorWidget(QWidget):
                 start_value=max_adc / 2.0)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            log.info("模拟器已连接")
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_value_label.setText("--.- " + self.current_unit)
@@ -844,6 +850,7 @@ class CurrentSensorWidget(QWidget):
             self.serial_thread = SerialThread(port)
             self.serial_thread.data_received.connect(self.handle_data)
             self.serial_thread.start()
+            log.info("串口已连接: %s", port)
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_value_label.setText("--.- " + self.current_unit)
@@ -871,6 +878,7 @@ class CurrentSensorWidget(QWidget):
             self.ble_thread.data_received.connect(self.handle_data)
             self.ble_thread.connection_status.connect(self.on_ble_status)
             self.ble_thread.start()
+            log.info("BLE 连接中: %s", address)
             self.connect_btn.setText("断开")
             self._set_collect_enabled(True)
             self.current_value_label.setText("电流: BLE连接中...")
@@ -880,6 +888,7 @@ class CurrentSensorWidget(QWidget):
 
     def on_ble_status(self, status):
         if status == "connected":
+            log.info("BLE 已连接")
             self.current_value_label.setText("电流: BLE已连接，等待数据...")
             self.current_raw_label.setText("原始ADC: 等待数据...")
 
@@ -890,6 +899,7 @@ class CurrentSensorWidget(QWidget):
         if self.ble_thread:
             stop_thread(self.ble_thread, name="电流BLE线程")
             self.ble_thread = None
+        log.info("已断开连接")
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
         self.zero_cal_btn.setEnabled(False)
@@ -926,6 +936,7 @@ class CurrentSensorWidget(QWidget):
         self.data_text.clear()
         self.last_sample_time_ms = 0
         self._collecting = True
+        log.info("开始采集")
         self._refresh_collect_btn()
         self.zero_cal_btn.setEnabled(True)
         self.save_btn.setEnabled(False)
@@ -936,12 +947,14 @@ class CurrentSensorWidget(QWidget):
         self._collecting = False
         self._refresh_collect_btn()
         self.save_btn.setEnabled(len(self.current_data) > 0)
+        log.info("停止采集，共 %d 个数据点", len(self.current_data))
 
     # ------------------------------------------------------------------
     # 数据处理
     # ------------------------------------------------------------------
     def handle_data(self, data):
         if data.startswith("ERROR:"):
+            log.error("设备错误: %s", data[6:])
             fluent_message_box(self, "连接错误", data[6:])
             self.disconnect_all()
             return
@@ -1126,8 +1139,10 @@ class CurrentSensorWidget(QWidget):
                     v_sensor = self.adc_to_vsensor(raw)
                     f.write(f"{t:.3f},{raw},{v_adc:.6f},{v_sensor:.6f},"
                             f"{self.to_current_unit(current):.6f}\n")
+            log.info("数据已保存到: %s（%d 点）", filename, len(self.current_data))
             fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
+            log.error("保存失败: %s", e)
             fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
@@ -1136,6 +1151,7 @@ class CurrentSensorWidget(QWidget):
         self.time_data.clear()
         self.raw_data.clear()
         self.data_text.clear()
+        log.info("已清除数据")
         self.current_value_label.setText(f"--.- {self.current_unit}")
         self.current_raw_label.setText("原始ADC: ------")
         self.current_vadc_label.setText("ADC端电压: --.- V")
