@@ -1854,6 +1854,9 @@ class MainWindow(FluentWindow):
                     break
 
 
+APP_USER_MODEL_ID = 'PhysChem.DigitizerP'
+
+
 def _set_windows_appusermodelid():
     """设置 Windows AppUserModelID。
 
@@ -1865,9 +1868,102 @@ def _set_windows_appusermodelid():
         import ctypes
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                'PhysChem.DigitizerP')
+                APP_USER_MODEL_ID)
         except Exception:
             pass
+
+
+def _apply_taskbar_identity(window):
+    """给主窗口写入任务栏身份属性（显示名 / 图标 / AUMID / 重启命令）。
+
+    仅设置进程级 AUMID 只影响分组：任务栏按钮的名称与图标仍会回退到
+    宿主的 python.exe（显示为“Python”）。参照 Chromium 的做法，在窗口
+    首次显示前通过 SHGetPropertyStoreForWindow 写入 PKEY_AppUserModel_*：
+      - ID                          : 与进程 AUMID 一致，保证分组唯一
+      - RelaunchCommand             : 固定到任务栏后的启动命令
+      - RelaunchDisplayNameResource : 任务栏按钮 / 跳转列表显示名
+      - RelaunchIconResource        : 任务栏按钮图标（docs/images/icon.ico）
+
+    属性必须在 window.show() **之前**写入，Windows 才会采用；
+    失败静默忽略（仅影响任务栏外观，不影响功能）。
+    """
+    if sys.platform != 'win32':
+        return
+    import ctypes
+    from ctypes import wintypes, byref, POINTER
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+            ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8),
+        ]
+
+    class PROPERTYKEY(ctypes.Structure):
+        _fields_ = [("fmtid", GUID), ("pid", wintypes.DWORD)]
+
+    class _PropUnion(ctypes.Union):
+        _fields_ = [("pwszVal", wintypes.LPWSTR), ("pad", ctypes.c_byte * 16)]
+
+    class PROPVARIANT(ctypes.Structure):
+        _fields_ = [
+            ("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort),
+            ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
+            ("u", _PropUnion),
+        ]
+
+    def _guid(text):
+        import uuid
+        u = uuid.UUID(text)
+        return GUID(u.time_low, u.time_mid, u.time_hi_version,
+                    (ctypes.c_ubyte * 8)(*u.bytes[8:]))
+
+    try:
+        # winId() 会立即创建原生窗口，保证属性写入先于首次显示
+        hwnd = int(window.winId())
+        store = ctypes.c_void_p()
+        shell32 = ctypes.windll.shell32
+        shell32.SHGetPropertyStoreForWindow.restype = ctypes.c_long
+        shell32.SHGetPropertyStoreForWindow.argtypes = [
+            wintypes.HWND, POINTER(GUID), POINTER(ctypes.c_void_p)]
+        hr = shell32.SHGetPropertyStoreForWindow(
+            wintypes.HWND(hwnd),
+            byref(_guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")),
+            byref(store))
+        if hr != 0 or not store:
+            return
+
+        # IPropertyStore vtable: ... GetValue(5) / SetValue(6) / Commit(7)
+        vtbl = ctypes.cast(store, POINTER(POINTER(ctypes.c_void_p))).contents
+        SetValue = ctypes.WINFUNCTYPE(
+            ctypes.c_long, ctypes.c_void_p, POINTER(PROPERTYKEY),
+            POINTER(PROPVARIANT))(vtbl[6])
+        Commit = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtbl[7])
+
+        main_script = os.path.abspath(__file__)
+        if getattr(sys, 'frozen', False):      # PyInstaller 打包：exe 自身
+            relaunch = f'"{sys.executable}"'
+        else:                                  # 源码运行：python + main.py
+            relaunch = f'"{sys.executable}" "{main_script}"'
+        icon_path = os.path.join(
+            os.path.dirname(main_script), 'docs', 'images', 'icon.ico')
+
+        appid_fmtid = _guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3")
+        # 属性 pid：2=RelaunchCommand 3=RelaunchIconResource
+        #          4=RelaunchDisplayNameResource 5=ID
+        for pid, value in (
+            (5, APP_USER_MODEL_ID),
+            (2, relaunch),
+            (4, 'PhysChem-DigitizerP'),
+            (3, icon_path),
+        ):
+            buf = ctypes.create_unicode_buffer(value)
+            pv = PROPVARIANT()
+            pv.vt = 31                          # VT_LPWSTR
+            pv.u.pwszVal = ctypes.cast(buf, wintypes.LPWSTR)
+            SetValue(store, byref(PROPERTYKEY(appid_fmtid, pid)), byref(pv))
+        Commit(store)
+    except Exception as e:
+        print(f"⚠️ 设置任务栏身份失败: {e}")
 
 
 def main():
@@ -1900,6 +1996,8 @@ def main():
     # FluentWidgets 自带 WinUI3 风格，不再需要 Fusion
     window = MainWindow()
     window.setWindowIcon(app_icon)
+    # 任务栏身份（显示名/图标）必须在首次 show() 前写入
+    _apply_taskbar_identity(window)
     window.show()
     sys.exit(app.exec())
 
