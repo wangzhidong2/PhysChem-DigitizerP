@@ -33,6 +33,24 @@ pip install bleak
 
 项目根目录已提供 `requirements.txt`（包含全部必需与可选依赖），可直接 `pip install -r requirements.txt`。没有 `setup.py` 或 `pyproject.toml`。
 
+推荐在项目根目录创建虚拟环境（`.venv/` 已加入 `.gitignore`）：
+
+```powershell
+# Windows（PowerShell）
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1    # 提示禁止运行脚本时先 Set-ExecutionPolicy -Scope Process Bypass
+pip install -r requirements.txt
+python main.py
+```
+
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
 ## 运行与调试
 
 - 串口波特率：**115200**（所有固件和 Python 代码中硬编码）
@@ -133,6 +151,8 @@ PhysChem-DigitizerP/
 - **`HomePageWidget`**：主页。上半部分为项目信息卡 + 三平台仓库地址卡（`ExpandGroupSettingCard`）；下半部分为**传感器模块磁贴网格**——每个模块一张 `ModuleFolderTile`（`CardWidget` 子类）：模块文字图标（识别区 `V`/`F`/`x`/`pH`/`v`/`A`，`make_text_icon()` 渲染，随主题变色的 `refresh_icon()`）+ 模块名 + 右上角图钉（`PillToolButton` + `FIF.PIN`，置顶开关）。网格用 `AdaptiveFlowLayout`（`setWidgetMinimumWidth(160)` 自动算列数、随窗口换行铺满）。置顶模块排在本组最前，状态持久化到 `app_config.json` 的 `General.PinnedModules`（`core.StringListSerializer` 序列化为 JSON 数组）；点击磁贴 → `module_clicked` 信号 → 切换模块。标题用 FluentWidgets `TitleLabel` / `SubtitleLabel`，自动适配亮/暗主题；`apply_theme()` 刷新页面/滚动区背景 + 重绘各磁贴文字图标（磁贴本体为 FluentWidgets 原生组件，主题自动适配，无需重建）。
 - **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含多组设置：①个性化（**应用主题**：亮色 / 深色 / 跟随系统；**主题色**：跟随系统强调色（读 Windows 注册表，`SystemAccentListener` 监听 DWM 广播实时更新，系统色不落盘）/ 自定义（`ColorDialog` 取色器，选择即持久化）；**保存配置开关**：关闭后不读写 sensor_config.json；**传感器配置管理**：清除 / 导出 / 导入（`core.clear/export/import_sensor_config`，导出/导入走系统文件夹/文件选择对话框）；**恢复默认设置**：重置 app_config.json 与 sensor_config.json；**图表引擎切换**：matplotlib / pyqtgraph，未安装的引擎选项通过 `ComboBox.setItemEnabled` 灰显不可点击并在文案中标注"未安装"，从 pyqtgraph 切到 matplotlib 弹兼容性提醒确认框）②关于（应用名 / 版本 / 许可证）③开源信息（`ExpandGroupSettingCard` 列出依赖库、协议与官网链接）④源码 & 反馈（GitHub / Gitee / GitCode / Issue 链接）。主题切换通过 `theme_change_requested` 信号、引擎切换通过 `engine_change_requested` 信号分别与 `MainWindow.change_app_theme` / `MainWindow.change_chart_engine` 打通。
 - **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换、绘图引擎切换。`change_app_theme(theme)` 流程：固定模式（light/dark）先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色；**auto（跟随系统）模式不再调用 `setTheme`**（qconfig 已置 `Theme.AUTO`，系统主题变化由 `qconfig.themeChanged` 回调 `_on_fluent_theme_changed` 只刷新自定义控件，避免把 AUTO 覆盖成固定主题导致模式反复横跳 + 全量刷新死循环）。`change_chart_engine(engine)` 流程：先用 `chart_engine_available()` 拦截未安装引擎的请求，再遍历各传感器模块 `findChildren(ChartPanel)`，调用 `panel.set_engine(engine)` 重建引擎控件并重放最近一次绘制事务，曲线无缝衔接不丢数据。
+- **`_set_windows_appusermodelid()` / `_apply_taskbar_identity(window)`**：Windows 任务栏身份。前者设置进程级 AppUserModelID（任务栏分组独立）；后者必须在窗口首次 `show()` **之前**调用，通过 `SHGetPropertyStoreForWindow` 写入 `PKEY_AppUserModel_ID / RelaunchCommand / RelaunchDisplayNameResource / RelaunchIconResource`（图标为 `docs/images/icon.ico`），否则任务栏按钮会显示宿主 `python.exe` 的「Python」名称与图标；`sys.frozen`（PyInstaller）时 RelaunchCommand 退化为 exe 自身。
+- **`_install_qt_warning_filter()`**：安装 Qt 消息过滤器，仅屏蔽两条已知无害告警（`QFont::setPointSize: Point size <= 0`、`QWidgetWindow ... must be a top level window`），其余消息原样转发给安装前的处理器；在 `main()` 创建 QApplication 前调用。
 - **遗留代码**：`NavButton` / `SidebarWidget` 是迁移到 FluentWindow 前的手写侧边栏实现，**已不再被 `MainWindow` 使用**（FluentWindow 自带导航），仍保留在 `main.py` 中供对照参考，新功能不要基于它们开发。
 
 ### core.py 组成
@@ -175,7 +195,7 @@ PhysChem-DigitizerP/
 - 数据接入：模块在 `__init__` 调用 `chart.set_ai_data_provider(self._ai_data)`；回调返回 `{title, x_label, y_label, points, params, system_prompt}`，无数据返回 `None`。
 - system 提示词分层（`build_ai_system_prompt(context, experiment_info)`）：通用规范 `_AI_BASE_PROMPT` → 模块专属 `system_prompt`（兼容旧键 `prompt`）→【本次实验信息】→ 用户补充 `aiUserPrompt` →【实验配置参数】→【实验数据】（超 `aiDataLimit` 行均匀抽样）。
 - 每个模块定制系统提示词：模块顶部定义 `AI_SYSTEM_PROMPT` 常量（角色 + 测量原理/公式 + 数据特征 + 误差来源 + 分析要求），`_ai_data()` 以 `'system_prompt': AI_SYSTEM_PROMPT` 返回。
-- 对话窗口：左右气泡 / Enter 发送（Shift+Enter 换行）/ 同步数据 / 清空对话 / 实验信息 / 右上角设置（`AISettingsDialog`：端点、Key、模型、温度、max_tokens、数据行上限、自定义提示词）。每轮发送实时调用 provider 取最新数据（非快照）。
+- 对话窗口：左右气泡 / Enter 发送（Shift+Enter 换行）/ 同步数据 / 清空对话 / 实验信息 / 右上角设置（`AISettingsDialog`：端点、Key、模型、温度、max_tokens、数据行上限、自定义提示词）。每轮发送实时调用 provider 取最新数据（非快照）。AI 回复气泡用 `Qt.TextFormat.MarkdownText` 富文本渲染（Qt 内置 GitHub 方言：标题/列表/表格/代码/链接），用户输入保持纯文本；链接仅放行 http/https（`_on_bubble_link`）。进入 AI 时对话框 parent 传顶层窗口（`self.window()`），避免 Qt transient-parent 告警且遮罩覆盖整窗。
 - 请求由 `AIRequestThread` 后台线程用标准库 `urllib` 发送到 OpenAI 兼容 `/chat/completions`（零第三方依赖）；线程不挂 parent，发送中关窗自动收尾，避免 QThread 析构崩溃。
 
 ### 模块能力要点
@@ -293,6 +313,9 @@ class TemperatureSensorWidget(QWidget):
 - 模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
 - BLE 功能需要 `bleak`（可选依赖），未安装时会自动降级
 - 动态加载依赖识别区格式严格，字段名/冒号/空格写错会导致模块加载失败
+- **任务栏图标/名称**：`_apply_taskbar_identity(window)` 必须在 `window.show()` **之前**调用（在窗口 property store 写入 `PKEY_AppUserModel_*`）；源码运行时任务栏按钮显示应用名与 `docs/images/icon.ico`，否则回退为宿主 `python.exe` 的「Python」
+- **虚拟环境**：推荐根目录 `.venv/`（已加入 `.gitignore`）；运行 / 调试示例见「安装依赖」一节
+- **两条已知无害 Qt 告警**（`QFont::setPointSize <= 0`、`QWidgetWindow ... must be a top level window`）由 `main._install_qt_warning_filter()` 在创建 QApplication 前统一过滤，其余 Qt 消息照常输出
 - **退出确认框禁止在 `closeEvent` 内直接 `exec()`**：父窗口处于关闭状态时弹模态对话框会出现对话框无法激活、按钮点击无响应（表现为界面卡死，定时器仍在跑但输入进不去）；正确做法是 `event.ignore()` 取消本次关闭，再用 `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹框，确认后置 `_exit_confirmed` 并再次 `close()`（见 `MainWindow.closeEvent` / `_prompt_exit`）
 - **模块断开线程一律用 `core.stop_thread()`**（内部 `stop()` + 限时 `wait(2000)`，超时收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃）；通信线程 `running` 初值为 `True`、`run()` 首行检查，防止 `stop()` 先于 `run()` 执行时线程永不退出、`wait()` 卡死
 - **退出确认框必须用顶层 `Dialog`**（`MainWindow._prompt_exit`），并配合 `closeEvent` 的 `event.ignore()` + `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹出：窗口处于关闭状态时弹模态框可能无法激活、接收不到鼠标输入（表现为界面卡死）。其余提示 / 校准弹窗保持原有 `fluent_message_box()` / `MessageBoxBase` 实现不变。模态弹窗 `exec()` 返回后如需释放用 `deleteLater()`（延迟销毁），**不要**用 `WA_DeleteOnClose`——它会立即删掉 C++ 对象，之后访问控件会报 `RuntimeError: Internal C++ object already deleted`
@@ -329,6 +352,24 @@ pip install bleak
 ```
 
 A `requirements.txt` is now provided at the project root (all required and optional deps) — just run `pip install -r requirements.txt`. No `setup.py` or `pyproject.toml` exists.
+
+A virtual environment in the project root is recommended (`.venv/` is already in `.gitignore`):
+
+```powershell
+# Windows (PowerShell)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1    # if script execution is blocked: Set-ExecutionPolicy -Scope Process Bypass
+pip install -r requirements.txt
+python main.py
+```
+
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
 
 ## Run & debug
 
@@ -430,6 +471,8 @@ Flash via Arduino IDE. Board packages:
 - **`HomePageWidget`**: home page. The upper half holds the project info card + 3-platform repo address card (`ExpandGroupSettingCard`); the lower half is the **sensor module tile grid** — one `ModuleFolderTile` (`CardWidget` subclass) per module: a module text icon (meta `V`/`F`/`x`/`pH`/`v`/`A`, rendered via `make_text_icon()` with a theme-reactive `refresh_icon()`) + module name + a pin button in the top-right (`PillToolButton` + `FIF.PIN`, pin-to-top toggle). The grid uses `AdaptiveFlowLayout` (`setWidgetMinimumWidth(160)` computes columns automatically and wraps to fill rows as the window resizes). Pinned modules sort first within their group; the state persists to `General.PinnedModules` in `app_config.json` (serialized as a JSON array by `core.StringListSerializer`); clicking a tile emits `module_clicked` → switches to that module. Titles use FluentWidgets `TitleLabel` / `SubtitleLabel` for automatic light/dark theme adaptation; `apply_theme()` refreshes the page/scroll background and redraws each tile's text icon (tiles themselves are native FluentWidgets components and adapt automatically — no rebuild needed).
 - **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Groups: ① Personalization (**app theme**: light / dark / follow system; **theme color**: follow the Windows system accent color — read from the registry, `SystemAccentListener` listens for DWM broadcasts and updates live, system color is never persisted — or custom via a `ColorDialog` color picker, persisted on selection; **config persistence switch**: when off, sensor_config.json is neither read nor written; **sensor config management**: clear / export / import via `core.clear/export/import_sensor_config` using system folder/file dialogs; **reset to defaults**: restores app_config.json and sensor_config.json; **chart engine: matplotlib / pyqtgraph** — unavailable engines are grayed out via `ComboBox.setItemEnabled` and labeled "未安装/not installed"; switching from pyqtgraph to matplotlib pops a compatibility warning confirmation) ② About (app name / version / license) ③ Open-source info (`ExpandGroupSettingCard` listing dependency libraries, licenses and official links) ④ Source & feedback (GitHub / Gitee / GitCode / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via `theme_change_requested`; engine switching is wired to `MainWindow.change_chart_engine` via `engine_change_requested`.
 - **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, theme switching, and chart engine switching. `change_app_theme(theme)` flow: for fixed modes (light/dark) it first calls `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors; in **auto (follow system) mode `setTheme` is NOT called** (qconfig is already set to `Theme.AUTO`; system theme changes fire `qconfig.themeChanged` → `_on_fluent_theme_changed`, which only refreshes custom widgets — this avoids overwriting AUTO with a fixed theme, which would cause the mode to flip-flop and trigger full-refresh loops). `change_chart_engine(engine)` flow: first rejects requests for uninstalled engines via `chart_engine_available()`, then iterates each sensor module via `findChildren(ChartPanel)` and calls `panel.set_engine(engine)` to rebuild the engine widget and replay the last committed draw transaction — curves carry over seamlessly without data loss.
+- **`_set_windows_appusermodelid()` / `_apply_taskbar_identity(window)`**: Windows taskbar identity. The first sets the process-level AppUserModelID (separate taskbar grouping); the second must run **before the window's first `show()`** and writes `PKEY_AppUserModel_ID / RelaunchCommand / RelaunchDisplayNameResource / RelaunchIconResource` (icon: `docs/images/icon.ico`) through `SHGetPropertyStoreForWindow`; otherwise the taskbar shows the host `python.exe` "Python" name and icon. Under PyInstaller (`sys.frozen`) the RelaunchCommand degrades to the exe itself.
+- **`_install_qt_warning_filter()`**: installs a Qt message handler that suppresses exactly two known-harmless warnings (`QFont::setPointSize: Point size <= 0`, `QWidgetWindow ... must be a top level window`) and forwards everything else to the previously installed handler; called in `main()` before the QApplication is created.
 - **Legacy code**: `NavButton` / `SidebarWidget` are the hand-written sidebar implementation from before the FluentWindow migration, **no longer used by `MainWindow`** (FluentWindow has its own navigation). They are still kept in `main.py` for reference — do not build new features on them.
 
 ### core.py composition
@@ -472,7 +515,7 @@ Centralized shared code — `SerialThread`, `SimulatorThread`, `BLESerialThread`
 - Module wiring: call `chart.set_ai_data_provider(self._ai_data)` in `__init__`; the callback returns `{title, x_label, y_label, points, params, system_prompt}` (or `None` when empty).
 - System prompt layering (`build_ai_system_prompt(context, experiment_info)`): base prompt `_AI_BASE_PROMPT` → per-module `system_prompt` (legacy `prompt` key still supported) → experiment info → user `aiUserPrompt` → config params → data (uniformly down-sampled above `aiDataLimit` rows).
 - Per-module system prompts: define an `AI_SYSTEM_PROMPT` constant (role + measurement principle/formula + data characteristics + error sources + analysis guidance) and return it via `'system_prompt'`.
-- Chat window: left/right bubbles, Enter to send (Shift+Enter newline), sync data, clear chat, experiment info, settings (`AISettingsDialog`: endpoint, key, model, temperature, max tokens, data row limit, custom prompt). Every request re-reads the latest data through the provider (no snapshot).
+- Chat window: left/right bubbles, Enter to send (Shift+Enter newline), sync data, clear chat, experiment info, settings (`AISettingsDialog`: endpoint, key, model, temperature, max tokens, data row limit, custom prompt). Every request re-reads the latest data through the provider (no snapshot). AI reply bubbles are rendered as rich text via `Qt.TextFormat.MarkdownText` (Qt built-in GitHub dialect: headings/lists/tables/code/links); user input stays plain text; links only allow http/https (`_on_bubble_link`). AI dialogs are parented to the top-level window (`self.window()`), avoiding Qt transient-parent warnings and making the mask cover the whole window.
 - `AIRequestThread` posts to any OpenAI-compatible `/chat/completions` endpoint with the stdlib `urllib` (zero third-party deps); the thread has no parent so closing the window mid-request is safe (avoids a QThread-destroyed-while-running crash).
 
 ### Module capability notes
@@ -590,6 +633,9 @@ Restart `main.py` — the module auto-appears in sidebar (text icon) + home card
 - Module filenames use English snake_case (e.g. `voltage_sensor.py`), per PEP 8
 - BLE requires `bleak` (optional dependency) — graceful fallback if missing
 - Dynamic loading depends on strict meta header format — typos in field names/colons/spaces will cause load failures
+- **Taskbar icon/name**: `_apply_taskbar_identity(window)` must be called **before `window.show()`** (writes `PKEY_AppUserModel_*` into the window property store); when run from source the taskbar button shows the app name and `docs/images/icon.ico`, otherwise it falls back to the host `python.exe` "Python"
+- **Virtual environment**: `.venv/` at the project root is recommended (already in `.gitignore`); see the Install section for run/debug commands
+- **Two known-harmless Qt warnings** (`QFont::setPointSize <= 0`, `QWidgetWindow ... must be a top level window`) are filtered by `main._install_qt_warning_filter()` before the QApplication is created; all other Qt messages are forwarded as usual
 - **Never call `exec()` on the exit-confirmation dialog directly inside `closeEvent`**: showing a modal dialog while the parent window is in the closing state can leave it unable to activate and unresponsive to button clicks (looks like a UI freeze — timers keep running but input never arrives). Instead call `event.ignore()`, then open the dialog on the next event-loop turn via `QTimer.singleShot(0, ...)`, and re-`close()` after setting `_exit_confirmed` (see `MainWindow.closeEvent` / `_prompt_exit`)
 - **Always stop module threads with `core.stop_thread()`**: it calls `stop()` + a bounded `wait(2000)` and keeps timed-out threads alive in `_retired_threads` (avoids the fail-fast crash when a running QThread gets collected); comm threads initialize `running = True` and check it on the first line of `run()` so a `stop()` issued before `run()` starts can never leave the thread running forever and hang `wait()`
 - **The exit-confirmation dialog must be a top-level `Dialog`** (`MainWindow._prompt_exit`), opened on the next event-loop turn via `event.ignore()` + `QTimer.singleShot(0, ...)` in `closeEvent`: a modal dialog shown while the parent window is closing may fail to activate and receive mouse input (looks like a UI freeze). All other prompt / calibration popups keep their existing `fluent_message_box()` / `MessageBoxBase` implementations. Release a modal dialog after `exec()` with `deleteLater()` (deferred); do **not** use `WA_DeleteOnClose`, which deletes the C++ object immediately and makes later widget access raise `RuntimeError: Internal C++ object already deleted`

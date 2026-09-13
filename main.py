@@ -932,7 +932,7 @@ class SettingsWidget(QWidget):
     theme_change_requested = Signal(str)  # 'light' / 'dark'
     engine_change_requested = Signal(str)  # 'matplotlib' / 'pyqtgraph'
 
-    APP_VERSION = "1.4.1"
+    APP_VERSION = "1.5"
 
     def __init__(self):
         super().__init__()

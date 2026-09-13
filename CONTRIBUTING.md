@@ -47,7 +47,32 @@
 
 ---
 
-## 四、代码规范
+## 四、开发环境准备（虚拟环境）
+
+为避免依赖版本冲突，推荐在项目根目录用独立虚拟环境开发与调试：
+
+```powershell
+# Windows（PowerShell）
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python main.py
+```
+
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+- 激活成功后终端提示符前会出现 `(.venv)`；`deactivate` 退出。
+- `.venv/` 已在 `.gitignore` 中，不会被提交；提交前请确认未把个人环境文件带进版本库。
+
+---
+
+## 五、代码规范
 
 - 遵循项目现有的代码风格、结构与命名约定。
 - 提交前请在本地完成基础测试，避免引入明显错误。
@@ -55,7 +80,7 @@
 
 ---
 
-## 五、联系维护者
+## 六、联系维护者
 
 - 提交邮箱：`wzd123789@hotmail.com`
 - 如有贡献、授权或优先级问题，请优先通过 Issue 沟通。

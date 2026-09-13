@@ -42,6 +42,10 @@
 __pycache__/
 *.pyc
 
+# 虚拟环境（推荐在项目根目录创建 .venv）
+.venv/
+venv/
+
 # PyInstaller 打包产物
 build/
 dist/

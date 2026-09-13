@@ -39,7 +39,29 @@
 ### 3.2.从源码打开（需要 python 环境，git 可选）
 #### 3.2.1.[安装 python](https://www.python.org/downloads/)
 **注意，版本号大于3.10**
-#### 3.2.2.安装库
+#### 3.2.2.创建虚拟环境（推荐）
+
+虚拟环境可以避免与系统 Python 的库版本冲突，也便于随时重建/卸载依赖。在项目根目录执行：
+
+```powershell
+# Windows（PowerShell / CMD）
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1     # PowerShell 激活虚拟环境
+# 若提示“禁止运行脚本”，先执行：Set-ExecutionPolicy -Scope Process Bypass
+# CMD 用户改用：.venv\Scripts\activate.bat
+```
+
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+激活成功后终端提示符前会出现 `(.venv)`，之后的 `pip` / `python` 都作用于该环境；输入 `deactivate` 可退出。`.venv/` 已在 `.gitignore` 中，不会被提交。
+
+> 不想用虚拟环境也可以跳过本节，直接在系统 Python 上安装依赖（效果相同，只是库会装到全局）。
+
+#### 3.2.3.安装库
 
 依赖库
 
@@ -82,7 +104,7 @@ pip install pyqtgraph
 pip install matplotlib
 pip install bleak
 ```
-#### 3.2.3.下载代码（如有git）
+#### 3.2.4.下载代码（如有git）
 ```bash
 # GitHub
 git clone https://github.com/wangzhidong2/PhysChem-DigitizerP.git
@@ -92,12 +114,14 @@ git clone https://gitee.com/wangzhidong2/PhysChem-DigitizerP.git
 git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
 
 cd PhysChem-DigitizerP
+# 使用虚拟环境时先激活（Windows PowerShell；macOS/Linux 用 source .venv/bin/activate）
+.\.venv\Scripts\Activate.ps1
 python ./main.py
 ```
-#### 3.2.4.或者，使用平台的源代码打包功能
-##### 3.2.4.1.下载代码
+#### 3.2.5.或者，使用平台的源代码打包功能
+##### 3.2.5.1.下载代码
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/e776925b-b898-4fe4-82b9-1b01bd4260e2/image.png 'image.png')
-##### 3.2.4.2.解压，双击 `main.py` 打开
+##### 3.2.5.2.解压，双击 `main.py` 打开
 ### 3.3.功能模块
 
 项目采用**模块化架构**——主程序 `main.py` 启动时扫描 `传感器代码/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
@@ -143,6 +167,11 @@ PhysChem-DigitizerP/
 ├── main_legacy.py              # 历史存档（迁移前单文件版本，不再维护）
 ├── test_serial.py              # 串口连接测试工具
 ├── sensor_config.json          # 传感器校准配置（运行时自动生成，.gitignore）
+├── app_config.json             # 应用配置（主题/引擎/置顶等，运行时生成，.gitignore）
+├── requirements.txt            # 依赖清单（pip install -r requirements.txt）
+├── CONTRIBUTING.md             # 贡献指南
+├── PhysChem-DigitizerP.spec    # PyInstaller 打包配置
+├── .venv/                      # 虚拟环境（可选，.gitignore；创建方法见 3.2.2）
 ├── README.md                   # 主文档（本文件）
 ├── AGENTS.md                   # 开发者指南（含添加新模块教程）
 ├── LICENSE                     # GPL-3.0 许可证
@@ -231,11 +260,12 @@ python main.py
 - 串口下拉框显示"未安装 pyserial"占位；手动选择串口模式并连接时，弹窗提示安装命令 `pip install pyserial`
 - 安装后重启程序即可恢复串口连接功能
 
-### 6.6.AI 分析实验（可选）
+### 6.7.AI 分析实验（可选）
 
 采集到数据后，点击图表卡右上角「**AI分析实验**」，可填写本次实验的**实验名称、实验目的、实验条件与备注（均为选填，留空直接开始）**——信息按模块记住，下次进入自动预填；确认后进入对话窗口：
 
 - 每轮提问自动附带当前最新数据与实验参数，可直接问：总结趋势、判断异常点、推荐拟合函数、分析误差来源、给出改进建议
+- AI 回复按 **Markdown 富文本**渲染（标题 / 列表 / 粗体 / 代码 / 表格 / 链接），链接点击仅放行 http/https；用户输入保持原文显示
 - 每个传感器模块内置**专属系统提示词**（测量原理 / 数据特征 / 误差来源 / 分析要求），可在窗口「设置 → **模块预置系统提示词**」中查看并修改（仅对当前模块生效，「恢复默认」还原内置内容）
 - 窗口右上角「设置」配置 API 端点 / Key / 模型（任意 OpenAI 兼容 `/chat/completions` 端点，如 DeepSeek、通义、本地 Ollama），可调温度、最大输出、数据行上限与自定义提示词
 - 「实验信息」可随时修改本次实验信息，「同步数据」「清空对话」管理会话
