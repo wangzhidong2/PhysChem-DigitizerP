@@ -35,7 +35,7 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QFontMetrics,
 # FluentWidgets — WinUI3 风格组件库（社区版，GPLv3 + 商业双协议）
 # 文档：https://qfluentwidgets.com/
 from qfluentwidgets import (
-    FluentWindow, MSFluentWindow, FluentIcon as FIF, NavigationItemPosition,
+    FluentWindow, FluentIcon as FIF, NavigationItemPosition,
     Theme, setTheme, PushButton, PrimaryPushButton,
     ComboBox, InfoBar, InfoBarPosition, BodyLabel,
     TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
@@ -1560,13 +1560,12 @@ class SettingsWidget(QWidget):
 # ============================================================
 # 主窗口 + 动态加载器
 # ============================================================
-class MainWindow(MSFluentWindow):
+class MainWindow(FluentWindow):
     """主窗口 - 启动时扫描模块目录并动态加载各传感器模块
 
-    基于 MSFluentWindow（Microsoft Store 风格，PySide6-Fluent-Widgets）：
-    左侧为纯图标 NavigationBar 窄导航条，顶部为横贯整窗的 MSFluentTitleBar，
-    Win11 下标题栏与窗口背景透出系统 Mica 材质（基类默认 setMicaEffectEnabled）；
-    内容区用 stackedWidget，各传感器 widget 通过 addSubInterface 注册到导航。
+    基于 FluentWindow（PySide6-Fluent-Widgets），自动获得 WinUI3 风格的
+    NavigationInterface（左侧导航）+ stackedWidget（内容栈）+ 主题切换。
+    各传感器 widget 通过 addSubInterface 注册到导航。
     """
 
     def __init__(self):
@@ -1596,7 +1595,7 @@ class MainWindow(MSFluentWindow):
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
         self.resize(1200, 800)
-        # MSFluentWindow 自带 NavigationBar 窄导航条 + stackedWidget，无需手动布局
+        # FluentWindow 自带 NavigationInterface + stackedWidget，无需手动布局
 
         # === 加载模块 ===
         # 确定传感器代码目录（与 main.py 同级）
