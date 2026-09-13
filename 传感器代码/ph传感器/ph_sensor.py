@@ -45,17 +45,18 @@ from core import (
 # 由 core.build_ai_system_prompt 组装进 system 消息）
 AI_SYSTEM_PROMPT = (
     "你是一位资深化学实验指导教师与水质分析专家，正在协助分析 SEN0161 pH 电极"
-    "（ESP32-S3 采集）的实验数据。"
-    "测量原理：pH 电极电位与溶液 pH 满足能斯特关系（25℃ 时约 -59.16 mV/pH），"
-    "模块对 ADC 值做单点/两点/三点校准（线性或二次多项式）换算为 pH。"
-    "数据特征：电极充分稳定后读数应平稳（波动通常 <0.1 pH）；缓冲液中校准后"
-    "偏差应很小；持续单向漂移多为电极老化、参比液干涸或温度变化，阶跃跳动"
-    "多为搅拌/气泡/接触问题。"
-    "常见误差来源：电极老化与污染、参比液干涸、未做温度补偿、搅拌不均、"
-    "缓冲液失效或交叉污染、读数未稳定即记录。"
-    "分析要求：先评估稳定性（漂移速率、噪声幅度、跳变点），再解释可能原因；"
-    "结合校准信息（点数、溶液、拟合方式）判断系统误差；给出可操作的电极保养、"
-    "重新校准或实验改进步骤。"
+    "（ESP32-S3，12 位 ADC，0~4095）的实验数据。"
+    "测量原理：pH 电极电位满足能斯特方程，25℃ 理论斜率约 −59.16 mV/pH；模块将电极"
+    "模拟输出换算为 ADC 值后，用单点/两点/三点校准拟合 pH 与 ADC 的关系（线性或二次"
+    "多项式），再由 ADC 反算 pH。"
+    "数据特征：电极稳定后读数应平稳（波动通常 <0.1 pH）；缓冲液中校准后偏差应很小；"
+    "持续单向漂移多为电极老化、参比液干涸或温度变化；阶跃跳动多为搅拌、气泡或接触"
+    "问题；温度变化会引起斜率与零点漂移。"
+    "常见误差来源：电极老化与污染、参比液干涸、未做温度补偿、搅拌不均、缓冲液失效或"
+    "交叉污染、读数未稳定即记录、ADC 噪声与接地干扰。"
+    "分析要求：①先评估稳定性：漂移速率、噪声幅度、跳变点及发生时刻；②结合校准点数、"
+    "校准液与拟合方式判断系统偏差来源；③估算稳定时间与不确定度；④给出电极保养"
+    "（浸泡液、清洗）、重新校准、温度补偿与实验步骤改进的具体建议。"
 )
 
 
@@ -724,15 +725,20 @@ class PhSensorWidget(QWidget):
         """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
         if not self.ph_data:
             return None
+        mode_name = {1: "单点校准", 2: "两点校准", 3: "三点校准"}.get(
+            self.calibration_mode, f"{self.calibration_mode}点校准")
         return {
             'title': 'pH传感器',
             'x_label': '时间 (秒)',
             'y_label': 'pH值',
             'points': list(zip(self.time_data, self.ph_data)),
             'params': (
-                f"传感器=SEN0161 pH 电极 + ESP32-S3（12 位 ADC）, "
+                f"传感器=SEN0161 pH 电极 + ESP32-S3（12 位 ADC，0~4095）, "
+                f"校准方式={mode_name}, "
                 f"校准 {len(self.calibration_points)} 点 {self.calibration_points}, "
-                f"采样间隔={self.sample_interval_ms}ms"),
+                f"拟合系数 a={self.cal_coeffs[0]:.6g}, b={self.cal_coeffs[1]:.6g}, "
+                f"c={self.cal_coeffs[2]:.6g}（pH = a·ADC² + b·ADC + c）, "
+                f"理论斜率≈−59.16mV/pH（25℃）, 采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
         }
 

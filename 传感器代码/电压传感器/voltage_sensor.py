@@ -46,15 +46,19 @@ from core import (
 # 由 core.build_ai_system_prompt 组装进 system 消息）
 AI_SYSTEM_PROMPT = (
     "你是一位资深物理实验指导教师与电子测量专家，正在协助分析电压采集实验数据"
-    "（ESP32 内置 ADC / HX711 24 位 / ADS1115 16 位，信号经分压电路接入）。"
-    "测量原理：被测电压 = ADC 换算电压 × 分压比 ÷ 放大倍数；ADC 的位数、PGA 增益、"
-    "参考电压与采样率共同决定分辨率、量程与噪声水平。"
-    "数据特征：稳定电源应呈平直曲线；电池等电源呈缓慢下降趋势；ADC 量化台阶与"
-    "随机噪声叠加在真实信号上，读数分辨能力受位数与量程限制。"
+    "（ESP32 内置 ADC / ADS1115 16 位 / HX711 24 位，信号可经分压与放大电路接入）。"
+    "测量原理：ADC 端电压 V_adc = raw / 满量程 × 参考电压（内置 ADC 有符号模式量程 "
+    "-VREF~+VREF，VREF=3.3V；ADS1115 为 raw/32768 × FSR(PGA)；HX711 为 "
+    "raw/2^23 × AVDD/Gain）；被测电压 = V_adc × 分压比 ÷ 放大倍数，启用去皮时再减"
+    "空载偏移。理论分辨率 = 参考电压/满量程 × 分压比 ÷ 放大倍数，有效分辨率受噪声限制。"
+    "数据特征：稳压源应呈平直曲线；电池等电源呈缓慢下降趋势；ADC 量化台阶、随机噪声"
+    "与工频干扰叠加在真实信号上。"
     "常见误差来源：分压电阻精度与温漂、ADC 非线性与噪声、参考电压漂移、未共地或"
-    "接地环路、输入超量程、ADS1115 PGA 配置不当。"
-    "分析要求：结合分压比与 ADC 参数评估分辨率与量程是否匹配；区分真实趋势与"
-    "量化/噪声；给出硬件校准、软件滤波、更换更高精度 ADC 或调整 PGA 的具体建议。"
+    "接地环路、输入超量程、PGA/通道/增益配置与固件不一致、去皮基准选取不当。"
+    "分析要求：①结合分压比与放大倍数评估量程与分辨率是否匹配被测信号；"
+    "②用均值、标准差、峰峰值与漂移速率量化噪声与趋势，区分真实变化与量化/噪声；"
+    "③数据呈台阶状时指出量化或参考跳变来源；④给出多点校准、软件滤波/多次平均、"
+    "调整 PGA/增益、更换更高精度 ADC、改善接地与屏蔽等具体建议。"
 )
 
 
@@ -1135,16 +1139,32 @@ class VoltageSensorWidget(QWidget):
         """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
         if not self.voltage_data:
             return None
+        # 电路参数：ADC 端满量程、实际量程与理论分辨率（随模式变化）
+        if self.ads1115_mode:
+            fs = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
+            counts = 32768.0
+        elif self.hx711_mode:
+            gain = 128 if self.hx711_channel == 'A' else 32
+            fs, counts = self.hx711_avdd / gain, 8388608.0
+        else:
+            fs = self.VREF
+            counts = float(self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095))
+        actual = fs * self.divider_ratio / self.amp_ratio
+        res = actual / counts
         return {
             'title': '电压传感器',
             'x_label': '时间 (秒)',
             'y_label': f'电压 ({self.current_unit})',
             'points': list(zip(self.time_data, [self.to_current_unit(v) for v in self.voltage_data])),
             'params': (
-                f"采样方式={'ADS1115 16位' if self.adc_bits == 16 else ('HX711 24位' if self.adc_bits == 24 else f'ESP32 内置 ADC {self.adc_bits}位')}, "
-                f"分压比={self.divider_ratio}, 放大倍数={self.amp_ratio}, "
+                f"采样方式={'ADS1115 16位' if self.ads1115_mode else ('HX711 24位' if self.hx711_mode else f'ESP32 内置 ADC {self.adc_bits}位')}, "
+                f"参考电压=3.3V, 分压比={self.divider_ratio}, 放大倍数={self.amp_ratio}, "
+                f"ADC端满量程=±{fs:.6g}V, 实际量程=±{actual:.6g}V, "
+                f"理论分辨率={res:.3g}V/计数, "
                 f"ADS1115 PGA={self.ads1115_pga}/通道={self.ads1115_channel}, "
-                f"HX711 AVDD={self.hx711_avdd}V/通道={self.hx711_channel}, "
+                f"HX711 AVDD={self.hx711_avdd}V/通道={self.hx711_channel}"
+                f"(增益{128 if self.hx711_channel == 'A' else 32}), "
+                f"去皮={'启用(偏移=%.6gV)' % self.tare_offset_v if self.tare_active else '未启用'}, "
                 f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
         }

@@ -48,16 +48,18 @@ from core import (
 AI_SYSTEM_PROMPT = (
     "你是一位资深物理实验指导教师与力学测量专家，正在协助分析 HX711（24 位 ADC）"
     "加应变片式力/质量传感器的实验数据。"
-    "测量原理：读数 =（ADC 原始值 − 去皮 offset）× 标定系数 scale；offset 由"
-    "空载去皮获得，scale 由已知砝码标定。"
-    "数据特征：静态称重曲线应平稳，噪声通常在显示精度的 1~2 个单位内；加载与"
-    "卸载对应台阶式变化；蠕变表现为读数缓慢下沉，温度漂移表现为零点或灵敏度"
-    "随时间缓变。"
-    "常见误差来源：传感器蠕变与迟滞、温度漂移、平台振动、接线/接触电阻变化、"
-    "超量程、标定砝码不准确、未充分预热。"
-    "分析要求：评估零点漂移与噪声幅度、识别蠕变和加载台阶；对动态过程给出峰值、"
-    "变化速率与响应时间；结合标定信息判断系统误差；建议多点标定、数字滤波、"
-    "稳定平台等改进措施。"
+    "测量原理：质量(克) =（raw − 去皮 offset）× 标定系数 scale；offset 由空载去皮获得，"
+    "scale 由已知砝码两点标定；显示单位 g/kg/N（N = 克 ÷ 1000 × 9.8）。未校准时显示"
+    "原始 ADC 值。"
+    "数据特征：静态称重曲线应平稳，噪声通常在显示精度的 1~2 个单位内；加载与卸载对应"
+    "台阶式变化；蠕变表现为读数缓慢下沉，温度漂移表现为零点或灵敏度随时间缓变；"
+    "冲击、振动、自由落体等动态过程呈脉冲或振荡。"
+    "常见误差来源：传感器蠕变与迟滞、温度漂移、平台振动、接线/接触电阻变化、超量程、"
+    "标定砝码不准、未充分预热、去皮时未真正空载。"
+    "分析要求：①评估零点漂移与噪声幅度，判断标定是否仍然有效；②识别加载/卸载台阶，"
+    "给出幅值、稳定时间与超调；③动态过程给出峰值、变化速率与响应时间，并与 F=ma、"
+    "重力模型对照；④区分随机误差与系统误差，建议多点标定、数字滤波（滑动平均/中值）、"
+    "减振、预热与量程复核等改进措施。"
 )
 
 
@@ -956,15 +958,22 @@ class ForceSensorWidget(QWidget):
         """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
         if not self.force_data:
             return None
+        # 已校准时 force_data 存克值，按显示单位换算后与 y_label 保持一致；
+        # 未校准时为原始 ADC 值
+        display = ([self.convert_unit(v) for v in self.force_data]
+                   if self.calibrated else list(self.force_data))
         return {
             'title': '力传感器',
             'x_label': '时间 (秒)',
             'y_label': self.get_chart_ylabel(),
-            'points': list(zip(self.time_data, self.force_data)),
+            'points': list(zip(self.time_data, display)),
             'params': (
                 f"传感器=HX711（24 位 ADC）+ 应变片, 去皮 offset={self.offset}, "
-                f"标定 scale={self.scale}, 已校准={self.calibrated}, "
-                f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
+                f"标定 scale={self.scale:.6f} 克/计数, 砝码质量={self.cal_known_weight}g, "
+                f"已校准={self.calibrated}"
+                + ("" if self.calibrated else "（未校准时数据为原始 ADC 值）")
+                + f", 显示单位={self.current_unit}, 重力加速度 g=9.8m/s², "
+                f"原始 ADC 范围=±8388607（24 位有符号）, 采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
         }
 

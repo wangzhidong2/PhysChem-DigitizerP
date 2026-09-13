@@ -46,15 +46,19 @@ from core import (
 # 由 core.build_ai_system_prompt 组装进 system 消息）
 AI_SYSTEM_PROMPT = (
     "你是一位资深物理实验指导教师与电学测量专家，正在协助分析 ACS712 霍尔电流"
-    "传感器（5A/20A/30A 量程）的实验数据。"
-    "测量原理：电流 =（传感器输出电压 − 零点电压）÷ 灵敏度；ACS712 各量程灵敏度"
-    "不同（约 185/100/66 mV/A），交流模式取滚动窗口 RMS。"
-    "数据特征：直流回路电流应平稳；交流电流呈周期性波动，RMS 应与有效值一致；"
-    "电机/开关类负载会出现尖峰与纹波。"
-    "常见误差来源：零点漂移与温漂、电源纹波、分压电阻误差、导线磁场干扰、量程"
-    "选择不当（小电流用大量程会降低分辨率）、未做零点校准。"
-    "分析要求：结合量程与零点校准状态判断读数可信度；直流分析趋势、噪声与功耗"
-    "变化，交流分析周期、峰值与 RMS；给出校准、滤波与抗干扰的改进建议。"
+    "传感器（5A/20A/30A 量程，DC/AC 模式）的实验数据。"
+    "测量原理：ACS712 零电流输出约 VCC/2，灵敏度约 185/100/66 mV/A（对应 5A/20A/30A）；"
+    "传感器输出经分压电路接入 ADC，电流 I =（V_sensor − 零点电压）÷ 灵敏度，其中 "
+    "V_sensor = ADC 端电压 × 分压比；AC 模式取滚动窗口的电流 RMS。"
+    "数据特征：直流回路电流应平稳，负载切换呈台阶；交流电流呈周期波动，RMS 应与"
+    "有效值一致；电机、开关电源类负载会出现尖峰与纹波；ADC 位数与分压比共同决定"
+    "可分辨的最小电流变化。"
+    "常见误差来源：零点漂移与温漂、电源纹波、分压电阻误差、导线磁场干扰、量程选择"
+    "不当（小电流用大量程会明显降低分辨率）、未做零点校准、AC 窗口过短导致 RMS 波动。"
+    "分析要求：①结合量程、灵敏度与分压比估算电流分辨率，判断读数可信度与量程是否合适；"
+    "②DC 数据：分析均值、漂移、噪声与功率变化趋势，识别负载台阶；③AC 数据：估算周期、"
+    "峰值、RMS 与波形因数（峰值/RMS），判断是否接近正弦或含明显谐波；④给出零点/量程"
+    "校准、滤波、抗干扰或更换量程的具体建议。"
 )
 
 
@@ -1144,6 +1148,13 @@ class CurrentSensorWidget(QWidget):
         """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
         if not self.current_data:
             return None
+        # 电路参数：电流分辨率与可测范围（受 ADC 量程、分压比与零点限制）
+        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
+        res_i = (self.VREF / max_adc) * self.divider_ratio / self.sensitivity
+        v_sensor_max = self.VREF * self.divider_ratio
+        i_pos = (v_sensor_max - self.v_quiescent) / self.sensitivity
+        i_neg = (0.0 - self.v_quiescent) / self.sensitivity
+        lo, hi = min(i_pos, i_neg), max(i_pos, i_neg)
         return {
             'title': '电流传感器',
             'x_label': '时间 (秒)',
@@ -1151,8 +1162,12 @@ class CurrentSensorWidget(QWidget):
             'points': list(zip(self.time_data, [self.to_current_unit(c) for c in self.current_data])),
             'params': (
                 f"传感器=ACS712 {self.acs_range} 量程（灵敏度 {self.sensitivity:.3f} V/A）, "
-                f"VCC={self.vcc}V, 零点电压={self.v_quiescent:.4f}V, "
-                f"分压比={self.divider_ratio}, 模式={self.current_mode}, "
+                f"VCC={self.vcc}V, 零点电压={self.v_quiescent:.4f}V"
+                f"(理论 VCC/2={self.vcc / 2:.4f}V), "
+                f"分压比={self.divider_ratio}, ADC 位数={self.adc_bits}, "
+                f"电流分辨率≈{res_i * 1000:.3f}mA/计数, "
+                f"可测范围≈{lo:.2f}~{hi:.2f}A（受 ADC 量程与分压限制）, "
+                f"模式={self.current_mode}, AC RMS 窗口={self.ac_rms_window}点, "
                 f"零点校准={'已校准' if self.zero_cal_active else '未校准'}, "
                 f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
