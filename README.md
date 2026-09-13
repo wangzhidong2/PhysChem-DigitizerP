@@ -278,6 +278,8 @@ python main.py
 ### 6.8.运行日志（排障用）
 
 运行日志**始终在控制台显示**（启动信息、模块加载、配置读写、连接/采集/校准等提示照常输出）；**设置 → 个性化 → 运行日志**开关（**默认开启**）决定是否同时写入项目目录下的 `logs.json`（JSON Lines 格式，每行一个 JSON 对象，跨次运行追加）。
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/3211fb3d-8d7c-41de-9d1e-531a1c0d4999/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/4d512b66-a5de-4b75-b9e0-03ed314908d9/image.png 'image.png')
 
 - **详细度**（同时作用于控制台与日志文件，默认「标准」）：
   - 简略：只记录警告与错误（连接失败、依赖缺失等）
