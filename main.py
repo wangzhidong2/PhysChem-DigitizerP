@@ -1706,7 +1706,7 @@ class MainWindow(FluentWindow):
 
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
-        self.resize(1200, 800)
+        self.showMaximized()
         # FluentWindow 自带 NavigationInterface + stackedWidget，无需手动布局
 
         # === 加载模块 ===
