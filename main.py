@@ -1706,7 +1706,13 @@ class MainWindow(FluentWindow):
 
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
-        self.resize(1200, 800)
+        # 窗口默认尺寸按屏幕可用区自适应（85%）：小屏（如 1280×680 工作区）
+        # 不会溢出屏幕、大屏也不至过大；该值即“还原窗口”时的大小
+        # （启动默认最大化，见 main()）
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            self.resize(int(avail.width() * 0.85), int(avail.height() * 0.85))
         # FluentWindow 自带 NavigationInterface + stackedWidget，无需手动布局
 
         # === 加载模块 ===
@@ -2141,7 +2147,7 @@ def main():
     window.setWindowIcon(app_icon)
     # 任务栏身份（显示名/图标）必须在首次 show() 前写入
     _apply_taskbar_identity(window)
-    # 默认最大化启动；init_ui 的 resize(1200, 800) 作为“还原窗口”时的大小
+    # 默认最大化启动；init_ui 自适应的窗口尺寸作为“还原窗口”时的大小
     window.showMaximized()
     sys.exit(app.exec())
 
