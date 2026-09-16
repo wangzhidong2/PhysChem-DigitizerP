@@ -1706,7 +1706,7 @@ class MainWindow(FluentWindow):
 
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
-        self.showMaximized()
+        self.resize(1200, 800)
         # FluentWindow 自带 NavigationInterface + stackedWidget，无需手动布局
 
         # === 加载模块 ===
@@ -2141,7 +2141,8 @@ def main():
     window.setWindowIcon(app_icon)
     # 任务栏身份（显示名/图标）必须在首次 show() 前写入
     _apply_taskbar_identity(window)
-    window.show()
+    # 默认最大化启动；init_ui 的 resize(1200, 800) 作为“还原窗口”时的大小
+    window.showMaximized()
     sys.exit(app.exec())
 
 
