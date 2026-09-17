@@ -436,6 +436,15 @@ def _ensure_log_handlers():
     """创建（懒初始化）控制台与 JSON Lines 两个 handler。"""
     global _console_log_handler, _json_log_handler
     if _console_log_handler is None:
+        # stdout 被重定向（管道/文件）时按系统 ANSI 代码页编码（中文系统为
+        # GBK），含 '✓' 等非 GBK 字符的记录会抛 UnicodeEncodeError 被整条
+        # 丢弃，并向 stderr 刷「--- Logging error ---」回溯。这里把编码错误
+        # 策略改为 replace：无法编码的字符替换显示，记录不再丢失；交互式
+        # 控制台走 UTF-16 直写（PEP 528），行为完全不受影响。
+        try:
+            sys.stdout.reconfigure(errors='replace')
+        except Exception:
+            pass
         h = logging.StreamHandler(sys.stdout)
         h.setFormatter(_SourceFormatter(
             '[%(asctime)s.%(msecs)03d] [%(levelname)s] %(source)s: %(message)s',
@@ -481,11 +490,11 @@ def set_log_enabled(enabled):
 
 
 def set_log_level(level):
-    """运行时切换详细度（warning / info / debug）。"""
+    """运行时切换详细度（warning / info / debug）并持久化到 app_config.json。"""
     level = str(level).lower()
     if level not in _LOG_LEVELS:
         return
-    app_cfg.logLevel.value = level
+    qconfig.set(app_cfg.logLevel, level)
     _apply_log_level()
 
 
@@ -2863,12 +2872,15 @@ class SerialThread(QThread):
                     pass
                 return
             self.serial.reset_input_buffer()
+            log.info("串口已打开: %s", self.port)
 
             while self.running:
                 try:
                     if self.serial.in_waiting > 0:
                         line = self.serial.readline().decode('utf-8', errors='ignore').strip()
                         if line:
+                            # 详细档调试信息（默认 info 档不落盘/不大屏）
+                            log.debug("串口原始数据 [%s]: %s", self.port, line)
                             self.data_received.emit(line)
                     else:
                         # 空闲时让出 CPU/GIL，避免忙等拖慢 UI 线程
@@ -3094,6 +3106,8 @@ class BLESerialThread(QThread):
                 line, self._buffer = self._buffer.split('\n', 1)
                 line = line.strip()
                 if line:
+                    # 详细档调试信息（默认 info 档不落盘/不大屏）
+                    log.debug("BLE 原始数据: %s", line)
                     self.data_received.emit(line)
         except Exception as e:
             log.warning("BLE 数据处理错误: %s", e)
