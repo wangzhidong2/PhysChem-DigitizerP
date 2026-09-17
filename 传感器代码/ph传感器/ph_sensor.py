@@ -44,9 +44,10 @@ from core import (
 
 log = get_logger("ph_sensor")
 
-# 单点校准默认理论斜率（mV/pH）：Nernst 方程 25℃ 约 −59.16 mV/pH
-# （pH 每升高 1，电极电位下降约 59.16 mV）。可在校准对话框中按实测修改。
-DEFAULT_THEORETICAL_SLOPE_MV = -59.16
+# 单点校准默认理论斜率（mV/pH）：SEN0161 放大板 PO 端口等效斜率（含板上增益），
+# 官方示例约 3.5 pH/V ≈ -286 mV/pH，取 -280 为默认；电极裸 Nernst 斜率为
+# -59.16 mV/pH（25℃），未含放大幅度。斜率可在校准对话框按实测/两点缓冲液修改。
+DEFAULT_THEORETICAL_SLOPE_MV = -280.0
 # ADC 换算常量（与固件一致：analogReadResolution(12) + 11dB 衰减 ≈ 0~3.3V）：
 # 单点校准把 mV/pH 理论斜率换算到 ADC 域时使用（V = ADC / PH_ADC_MAX × PH_ADC_VREF）
 PH_ADC_MAX = 4095
@@ -57,8 +58,9 @@ PH_ADC_VREF = 3.3
 AI_SYSTEM_PROMPT = (
     "你是一位资深化学实验指导教师与水质分析专家，正在协助分析 SEN0161 pH 电极"
     "（ESP32-S3，12 位 ADC，0~4095）的实验数据。"
-    "测量原理：pH 电极电位满足能斯特方程，25℃ 理论斜率约 −59.16 mV/pH；模块将电极"
-    "模拟输出换算为 ADC 值后，用单点（理论斜率可在校准框中配置）/两点/三点校准拟合"
+    "测量原理：pH 电极电位满足能斯特方程，电极本身 25℃ 斜率约 −59.16 mV/pH，"
+    "SEN0161 放大板 PO 输出等效斜率约 −280 mV/pH（单点校准的理论斜率可在校准框中配置）；模块将电极"
+    "模拟输出换算为 ADC 值后，用单点/两点/三点校准拟合"
     "pH 与 ADC 的关系（线性或二次多项式），再由 ADC 反算 pH。"
     "数据特征：电极稳定后读数应平稳（波动通常 <0.1 pH）；缓冲液中校准后偏差应很小；"
     "持续单向漂移多为电极老化、参比液干涸或温度变化；阶跃跳动多为搅拌、气泡或接触"
@@ -178,14 +180,15 @@ class PhSensorWidget(QWidget):
             # 理论斜率单位是 mV/pH（对电压），必须换算到 ADC 域再用于拟合：
             #   dADC/dpH = (slope_mV/1000) × ADC_MAX / VREF
             #   dpH/dADC = 1 / (dADC/dpH)
-            # （旧版直接把 -0.59 这个伏特域数值当 pH/ADC 用，相差约 1241 倍，
+            # （ADC_MAX/VREF ≈ 1241 仅是 0~3.3V→0~4095 的映射系数；
+            #   旧版把电压域数值 -0.59 直接当 pH/ADC 用，拟合斜率实际相差约 43 倍，
             #   单点校准读数几乎恒被 0~14 钳位，此处为修复）
             slope_mv = float(self.theoretical_slope_mv)
             if slope_mv == 0:
-                log.warning("理论斜率为 0，回退默认 %.2f mV/pH",
-                            DEFAULT_THEORETICAL_SLOPE_MV)
+                log.error("配置中的理论斜率为 0（非法，无法换算 pH），本次计算临时改用默认 "
+                          "%.2f mV/pH；请打开「编辑校准参数」修正理论斜率",
+                          DEFAULT_THEORETICAL_SLOPE_MV)
                 slope_mv = DEFAULT_THEORETICAL_SLOPE_MV
-                self.theoretical_slope_mv = slope_mv
             d_adc_per_ph = slope_mv / 1000.0 * PH_ADC_MAX / PH_ADC_VREF
             slope_ph_per_adc = 1.0 / d_adc_per_ph
             intercept = ph0 - slope_ph_per_adc * adc0

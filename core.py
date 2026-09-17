@@ -5773,7 +5773,7 @@ class CalibrationMessageBox(MessageBoxBase):
     WinUI3 掩码弹窗：居中浮窗 + 阴影 + 确定/取消按钮，样式随 Fluent 主题，
     与主程序其他 MessageBox 视觉一致。支持单点 / 两点 / 三点校准：
     模式单选实时切换输入行；单点模式额外显示「理论斜率」（mV/pH，
-    默认 -59.16 = 25℃ Nernst 值，可按电极/放大板实测值修改），
+    默认 -280 = SEN0161 放大板等效斜率，可按电极/放大板实测值修改），
     确定前做 pH / ADC / 理论斜率输入校验。
     API 与旧 CalibrationDialog 兼容（exec 返回 QDialog.Accepted = 1）。
     """
@@ -5784,7 +5784,7 @@ class CalibrationMessageBox(MessageBoxBase):
         self.calibration_points = points
         self.calibration_mode = len(points) if points else 2
         self.point_widgets = []
-        # 单点校准的理论斜率（mV/pH，pH 升电压降为负）；None 时显示默认 -59.16
+        # 单点校准的理论斜率（mV/pH，pH 升电压降为负）；None 时显示默认 -280
         self._initial_slope = theoretical_slope
         self._parsed_slope = None
         self.slope_row = None
@@ -5808,7 +5808,7 @@ class CalibrationMessageBox(MessageBoxBase):
 
         # 校准模式单选
         modes = [
-            (1, "单点校准", "仅一个参考点，配下方可调理论斜率（默认 -59.16mV/pH）"),
+            (1, "单点校准", "仅一个参考点，配下方可调理论斜率（默认 -280mV/pH）"),
             (2, "两点校准", "线性拟合，适合大多数常规测量"),
             (3, "三点校准", "二次拟合，精度最高，适合精确实验"),
         ]
@@ -5832,7 +5832,8 @@ class CalibrationMessageBox(MessageBoxBase):
         view.addLayout(self.points_inner)
 
         # 单点校准的「理论斜率」输入（仅模式 1 显示）：mV/pH。
-        # pH 每升高 1，电极电位下降约 59.16mV（25℃，Nernst），故典型值为负；
+        # 指 SEN0161 放大板 PO 端口等效斜率（含板上增益，约 -280mV/pH；
+        # 电极裸 Nernst 斜率约 -59.16mV/pH，未含放大幅度），pH 升电压降为负；
         # 可按电极/放大板实测斜率修改（换电极或老化后），换算见模块的
         # calculate_calibration_coefficients（mV/pH → ADC 域）
         self.slope_row = QWidget()
@@ -5844,12 +5845,12 @@ class CalibrationMessageBox(MessageBoxBase):
         self.slope_input.setFixedWidth(72)
         self.slope_input.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.slope_input.setText(f"{float(self._initial_slope):g}"
-                                 if self._initial_slope else "-59.16")
+                                 if self._initial_slope else "-280")
         self.slope_input.setToolTip(
-            "单点校准使用的电极理论斜率（mV/pH）：pH 升高 1 电压下降即为负值，\n"
-            "25℃ Nernst 理论值约 -59.16；也可按实测（两点缓冲液）填实际斜率")
+            "单点校准的电极理论斜率（mV/pH）：pH 升高 1 电压下降即为负值，\n"
+            "SEN0161 放大板等效典型值约 -280；也可按实测（两点缓冲液）填实际斜率")
         slope_lay.addWidget(self.slope_input)
-        slope_lay.addWidget(CaptionLabel("mV/pH（pH 升电压降，典型 -59.16）"), 1)
+        slope_lay.addWidget(CaptionLabel("mV/pH（pH 升电压降，典型 -280）"), 1)
         view.addWidget(self.slope_row)
 
         self._create_point_inputs()
@@ -5960,8 +5961,8 @@ class CalibrationMessageBox(MessageBoxBase):
             if slope_val == 0:
                 self._fail("理论斜率不能为 0（无法换算 pH）")
                 return False
-            if not (-10000.0 <= slope_val <= 10000.0):
-                self._fail("理论斜率超出合理范围（-10000~10000 mV/pH）")
+            if not (-1000.0 <= slope_val <= 1000.0):
+                self._fail("理论斜率超出合理范围（-1000~1000 mV/pH，请检查符号/数值）")
                 return False
             self._parsed_slope = slope_val
         else:
