@@ -319,6 +319,8 @@ class PhSensorWidget(QWidget):
         cal_lines = []
         for ph_val, adc_val in self.calibration_points:
             cal_lines.append(f"• pH {ph_val:.2f} → ADC {adc_val}")
+        if self.calibration_mode == 1 and cal_lines:
+            cal_lines.append(f"• 理论斜率 {self.theoretical_slope_mv:g} mV/pH")
         self.cal_text = CaptionLabel("\n".join(cal_lines) if cal_lines else "未设置校准参数")
         cal_card_layout.addWidget(self.cal_text)
 
