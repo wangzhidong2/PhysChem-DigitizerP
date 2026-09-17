@@ -44,14 +44,22 @@ from core import (
 
 log = get_logger("ph_sensor")
 
+# 单点校准默认理论斜率（mV/pH）：Nernst 方程 25℃ 约 −59.16 mV/pH
+# （pH 每升高 1，电极电位下降约 59.16 mV）。可在校准对话框中按实测修改。
+DEFAULT_THEORETICAL_SLOPE_MV = -59.16
+# ADC 换算常量（与固件一致：analogReadResolution(12) + 11dB 衰减 ≈ 0~3.3V）：
+# 单点校准把 mV/pH 理论斜率换算到 ADC 域时使用（V = ADC / PH_ADC_MAX × PH_ADC_VREF）
+PH_ADC_MAX = 4095
+PH_ADC_VREF = 3.3
+
 # AI 分析实验：模块专属系统提示词（进入 AI 分析时随实验信息与数据发送给模型，
 # 由 core.build_ai_system_prompt 组装进 system 消息）
 AI_SYSTEM_PROMPT = (
     "你是一位资深化学实验指导教师与水质分析专家，正在协助分析 SEN0161 pH 电极"
     "（ESP32-S3，12 位 ADC，0~4095）的实验数据。"
     "测量原理：pH 电极电位满足能斯特方程，25℃ 理论斜率约 −59.16 mV/pH；模块将电极"
-    "模拟输出换算为 ADC 值后，用单点/两点/三点校准拟合 pH 与 ADC 的关系（线性或二次"
-    "多项式），再由 ADC 反算 pH。"
+    "模拟输出换算为 ADC 值后，用单点（理论斜率可在校准框中配置）/两点/三点校准拟合"
+    "pH 与 ADC 的关系（线性或二次多项式），再由 ADC 反算 pH。"
     "数据特征：电极稳定后读数应平稳（波动通常 <0.1 pH）；缓冲液中校准后偏差应很小；"
     "持续单向漂移多为电极老化、参比液干涸或温度变化；阶跃跳动多为搅拌、气泡或接触"
     "问题；温度变化会引起斜率与零点漂移。"
@@ -102,6 +110,9 @@ class PhSensorWidget(QWidget):
         self.sample_interval_ms = 100  # 默认 100ms (10Hz)
         self.last_sample_time_ms = 0   # 上次采样时间
 
+        # 单点校准的理论斜率（mV/pH，可在校准对话框中修改）
+        self.theoretical_slope_mv = DEFAULT_THEORETICAL_SLOPE_MV
+
         # 加载保存的配置
         self.config = self.load_config()
 
@@ -136,6 +147,9 @@ class PhSensorWidget(QWidget):
             ]
             self.calibration_points = config.get('calibration_points', default_calibration)
             self.calibration_mode = config.get('calibration_mode', len(self.calibration_points))
+            # 单点校准的理论斜率（旧配置无此键时沿用默认 Nernst 值）
+            self.theoretical_slope_mv = config.get(
+                'theoretical_slope_mv', self.theoretical_slope_mv)
         return config
 
     def save_config(self):
@@ -143,13 +157,14 @@ class PhSensorWidget(QWidget):
         config = {
             'calibration_points': self.calibration_points,
             'calibration_mode': self.calibration_mode,
+            'theoretical_slope_mv': self.theoretical_slope_mv,
             'sample_interval_ms': self.sample_interval_ms
         }
         return save_sensor_config('ph_sensor', config)
 
     def calculate_calibration_coefficients(self):
         """根据校准点数计算拟合系数
-        - 单点校准: 使用理论斜率 (-0.5 pH/V) + 偏移量
+        - 单点校准: 理论斜率（mV/pH，可调）换算到 ADC 域 + 偏移量
         - 两点校准: 线性拟合 pH = k*ADC + b
         - 三点校准: 二次拟合 pH = a*ADC^2 + b*ADC + c
         """
@@ -160,9 +175,21 @@ class PhSensorWidget(QWidget):
 
         if num_points == 1:
             ph0, adc0 = self.calibration_points[0]
-            theoretical_slope = -0.59  # 理论斜率 (pH/V), Nernst方程在25°C约为-59mV/pH
-            intercept = ph0 - theoretical_slope * adc0
-            self.cal_coeffs = (0, theoretical_slope, intercept)  # 二次项为0
+            # 理论斜率单位是 mV/pH（对电压），必须换算到 ADC 域再用于拟合：
+            #   dADC/dpH = (slope_mV/1000) × ADC_MAX / VREF
+            #   dpH/dADC = 1 / (dADC/dpH)
+            # （旧版直接把 -0.59 这个伏特域数值当 pH/ADC 用，相差约 1241 倍，
+            #   单点校准读数几乎恒被 0~14 钳位，此处为修复）
+            slope_mv = float(self.theoretical_slope_mv)
+            if slope_mv == 0:
+                log.warning("理论斜率为 0，回退默认 %.2f mV/pH",
+                            DEFAULT_THEORETICAL_SLOPE_MV)
+                slope_mv = DEFAULT_THEORETICAL_SLOPE_MV
+                self.theoretical_slope_mv = slope_mv
+            d_adc_per_ph = slope_mv / 1000.0 * PH_ADC_MAX / PH_ADC_VREF
+            slope_ph_per_adc = 1.0 / d_adc_per_ph
+            intercept = ph0 - slope_ph_per_adc * adc0
+            self.cal_coeffs = (0, slope_ph_per_adc, intercept)  # 二次项为0
             self.calibration_mode = 1
 
         elif num_points == 2:
@@ -709,11 +736,20 @@ class PhSensorWidget(QWidget):
         self.save_btn.setEnabled(False)
 
     def edit_calibration(self):
-        """编辑校准参数对话框（Fluent MessageBox 风格：掩码弹窗 + 确定/取消）"""
-        dialog = CalibrationMessageBox(self.calibration_points, self)
+        """编辑校准参数对话框（Fluent MessageBox 风格：掩码弹窗 + 确定/取消）
+
+        单点模式下可修改理论斜率（mV/pH），确认后随校准点一起保存，
+        斜率换算到 ADC 域后立即重建拟合系数。
+        """
+        dialog = CalibrationMessageBox(
+            self.calibration_points, self,
+            theoretical_slope=self.theoretical_slope_mv)
         if dialog.exec() == 1:  # QDialog.Accepted
             new_points = dialog.get_calibration_points()
             self.calibration_mode = dialog.get_calibration_mode()
+            new_slope = dialog.get_theoretical_slope()
+            if new_slope is not None:
+                self.theoretical_slope_mv = float(new_slope)
 
             self.calibration_points = new_points
             self.calculate_calibration_coefficients()
@@ -725,6 +761,9 @@ class PhSensorWidget(QWidget):
             cal_lines = []
             for ph_val, adc_val in new_points:
                 cal_lines.append(f"• pH {ph_val:.2f} → ADC {adc_val}")
+            if self.calibration_mode == 1:
+                cal_lines.append(
+                    f"• 理论斜率 {self.theoretical_slope_mv:g} mV/pH")
             self.cal_text.setText("\n".join(cal_lines))
 
             # 保存配置到文件
@@ -751,7 +790,8 @@ class PhSensorWidget(QWidget):
                 f"校准 {len(self.calibration_points)} 点 {self.calibration_points}, "
                 f"拟合系数 a={self.cal_coeffs[0]:.6g}, b={self.cal_coeffs[1]:.6g}, "
                 f"c={self.cal_coeffs[2]:.6g}（pH = a·ADC² + b·ADC + c）, "
-                f"理论斜率≈−59.16mV/pH（25℃）, 采样间隔={self.sample_interval_ms}ms"),
+                f"理论斜率（单点用）={self.theoretical_slope_mv:g}mV/pH, "
+                f"采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
         }
 

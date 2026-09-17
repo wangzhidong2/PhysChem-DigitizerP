@@ -5758,16 +5758,23 @@ class CalibrationMessageBox(MessageBoxBase):
 
     WinUI3 掩码弹窗：居中浮窗 + 阴影 + 确定/取消按钮，样式随 Fluent 主题，
     与主程序其他 MessageBox 视觉一致。支持单点 / 两点 / 三点校准：
-    模式单选实时切换输入行，确定前做 pH→ADC 输入校验。
+    模式单选实时切换输入行；单点模式额外显示「理论斜率」（mV/pH，
+    默认 -59.16 = 25℃ Nernst 值，可按电极/放大板实测值修改），
+    确定前做 pH / ADC / 理论斜率输入校验。
     API 与旧 CalibrationDialog 兼容（exec 返回 QDialog.Accepted = 1）。
     """
 
-    def __init__(self, calibration_points, parent=None):
+    def __init__(self, calibration_points, parent=None, theoretical_slope=None):
         super().__init__(parent)
         points = list(calibration_points) if calibration_points else []
         self.calibration_points = points
         self.calibration_mode = len(points) if points else 2
         self.point_widgets = []
+        # 单点校准的理论斜率（mV/pH，pH 升电压降为负）；None 时显示默认 -59.16
+        self._initial_slope = theoretical_slope
+        self._parsed_slope = None
+        self.slope_row = None
+        self.slope_input = None
 
         self.yesButton.setText("确定")
         self.cancelButton.setText("取消")
@@ -5787,7 +5794,7 @@ class CalibrationMessageBox(MessageBoxBase):
 
         # 校准模式单选
         modes = [
-            (1, "单点校准", "仅一个参考点，使用已知理论斜率"),
+            (1, "单点校准", "仅一个参考点，配下方可调理论斜率（默认 -59.16mV/pH）"),
             (2, "两点校准", "线性拟合，适合大多数常规测量"),
             (3, "三点校准", "二次拟合，精度最高，适合精确实验"),
         ]
@@ -5809,6 +5816,28 @@ class CalibrationMessageBox(MessageBoxBase):
         self.points_inner = QVBoxLayout()
         self.points_inner.setSpacing(8)
         view.addLayout(self.points_inner)
+
+        # 单点校准的「理论斜率」输入（仅模式 1 显示）：mV/pH。
+        # pH 每升高 1，电极电位下降约 59.16mV（25℃，Nernst），故典型值为负；
+        # 可按电极/放大板实测斜率修改（换电极或老化后），换算见模块的
+        # calculate_calibration_coefficients（mV/pH → ADC 域）
+        self.slope_row = QWidget()
+        slope_lay = QHBoxLayout(self.slope_row)
+        slope_lay.setContentsMargins(0, 0, 0, 0)
+        slope_lay.setSpacing(10)
+        slope_lay.addWidget(BodyLabel("理论斜率"))
+        self.slope_input = LineEdit()
+        self.slope_input.setFixedWidth(72)
+        self.slope_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.slope_input.setText(f"{float(self._initial_slope):g}"
+                                 if self._initial_slope else "-59.16")
+        self.slope_input.setToolTip(
+            "单点校准使用的电极理论斜率（mV/pH）：pH 升高 1 电压下降即为负值，\n"
+            "25℃ Nernst 理论值约 -59.16；也可按实测（两点缓冲液）填实际斜率")
+        slope_lay.addWidget(self.slope_input)
+        slope_lay.addWidget(CaptionLabel("mV/pH（pH 升电压降，典型 -59.16）"), 1)
+        view.addWidget(self.slope_row)
+
         self._create_point_inputs()
 
         # 校验失败提示（红色，亮/暗主题均可见）
@@ -5871,6 +5900,10 @@ class CalibrationMessageBox(MessageBoxBase):
             self.points_inner.addLayout(row)
             self.point_widgets.append({'row': row, 'ph': ph_input, 'adc': adc_input})
 
+        # 理论斜率仅单点校准需要（两点/三点由拟合直接得到斜率）
+        if self.slope_row is not None:
+            self.slope_row.setVisible(self.calibration_mode == 1)
+
     def _on_mode_toggled(self):
         rb = self.sender()
         if rb is not None and rb.isChecked():
@@ -5879,7 +5912,8 @@ class CalibrationMessageBox(MessageBoxBase):
             self._error_label.hide()
 
     def validate(self):
-        """确定前校验输入：pH 须为 0~14 数值、ADC 须为数值；非法时提示并阻止关闭。"""
+        """确定前校验输入：pH 须为 0~14 数值、ADC 须为数值、
+        单点模式的理论斜率须为非零数值；非法时提示并阻止关闭。"""
         points = []
         for i, w in enumerate(self.point_widgets, 1):
             ph_text = w['ph'].text().strip()
@@ -5901,6 +5935,23 @@ class CalibrationMessageBox(MessageBoxBase):
                 self._fail(f"第 {i} 点的 pH 值须在 0~14 之间")
                 return False
             points.append((ph_val, adc_val))
+        if self.calibration_mode == 1:
+            slope_text = (self.slope_input.text().strip()
+                          if self.slope_input is not None else "")
+            try:
+                slope_val = float(slope_text)
+            except ValueError:
+                self._fail(f"理论斜率「{slope_text}」不是有效数字（mV/pH）")
+                return False
+            if slope_val == 0:
+                self._fail("理论斜率不能为 0（无法换算 pH）")
+                return False
+            if not (-10000.0 <= slope_val <= 10000.0):
+                self._fail("理论斜率超出合理范围（-10000~10000 mV/pH）")
+                return False
+            self._parsed_slope = slope_val
+        else:
+            self._parsed_slope = None
         self._parsed_points = points
         self._error_label.hide()
         return True
@@ -5915,6 +5966,15 @@ class CalibrationMessageBox(MessageBoxBase):
     def get_calibration_points(self):
         """返回校验无误的校准点（未点确定时返回初始值）。"""
         return list(getattr(self, '_parsed_points', self.calibration_points))
+
+    def get_theoretical_slope(self):
+        """单点校准使用的理论斜率（mV/pH）。
+
+        模式 1 返回校验后的输入值；其余模式返回初始值（与本次校准无关）。
+        """
+        if self.calibration_mode == 1 and self._parsed_slope is not None:
+            return self._parsed_slope
+        return self._initial_slope
 
 
 class SampleRateDialog(QDialog):
