@@ -1706,13 +1706,16 @@ class MainWindow(FluentWindow):
 
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
-        # 窗口默认尺寸按屏幕可用区自适应（85%）：小屏（如 1280×680 工作区）
-        # 不会溢出屏幕、大屏也不至过大；该值即“还原窗口”时的大小
-        # （启动默认最大化，见 main()）
+        # 默认尺寸按屏幕可用区自适应（85%）：小屏（如 1280×680 工作区）
+        # 不会溢出屏幕、大屏也不至过大。窗口记忆（上次退出的位置/大小、
+        # 最大化状态）优先于此默认值，见 _restore_window_geometry
         screen = QGuiApplication.primaryScreen()
         if screen is not None:
             avail = screen.availableGeometry()
             self.resize(int(avail.width() * 0.85), int(avail.height() * 0.85))
+        # 窗口记忆：最大化状态取上次退出时的值；位置/大小优先还原记忆值
+        self.start_maximized = bool(app_cfg.windowMaximized.value)
+        self._restore_window_geometry()
         # FluentWindow 自带 NavigationInterface + stackedWidget，无需手动布局
 
         # === 加载模块 ===
@@ -1909,6 +1912,52 @@ class MainWindow(FluentWindow):
         self.current_theme = "light"
         self.apply_theme("light")
 
+    def _restore_window_geometry(self):
+        """窗口记忆：还原上次退出时记住的窗口位置与大小。
+
+        仅在记忆数据合法（尺寸不小于 640×480）且窗口至少一部分仍落在
+        当前某块屏幕的可用区内时应用。多屏拔插、分辨率变化导致记忆
+        位置跑到屏幕外时放弃还原，保持默认尺寸，避免“打开后找不到窗口”。
+        """
+        try:
+            geo = app_cfg.windowGeometry.value or {}
+            rect = QRect(int(geo["x"]), int(geo["y"]),
+                         int(geo["w"]), int(geo["h"]))
+        except (KeyError, TypeError, ValueError):
+            return
+        if rect.width() < 640 or rect.height() < 480:
+            return
+        for screen in QGuiApplication.screens():
+            inter = screen.availableGeometry().intersected(rect)
+            if inter.width() >= 160 and inter.height() >= 80:
+                break
+        else:
+            log.info("窗口记忆的位置已不在任何屏幕内，使用默认尺寸")
+            return
+        self.setGeometry(rect)
+
+    def _save_window_state(self):
+        """窗口记忆：退出前把位置/大小与最大化状态写入 app_config.json。
+
+        最大化/最小化时记录 normalGeometry（还原前的窗口几何），否则记录
+        当前几何；下次启动由 _restore_window_geometry / start_maximized 还原。
+        """
+        try:
+            state = self.windowState()
+            maximized = bool(state & Qt.WindowState.WindowMaximized)
+            qconfig.set(app_cfg.windowMaximized, maximized)
+            if state & (Qt.WindowState.WindowMaximized |
+                        Qt.WindowState.WindowMinimized):
+                geo = self.normalGeometry()
+            else:
+                geo = self.geometry()
+            qconfig.set(app_cfg.windowGeometry, {
+                "x": geo.x(), "y": geo.y(),
+                "w": geo.width(), "h": geo.height(),
+            })
+        except Exception as e:
+            log.warning("保存窗口记忆失败: %s", e)
+
     def closeEvent(self, event):
         """关闭前先弹确认框：未保存实验数据将被销毁。确认后才停止各模块线程。
 
@@ -1924,6 +1973,7 @@ class MainWindow(FluentWindow):
         不同：disconnect_all / disconnect_serial）停线程。
         """
         if self._exit_confirmed:
+            self._save_window_state()   # 窗口记忆：退出前落盘位置/大小/最大化
             self._stop_module_threads()
             super().closeEvent(event)
             return
@@ -2147,8 +2197,12 @@ def main():
     window.setWindowIcon(app_icon)
     # 任务栏身份（显示名/图标）必须在首次 show() 前写入
     _apply_taskbar_identity(window)
-    # 默认最大化启动；init_ui 自适应的窗口尺寸作为“还原窗口”时的大小
-    window.showMaximized()
+    # 窗口记忆：上次退出时最大化则最大化启动，否则按记忆的位置/大小显示
+    # （init_ui 已还原窗口几何；首次启动/记忆失效时为自适应的默认尺寸）
+    if window.start_maximized:
+        window.showMaximized()
+    else:
+        window.show()
     sys.exit(app.exec())
 
 

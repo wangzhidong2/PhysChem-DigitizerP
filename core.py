@@ -141,6 +141,10 @@ _APP_CONFIG_DEFAULT = {
         "LogLevel": "info",
         "LogMaxEntries": 5000,
     },
+    "Window": {
+        "Geometry": {},
+        "Maximized": True,
+    },
     "QFluentWidgets": {
         "FontFamilies": ["Segoe UI", "Microsoft YaHei", "PingFang SC"],
         "ThemeColor": "#ff0078d4",
@@ -232,6 +236,14 @@ class AppConfig(QConfig):
         "General", "PinnedModules", [],
         serializer=StringListSerializer(),
     )
+    # 窗口记忆：上次退出时的窗口位置与大小 {"x","y","w","h"}（退出时落盘，
+    # 下次启动自动还原；多屏拔插/分辨率变化导致越界时回退默认尺寸）
+    windowGeometry = ConfigItem(
+        "Window", "Geometry", {},
+        serializer=JsonDictSerializer(),
+    )
+    # 窗口记忆：上次退出时是否最大化（默认 True，保持原有“启动即最大化”行为）
+    windowMaximized = ConfigItem("Window", "Maximized", True)
     # AI 分析实验：OpenAI 兼容端点 + API Key + 模型（图表卡「AI分析实验」按钮用）
     aiEndpoint = ConfigItem("General", "AIEndpoint", "")
     aiApiKey = ConfigItem("General", "AIApiKey", "")
