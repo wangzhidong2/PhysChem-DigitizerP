@@ -935,10 +935,13 @@ class SettingsWidget(QWidget):
     """设置页 —— 主题切换 / 关于。
 
     用 FluentWidgets 的 SettingCardGroup + SettingCard 系列组件搭建，
-    样式自动适配亮/暗主题。当前包含三组：
-    - 个性化：应用主题（亮色可用；深色模式 / 跟随系统开发中）
-    - 关于：项目名、版本、许可证、源码仓库
-    - 反馈：issue 链接
+    样式自动适配亮/暗主题。当前分组：
+    - 外观：应用主题（亮/深/跟随系统）、主题色
+    - 图表：绘图引擎切换
+    - 数据与配置：保存配置开关、传感器配置管理、恢复默认设置
+    - 运行日志：日志开关、详细度
+    - 关于：项目名、版本、许可证
+    - 源码 & 反馈：仓库与 issue 链接
     """
 
     theme_change_requested = Signal(str)  # 'light' / 'dark'
@@ -985,18 +988,30 @@ class SettingsWidget(QWidget):
         title = TitleLabel("设置")
         layout.addWidget(title)
 
-        # ===== 个性化分组 =====
-        group_personal = SettingCardGroup("个性化", self._content)
-        self._theme_card = self._build_theme_card(group_personal)
-        group_personal.addSettingCard(self._theme_card)
-        group_personal.addSettingCard(self._build_theme_color_card())
-        group_personal.addSettingCard(self._build_persistence_card())
-        group_personal.addSettingCard(self._build_log_card())
-        group_personal.addSettingCard(self._build_log_detail_card())
-        group_personal.addSettingCard(self._build_config_management_card())
-        group_personal.addSettingCard(self._build_reset_all_card())
-        group_personal.addSettingCard(self._build_engine_card())
-        layout.addWidget(group_personal)
+        # ===== 外观分组（主题） =====
+        group_appearance = SettingCardGroup("外观", self._content)
+        self._theme_card = self._build_theme_card(group_appearance)
+        group_appearance.addSettingCard(self._theme_card)
+        group_appearance.addSettingCard(self._build_theme_color_card())
+        layout.addWidget(group_appearance)
+
+        # ===== 图表分组 =====
+        group_chart = SettingCardGroup("图表", self._content)
+        group_chart.addSettingCard(self._build_engine_card())
+        layout.addWidget(group_chart)
+
+        # ===== 数据与配置分组 =====
+        group_data = SettingCardGroup("数据与配置", self._content)
+        group_data.addSettingCard(self._build_persistence_card())
+        group_data.addSettingCard(self._build_config_management_card())
+        group_data.addSettingCard(self._build_reset_all_card())
+        layout.addWidget(group_data)
+
+        # ===== 运行日志分组 =====
+        group_log = SettingCardGroup("运行日志", self._content)
+        group_log.addSettingCard(self._build_log_card())
+        group_log.addSettingCard(self._build_log_detail_card())
+        layout.addWidget(group_log)
 
         # ===== 关于分组 =====
         group_about = SettingCardGroup("关于", self._content)
