@@ -107,9 +107,9 @@ default_calibration = [
 4. 最好用标准缓冲溶液先校准（见第 4 章）
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/840c6be8-d679-4a29-8507-01ec5fb45502/image.png 'image.png')
 
-5. 观察实时 pH 值与曲线，数据可存为 CSV
+5. 开始实验（比如滴定实验）观察实时 pH 值与曲线，记录数据，数据可存为 CSV，你就当数字化实验传感器用就可以了。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/a52f3f87-5d1b-40bd-a916-5ae6b96ba284/image.png 'image.png')
-6. 可以接入AI进行实验分析
+6. 可以接入AI进行实验分析（后面会搞MCP给AI agent调用）
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/395976cf-49b9-4dac-928b-7026784f8b8c/image.png 'image.png')
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/cf9b7081-a494-4a85-8f7f-48d91a3fa72f/image.png 'image.png')
 
@@ -134,17 +134,17 @@ default_calibration = [
 - 检查 VCC/GND/PO 接线
 - 用万用表测 PO 电压，应在 0-3.3V
 - 电极开路或接触不良
-- 外部电路干扰
+- 外部电路干扰（实测在电解实验pH测不出来）
 ## 8.技术参数
 
 | 参数 | 值 |
 |------|-----|
 | 测量范围 | pH 0-14 |
-| 精度 | ±0.1（取决于校准质量） |
+| 精度 | ±0.1（取决于校准质量与电极质量） |
 | 工作电压 | 5V |
-| 输出信号 | 0-3.3V 模拟 |
+| 输出信号 | 最大5V 模拟 |
 | ADC | 12 位，0-4095 |
-| 采样率 | 10Hz（可配置） |
+| 采样率 | 10Hz固件 |
 | 波特率 | 115200 |
 
 
