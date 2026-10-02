@@ -55,8 +55,8 @@ B+ / B-      →    未使用
 |------|------|------|
 | 开发板 | ESP32-S3 | 1 |
 | HX711 模块 | 24 位 ADC（通道A 增益128 / 通道B 增益32） | 1 |
-| 称重传感器 | 自定义 | 1 |
-| 杜邦线 | 公对母 | 若干 |
+| 称重传感器 | 应变片式 1kg~10kg | 1 |
+| 杜邦线 | 公对母 | 4 |
 | USB 线 | Type-C | 1 |
 
 ## 3.数据格式与命令
@@ -70,7 +70,7 @@ B+ / B-      →    未使用
 
 - 波特率 115200
 - 24 位 ADC，通道 A（增益 128）
-- 采样间隔 80ms（约 10Hz）
+- 采样间隔 80ms（约 12.5Hz）
 - 启动时输出 `START`
 
 串口命令：
@@ -89,21 +89,8 @@ B+ / B-      →    未使用
 ### 4.1.步骤
 
 1. 运行 `main.py`，进入力传感器模块，连接串口
-2. **校准**：点"校准（CALIBRATE）"，空载记录零点，输入已知砝码质量，放上砝码记录加载值，程序自动算出 offset 和 scale 并保存
-
-1). 点击校准按钮
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/5d4f6af9-6f07-490a-9cde-fba6fb1f5237/image.png 'image.png')
-2)空载记录零点
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/c9de4097-29ec-40d2-9224-361c7233b3a4/image.png 'image.png')
-
-3）拿好砝码，把质量输入程序
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/73f7c27c-146c-46d4-a266-2e816e333c9d/image.png 'image.png')
-
-4）砝码放在水平放置的力传感器托盘上，点击记录按钮
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/2383e1be-12c3-4c38-9e2a-a1430fe111d8/image.png 'image.png')
-
-5）完成
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/27244e06-afbf-4093-9252-b40bfcee5c73/image.png 'image.png')
+2. **去皮**：空载时点"去皮（TARE）"，读数归零
+3. **校准**：点"校准（CALIBRATE）"，空载记录零点，输入已知砝码质量，放上砝码记录加载值，程序自动算出 offset 和 scale 并保存
 
 ### 4.2.示例
 

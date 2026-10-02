@@ -17,13 +17,14 @@ import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QInputDialog, QScrollArea, QSizePolicy,
+    QScrollArea, QSizePolicy, QDialog,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
-    BodyLabel, CaptionLabel, FluentIcon as FIF,
+    BodyLabel, CaptionLabel, FluentIcon as FIF, MessageBoxBase,
+    DoubleSpinBox, SubtitleLabel,
 )
 import numpy as np
 
@@ -64,6 +65,51 @@ AI_SYSTEM_PROMPT = (
     "重力模型对照；④区分随机误差与系统误差，建议多点标定、数字滤波（滑动平均/中值）、"
     "减振、预热与量程复核等改进措施。"
 )
+
+
+class KnownWeightMessageBox(MessageBoxBase):
+    """校准-已知质量输入弹窗 — 基于 Fluent-Widgets 原生 MessageBoxBase。
+
+    WinUI3 掩码弹窗：居中浮窗 + 阴影 + 确定/取消按钮，样式随 Fluent 主题，
+    与主程序其他 MessageBox 视觉一致。替代旧的原生 QInputDialog。
+    exec() 返回 QDialog.Accepted 表示确认，self.weight 为输入的砝码质量（克）。
+    """
+
+    def __init__(self, default_weight=100.0, parent=None):
+        super().__init__(parent)
+        self.weight = default_weight
+
+        self.yesButton.setText("确定")
+        self.cancelButton.setText("取消")
+        # 只固定宽度：竖向高度交由表单内容自适应
+        self.widget.setFixedWidth(420)
+
+        view = self.viewLayout
+        view.addWidget(SubtitleLabel("校准 - 已知质量"))
+
+        info = CaptionLabel("请放上已知质量的砝码，并输入砝码质量：")
+        info.setWordWrap(True)
+        view.addWidget(info)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(BodyLabel("砝码质量"))
+        self.weight_input = DoubleSpinBox()
+        self.weight_input.setRange(0.01, 100000)
+        self.weight_input.setDecimals(2)
+        self.weight_input.setValue(float(default_weight))
+        self.weight_input.setMinimumWidth(160)
+        self.weight_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.weight_input.setToolTip(
+            "已知砝码的质量，范围 0.01 ~ 100000 克，保留 2 位小数")
+        row.addWidget(self.weight_input)
+        row.addWidget(CaptionLabel("克 (g)"), 1)
+        view.addLayout(row)
+
+    def validate(self):
+        # 点击确定时才把输入读回 self.weight，输入非法（超范围/为空）则不关窗
+        self.weight = self.weight_input.value()
+        return True
 
 
 class ForceSensorWidget(QWidget):
@@ -699,11 +745,9 @@ class ForceSensorWidget(QWidget):
             if len(self.raw_data) > 0:
                 self.cal_raw_before = self.raw_data[-1]
             self.cal_step = 2
-            weight, ok = QInputDialog.getDouble(
-                self, "校准 - 已知质量",
-                "请放上已知质量的砝码，\n输入砝码质量（克）：",
-                self.cal_known_weight, 0.01, 100000, 2
-            )
+            dlg = KnownWeightMessageBox(self.cal_known_weight, self)
+            ok = dlg.exec() == QDialog.DialogCode.Accepted
+            weight = dlg.weight
             if ok:
                 self.cal_known_weight = weight
                 self.calibrate_btn.setText(f"2. 已放{weight}g砝码，点击记录")
