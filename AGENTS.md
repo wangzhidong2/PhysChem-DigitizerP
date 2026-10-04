@@ -1,685 +1,151 @@
-# 项目说明 / AGENTS.md
+# AGENTS.md
 
-**[English](#english-version)** | **[中文版](#项目简介)**
+本文件是给 AI 编码助手的**约束清单**。项目使用方法、架构讲解、传感器文档见 `README.md` 与各模块目录下的 `README.md`，不要在本文件里重复。
 
----
+## 1. 硬性禁令
 
-# 中文版
+- **禁止 `print`**：日志一律 `from core import get_logger` + `log = get_logger('模块名')`。控制台始终输出；「运行日志」开关只决定是否额外写入 `logs.json`。
+- **禁止直接 `import serial`**：串口一律走 `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`。pyserial 是可选依赖，未装时各模块须自动降级到模拟器模式。
+- **禁止用 matplotlib / pyqtgraph 原生控件画图**：不得创建 `Figure` / `FigureCanvas` / `pg.PlotWidget`，一律用 `core.ChartPanel`，否则设置页的引擎热切换对该模块失效。
+- **禁止构造原生 Qt 控件**：不得使用 `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`，一律用 FluentWidgets 对应组件。
+- **禁止直接 `import bleak`**：BLE 是可选依赖，未装时须自动降级并提示。
+- **禁止改 `main_legacy.py`**：迁移前的单文件存档，不再维护。新功能只改 `main.py` + 模块文件。
+- **禁止基于 `NavButton` / `SidebarWidget` 开发**：迁移前的遗留侧边栏，`MainWindow` 已改用 `FluentWindow` 自带导航。
+- **禁止在 `sensor_config.json` 之外散落校准数据**：校准参数统一经 `load_sensor_config()` / `save_sensor_config()` 读写。
+- **禁止把运行产物提交进仓库**：`sensor_config.json` / `app_config.json` / `logs.json` / `build/` / `dist/` 均已被 `.gitignore` 忽略。
 
-## 项目简介
+## 2. 新增传感器模块
 
-基于 PySide6 + FluentWidgets（WinUI3 风格）的 GUI 应用 + Arduino/ESP32 固件，用于低成本物理化学实验室数据采集（传感器：超声波、pH、HX711 力/电压、ACS712 电流）。采用**模块化架构**，新增传感器只需丢文件，无需修改主程序。
+**不改 `main.py`**，只需两步：
 
-## 入口文件
+### 2.1 建目录丢文件
 
-- **Python 主程序**: `python main.py`（模块化架构，动态加载各传感器模块）
-- **公共模块**: `core.py`（SerialThread / BLESerialThread / 配置管理 / 通用对话框 / 现代化样式）
-- **串口诊断工具**: `python test_serial.py`
-- **历史存档**: `main_legacy.py`（迁移前单文件版本，5000 行，**不再维护**，仅供对照参考）
+在 `传感器代码/` 下新建目录，放入下位机 `.ino` 与上位机 `.py`（`.py` 用英文蛇形命名，如 `temperature_sensor.py`）。
 
-## 安装依赖
-
-```bash
-pip install PySide6>=6.4.0 numpy>=1.21.0
-# 串口通信（连接真实下位机需要；未安装时串口功能优雅降级，可用模拟器模式）
-pip install pyserial>=3.5
-# 绘图引擎（matplotlib / pyqtgraph 至少安装其一，推荐都装）
-pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
-# WinUI3 风格组件库（必需，主窗口基于 FluentWindow）
-pip install PySide6-Fluent-Widgets
-# 可选（BLE 无线通信）:
-pip install bleak
-```
-
-项目根目录已提供 `requirements.txt`（含全部必需与可选依赖），可直接 `pip install -r requirements.txt`。
-
-推荐用 [uv](https://docs.astral.sh/uv/)（可选，两种方式并存不冲突）：根目录 `pyproject.toml` 是本项目唯一的 PEP 621 依赖清单，`[dependency-groups].dev` 单独放打包工具 PyInstaller，`[[tool.uv.index]]` 默认指向清华 PyPI 镜像（海外可用 `uv sync --default-index https://pypi.org/simple` 覆盖），并用 `[tool.uv] package = false` 声明为 **virtual 项目**（本项目是脚本式应用、无 `build-system`，因此 `uv build` 会被跳过，打包仍走 `PhysChem-DigitizerP.spec`）。
-
-```bash
-uv sync              # 建 .venv + 按 pyproject.toml 解析依赖并生成 uv.lock（含 dev 组）
-uv sync --no-dev     # 只要运行时依赖（打包/分发场景）
-uv run main.py       # 启动主程序（无需手动 activate）
-uv run test_serial.py
-uv lock --upgrade    # 升级 uv.lock 中的依赖版本
-```
-
-`uv run` 必须以项目根目录（`main.py` 所在目录）为工作目录——`sensor_config.json` / `app_config.json` / `logs.json` 均以 `main.py` 所在目录为基准路径。`uv.lock` 应提交到仓库以保证环境一致；`uv sync` 使用现有 `.venv/`（已在 `.gitignore` 中）。**没有 `setup.py`**。
-
-推荐在项目根目录创建虚拟环境（`.venv/` 已加入 `.gitignore`）：
-
-```powershell
-# Windows（PowerShell）
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1    # 提示禁止运行脚本时先 Set-ExecutionPolicy -Scope Process Bypass
-pip install -r requirements.txt
-python main.py
-```
-
-```bash
-# macOS / Linux
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
-```
-
-## 运行与调试
-
-- 串口波特率：**115200**（所有固件和 Python 代码中硬编码）
-- 固件输出格式：`timestamp,value`（CSV），Python 直接解析
-- `sensor_config.json` 存储校准参数（运行时自动创建/更新）
-- 双绘图引擎：pyqtgraph（默认）/ matplotlib，应用配置项 `app_cfg.chartEngine` 持久化，设置页可运行时热切换；matplotlib 字体（微软雅黑）在 `core.py` 中全局设置
-- 引擎缺失时优雅降级：未安装的引擎选项在设置页灰显不可选；配置的引擎被卸载时自动降级到另一可用引擎；两个都缺时 `ChartPanel` 显示"未检测到图表引擎"占位提示，绘图 API 变为空操作，其余功能不受影响
-- pyserial 缺失时优雅降级：`core.SERIAL_AVAILABLE` 检测可用性；`core.list_serial_ports()` 统一枚举（未装返回空列表）；未装时各模块自动切"模拟器"模式、串口下拉框显示占位、连接弹安装指引（`core.serial_unavailable_hint()`）
-- 启动控制台会打印可选依赖状态：pyserial / bleak 缺失提示与图表引擎安装状态（含双引擎均缺失的幽默提示）
-- 沙箱无显示环境运行验证：`QT_QPA_PLATFORM=offscreen python main.py`
-
-## 目录结构
-
-```
-PhysChem-DigitizerP/
-├── main.py                     ← 主程序：FluentWindow + 主页 + 动态加载器
-├── core.py                     ← 公共模块：通信线程 / 配置 / 对话框 / 样式
-├── main_legacy.py              ← 历史存档（单文件版，不再维护）
-├── test_serial.py              ← 串口诊断工具
-├── pyproject.toml              ← PEP 621 依赖清单（uv sync / uv run，dev 组含 PyInstaller）
-├── uv.lock                     ← uv 锁文件（精确版本，建议提交）
-├── requirements.txt            ← 依赖清单（pip install -r requirements.txt，与 pyproject 并存）
-├── PhysChem-DigitizerP.spec    ← PyInstaller 打包配置（build/dist 产物已 .gitignore）
-├── README.md                   ← 项目文档
-├── CONTRIBUTING.md / LICENSE   ← 贡献指南 / GPL-3.0 许可证
-├── docs/images/                ← 文档图片
-├── sensor_config.json          ← 本地校准数据（.gitignore，运行时生成）
-└── 传感器代码/                  ← 下位机 .ino + 上位机 .py 同目录
-    ├── README.md               ← 本目录总览 + 各传感器说明索引
-    ├── 超声波位移传感器/
-    │   ├── README.md
-    │   ├── HC-SR04esp32.ino
-    │   ├── HC-SR04esp8266.ino
-    │   ├── csbwithbt.ino
-    │   ├── ultrasonic_displacement.py   ← 模块文件（带识别区）
-    │   └── ultrasonic_velocity.py
-    ├── ph传感器/
-    │   ├── README.md
-    │   ├── ph esp32.ino
-    │   ├── PH传感器原理图.pdf
-    │   └── ph_sensor.py
-    ├── 力传感器/
-    │   ├── README.md
-    │   ├── force.ino
-    │   ├── force_sensor.py
-    │   └── 资料（HX711称重模块商家提供的）/   ← 供应商参考资料（接线/原理图/驱动）
-    ├── 电压传感器/
-    │   ├── README.md
-    │   ├── ESP32_Voltage_Sensor.ino
-    │   ├── HX711_Voltage.ino
-    │   ├── ADS1115_Voltage.ino
-    │   └── voltage_sensor.py
-    ├── 电流传感器/
-    │   ├── README.md
-    │   ├── ESP32_ADC_Raw_Data.ino
-    │   └── current_sensor.py      ← ACS712 电流（5A/20A/30A 量程，AC/DC）
-    └── 电学综合/                  ← 欧姆定律 + 电功率（上位机模块开发中）
-        ├── README.md
-        ├── VI_ESP32_ADC.ino       ← 电压(内置ADC)+电流(ACS712) 一体固件
-        ├── VI_ADS1115.ino         ← 电压(ADS1115 16位)+电流 一体固件
-        ├── VI_HX711.ino           ← 电压(HX711 24位)+电流 一体固件
-        └── V_*.ino / I_ACS712.ino ← 双板分测单通道副本（电压/电流各一板）
-```
-
-## Arduino 固件
-
-位于 `传感器代码/` 目录下（中文目录名）。每个子文件夹包含 `.ino` 文件和上位机 `.py` 模块。
-
-| 传感器 | 开发板 | 固件路径 | 上位机模块 |
-|--------|--------|----------|-----------|
-| HC-SR04 超声波 | ESP32 | `传感器代码/超声波位移传感器/HC-SR04esp32.ino` | `ultrasonic_displacement.py` |
-| HC-SR04 超声波 | ESP8266 | `传感器代码/超声波位移传感器/HC-SR04esp8266.ino` | `ultrasonic_displacement.py` |
-| HC-SR04 + BLE | ESP32-S3 | `传感器代码/超声波位移传感器/csbwithbt.ino` | `ultrasonic_displacement.py` |
-| 超声波速度 | — | （共享上述固件） | `ultrasonic_velocity.py` |
-| pH (SEN0161) | ESP32-S3 | `传感器代码/ph传感器/ph esp32.ino` | `ph_sensor.py` |
-| HX711 力传感器 | ESP32-S3 | `传感器代码/力传感器/force.ino` | `force_sensor.py` |
-| 电压采集 | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
-| HX711 电压采集 | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py`（含 HX711 模式） |
-| ADS1115 电压采集 | ESP32-S3 | `传感器代码/电压传感器/ADS1115_Voltage.ino` | `voltage_sensor.py`（含 ADS1115 模式） |
-| 电流 (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py`（5A/20A/30A 量程，AC/DC，零点校准） |
-| 欧姆定律 (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（内置ADC/ADS1115/HX711 三选一，电压+ACS712 电流一体；双板分测用同目录 `V_*.ino`+`I_ACS712.ino` 单通道副本） | **上位机模块开发中**（core 已备好 `VIConnection*` / `TimestampPairer` 公共组件） |
-| 电功率 (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino`（同上） | **上位机模块开发中** |
-
-通过 Arduino IDE 烧录。开发板管理器地址：
-- ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
-- ESP32: `https://dl.espressif.com/dl/package_esp32_index.json`
-- ESP32 国内镜像: `https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json`
-
-## 架构说明
-
-### 整体架构（FluentWindow 主体）
-
-- **主窗口 `MainWindow`** 继承 `FluentWindow`（来自 `PySide6-Fluent-Widgets`），自动获得 WinUI3 风格的左侧 `NavigationInterface` + 内容栈 `stackedWidget`。各传感器 widget 通过 `addSubInterface(widget, icon, name)` 注册到导航。
-- **模块化加载**：`main.py` 启动时扫描 `传感器代码/` 目录，用 `importlib` 动态加载各模块（`scan_modules` / `parse_module_meta`）。
-- **导航注册顺序**：主页（`FIF.HOME`，顶部）→ 各传感器模块（文字图标，中部）→ 设置（`FIF.SETTING`，底部 `NavigationItemPosition.BOTTOM`）。
-
-### main.py 组成
-
-- **`make_text_icon(text, size=128)`**：把识别区里的文字（如 `V`/`F`/`x`/`pH`/`v`/`A`）画成方形 `QIcon`。FluentIcon 枚举没有对应"电压/电流/pH/力/超声波"的图标，所以直接用文字渲染成图标，保留模块化设计。字号用 `QFontMetrics` 自适应测量（从 `size*0.9` 起步缩到刚好填满画布，留 8% 边距），支持 Normal/Active/Selected 三种状态颜色。
-- **`HomePageWidget`**：主页。上半部分为项目信息卡 + 三平台仓库地址卡（`ExpandGroupSettingCard`）；下半部分为**传感器模块磁贴网格**——每个模块一张 `ModuleFolderTile`（`CardWidget` 子类）：模块文字图标（识别区 `V`/`F`/`x`/`pH`/`v`/`A`，`make_text_icon()` 渲染，随主题变色的 `refresh_icon()`）+ 模块名 + 右上角图钉（`PillToolButton` + `FIF.PIN`，置顶开关）。网格用 `AdaptiveFlowLayout`（`setWidgetMinimumWidth(160)` 自动算列数、随窗口换行铺满）。置顶模块排在本组最前，状态持久化到 `app_config.json` 的 `General.PinnedModules`（`core.StringListSerializer` 序列化为 JSON 数组）；点击磁贴 → `module_clicked` 信号 → 切换模块。标题用 FluentWidgets `TitleLabel` / `SubtitleLabel`，自动适配亮/暗主题；`apply_theme()` 刷新页面/滚动区背景 + 重绘各磁贴文字图标（磁贴本体为 FluentWidgets 原生组件，主题自动适配，无需重建）。
-- **`SettingsWidget`**：设置页，基于 FluentWidgets `SettingCardGroup` + `SettingCard` 系列组件实现，包含多组设置：①个性化（**应用主题**：亮色 / 深色 / 跟随系统；**主题色**：跟随系统强调色（读 Windows 注册表，`SystemAccentListener` 监听 DWM 广播实时更新，系统色不落盘）/ 自定义（`ColorDialog` 取色器，选择即持久化）；**保存配置开关**：关闭后不读写 sensor_config.json；**传感器配置管理**：清除 / 导出 / 导入（`core.clear/export/import_sensor_config`，导出/导入走系统文件夹/文件选择对话框）；**恢复默认设置**：重置 app_config.json 与 sensor_config.json；**图表引擎切换**：matplotlib / pyqtgraph，未安装的引擎选项通过 `ComboBox.setItemEnabled` 灰显不可点击并在文案中标注"未安装"，从 pyqtgraph 切到 matplotlib 弹兼容性提醒确认框）②关于（应用名 / 版本 / 许可证）③开源信息（`ExpandGroupSettingCard` 列出依赖库、协议与官网链接）④源码 & 反馈（GitHub / Gitee / GitCode / Issue 链接）。主题切换通过 `theme_change_requested` 信号、引擎切换通过 `engine_change_requested` 信号分别与 `MainWindow.change_app_theme` / `MainWindow.change_chart_engine` 打通；运行日志开关（控制台 + logs.json，详细度与最大条数可调，默认开启）。
-- **`MainWindow(FluentWindow)`**：主窗口 + 动态加载器，负责模块发现、实例化、注册到导航、主题切换、绘图引擎切换。`change_app_theme(theme)` 流程：固定模式（light/dark）先 `setTheme()` 切换 FluentWidgets 主题（自动刷新所有 FluentWidgets 子组件），再依次调用设置页 / 主页 / 各传感器模块的 `apply_theme()` 刷新自定义 widget 的硬编码颜色；**auto（跟随系统）模式不再调用 `setTheme`**（qconfig 已置 `Theme.AUTO`，系统主题变化由 `qconfig.themeChanged` 回调 `_on_fluent_theme_changed` 只刷新自定义控件，避免把 AUTO 覆盖成固定主题导致模式反复横跳 + 全量刷新死循环）。`change_chart_engine(engine)` 流程：先用 `chart_engine_available()` 拦截未安装引擎的请求，再遍历各传感器模块 `findChildren(ChartPanel)`，调用 `panel.set_engine(engine)` 重建引擎控件并重放最近一次绘制事务，曲线无缝衔接不丢数据。
-- **`_set_windows_appusermodelid()` / `_apply_taskbar_identity(window)`**：Windows 任务栏身份。前者设置进程级 AppUserModelID（任务栏分组独立）；后者必须在窗口首次 `show()` **之前**调用，通过 `SHGetPropertyStoreForWindow` 写入 `PKEY_AppUserModel_ID / RelaunchCommand / RelaunchDisplayNameResource / RelaunchIconResource`（图标为 `docs/images/icon.ico`），否则任务栏按钮会显示宿主 `python.exe` 的「Python」名称与图标；`sys.frozen`（PyInstaller）时 RelaunchCommand 退化为 exe 自身。
-- **`_install_qt_warning_filter()`**：安装 Qt 消息过滤器，仅屏蔽两条已知无害告警（`QFont::setPointSize: Point size <= 0`、`QWidgetWindow ... must be a top level window`），其余消息原样转发给安装前的处理器；在 `main()` 创建 QApplication 前调用。
-- **遗留代码**：`NavButton` / `SidebarWidget` 是迁移到 FluentWindow 前的手写侧边栏实现，**已不再被 `MainWindow` 使用**（FluentWindow 自带导航），仍保留在 `main.py` 中供对照参考，新功能不要基于它们开发。
-
-### core.py 组成
-
-集中存放共享代码——`SerialThread`、`SimulatorThread`、`BLESerialThread`、`scan_ble_devices`、`load/save/export/import/clear_sensor_config`、`reset_all_config`、`system_accent_color` / `SystemAccentListener`、`CalibrationDialog`、`CalibrationMessageBox`、`SampleRateDialog`、`SampleRateComboBox`、AI 分析（`AIRequestThread` / `AIExperimentInfoDialog` / `AISettingsDialog` / `AIChatDialog` / `build_ai_system_prompt`）、现代化样式函数（`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`/`page_bg_style`/`scroll_area_style`）。
-
-**主题基础设施**（亮/暗主题全链路支持）：
-- `_theme_colors()`：按 `isDarkTheme()` 返回当前主题对应的语义颜色字典（`page_bg`/`card_bg`/`content_bg`/`text_primary`/`accent` 等）。
-- `page_bg_style()` / `scroll_area_style()`：页面与滚动区背景样式，适配当前主题。
-- `card_style()` / `primary_btn_style()` / `accent_btn_style()`：卡片与按钮样式，按 `isDarkTheme()` 切换颜色。`card_style()` 的背景用 `content_bg`（内容区灰色，亮色 `#f6f6f6` / 暗色 `#3d3d3d`），使卡片内容区比头部（`card_bg`）更深/更浅，形成「白标题 + 灰内容区」分层，与 FluentCard 视觉统一。
-- `apply_module_theme(widget, theme=None)`：通用主题刷新助手，递归刷新模块 widget 内的 QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame 样式表，并通过缓存 `_orig_qss` dynamic property 实现亮↔暗双向切换（避免反复替换导致"切回亮色后仍是浅色字"）。各传感器模块的 `apply_theme()` 应委托本函数。**注意**：`FluentCard`（原生卡）会被本函数跳过——它自带 Fluent 主题样式，套用自定义 QSS 反而会破坏原生背景。
-- `CollapsibleCard`：自绘可折叠卡片（圆角 + 边框 + 可点击 header），标题用 `SubtitleLabel`（暗色下白色、亮色下黑色），头部背景 `card_bg`、内容区背景 `content_bg`（由 `card_style()` 提供，形成「白标题 + 灰内容区」分层），`paintEvent` / `_apply_theme_style` 主题感知；`apply_theme(theme)` 刷新箭头、全屏按钮颜色。**仅图表卡片仍在用**（需要全屏 + 浮动面板能力）。
-- `FluentCard`：基于 FluentWidgets 原生 `ExpandGroupSettingCard` 的紧凑卡片适配层，用于模块内**普通卡片**（连接控制/参数/实时数据/操作按钮等）。自带 WinUI3 原生视觉：主题自适应背景与分隔线、带旋转动画的展开箭头。API：`FluentCard(title, content_widget=None, expanded=True)` 兼容旧 `CollapsibleCard(title, content, expanded=...)` 调用；构造时自动剥离传入 content 的 `objectName='card'` + `card_style()`（避免双层边框）；也可用 `add_row(label, widget)` / `add_widget(w)` / `add_layout(l)` 从零填充；`add_header_widget(w)` 往 header 右侧追加按钮；`toggle()` / `is_expanded()` 控制折叠。内部重写了 `_adjustViewSize()`（按内容高度定高）并把 `wheelEvent` 透传给父级（解决嵌套外层 QScrollArea 的滚动冲突）。
-- `FloatingDataPanel`：绘制背景主题感知。
-
-**电学综合公共组件**（欧姆定律/电功率上位机模块开发中，core 内组件已就绪）：
-- `VIConnectionUnit`：单路「电压+电流」数据通道（配置 + SerialThread/SimulatorThread + 解析换算 + 双通道配对 + AC RMS + 零点校准 + 采样节流 + 线程安全回收）；`role`（both/voltage/current/none）标识数据角色，供电学模块按参数卡「当前连接」绑定。
-- `TimestampPairer`：双板分测配对器——两路「时间戳,ADC」流按 ±50ms 容差就近配对，超差丢旧等新防止错位累积（双板时钟基准不同，不能直接相减）。
-- `VIConnectionUnitCard`（FluentCard）：单连接卡（自定义名称/图线颜色/连接方式/采样方式/串口/单板-双板开关）。
-- `VIConnectionPanel`（FluentCard）：多连接面板（增删单元 + 双板分测开关 + 采样频率 + 连接/断开 + 配置持久化 `get_configs/set_configs`）。
-- `LINE_COLORS` / `_pick_line_color()` / `_color_icon()`：多路曲线预设色板与颜色预览图标。
-
-**双绘图引擎 `ChartPanel`**（matplotlib / pyqtgraph 统一抽象）：
-- 所有传感器模块的图表一律通过 `ChartPanel` 绘制，**不要直接使用** `Figure`/`FigureCanvas` 或 `pg.PlotWidget`。
-- 事务式 API：`begin()` 开启一次绘制 → `plot(x, y, color, width, label, index)` 画曲线 → `hline(y, ...)` 画水平参考线 → `set_labels()` / `set_title()` / `set_xlim()` / `set_ylim()` / `legend()` 设置装饰 → `end()` 提交渲染。多子图用 `ChartPanel(n_plots=N)` + `index` 参数寻址。
-- 引擎选择：构造时读 `app_cfg.chartEngine` 并经 `resolve_chart_engine()` 按可用性解析；`set_engine(engine)` 运行时重建底层控件并**重放最近一次提交的事务**（内部缓存 `_last`），切换引擎曲线不丢。
-- **增量更新（pyqtgraph 实时路径）**：`_commit_pg` 先用 `_pg_incremental_ok()` 比对结构签名（子图数、每子图曲线/参考线数量、图例开关、显式轴范围开关），一致时走 `_incremental_pg()` 只 `setData` 复用已有控件，避免每帧全量 `pi.clear()`+重建控件（pyqtgraph 大流量实时绘制卡顿主因）；结构变化自动退回全量重建。
-- 主题适配：`apply_chart_theme(dark)` 同时处理 matplotlib（figure/axes 背景与轴色）和 pyqtgraph（`setBackground` / 轴文本颜色），各模块 `apply_theme()` 中调用即可。
-- **悬停交互（pyqtgraph）**：鼠标移动时自动定位最近数据点，显示垂直虚线指示线 + 跟随标签（横轴名/时间 + 各曲线数值，点靠近上沿时标签翻到下方防出界）。数据点定位对时间序列走二分（5 万点单次 < 0.1ms）。面板记录最近悬停位置（`_pg_hover_view`），`_commit_pg` 高频重绘后按记录位置在新数据上重新定位恢复——实时采集时鼠标不动标签也持续显示且数值跟随最新数据，不随重绘闪烁消失；主题切换按新配色重建，多子图场景下自动迁移，`clear_chart` 清除记录。
-- **图表分析面板（仅 pyqtgraph）**：`get_analysis_panel()` 返回紧凑纵向分析栏（模块放入图表卡左侧），提供：**视图窗口**（`SwitchButton` 切换「显示整个范围 / 滚动窗口」，滚动窗口把 x 轴锁定为最近 N 秒，`DoubleSpinBox` 支持 0.1s~3h 小数秒）；**曲线拟合**（线性 / 二次 / 三次 / 对数 y=a·ln(x)+b / 幂函数 y=a·x^b，同色虚线叠加 + 方程与 R² 文本锚定视口左上角，定义域外点自动剔除）；**清除离散点**（二次点击确认防误触）；**离群点剔除**（残差比例法：对当前剩余数据重拟合后移除残差最大前 x% 点，多级撤销栈 `_outlier_stack` 逐步恢复，掩码只作用于各子图第一条曲线，新追加点默认保留）。matplotlib / 占位模式下面板自动隐藏。
-- **图例内部管理**：pyqtgraph 图例条目每次重绘前显式 `legend.clear()`（旧版 pyqtgraph 的 `pi.clear()` 不清图例，实时更新会无限累积）；参考线（InfiniteLine）**不得直接加入图例**——它没有 `opts` 属性，旧版 pyqtgraph 的 `ItemSample.paint` 会崩并拖垮整棵控件树的绘制链（图表异常、点击后界面空白）。图例样本用同款画笔的空 `PlotDataItem` 代替。
-
-**运行日志（标准库 logging，控制台始终输出）**：
-- `AppConfig` 的 `General.LogEnabled`（默认 True，控制是否写入 logs.json）/ `LogLevel`（warning/info/debug，默认 info）/ `LogMaxEntries`（默认 5000）由设置页「运行日志」「日志详细度」卡片控制，均即时生效并持久化。
-- `core.setup_logging()` 在 core 导入与 `main()` 启动时按配置初始化；`set_log_enabled/level/max_entries()` 供运行时热更新。**控制台 handler 始终挂载**（保留原有启动/模块/配置提示，带 `[时:分:秒.毫秒] [级别] 模块` 前缀）；开关只决定是否额外挂载 `logs.json` handler，根 logger 另挂 `NullHandler` 防止 `logging.lastResort` 重复输出。
-- `JsonLinesLogHandler` 以 JSON Lines（每行 `{time, level, source, message}`，UTF-8、即写即刷、加锁）追加到项目根 `logs.json`，超出上限（含 10% 余量）时裁剪最旧记录。
-- 新代码**禁止 `print`**，统一 `from core import get_logger` + `log = get_logger('模块名')` 记录；详细度 `debug` 才输出调试级（如串口原始数据）。
-- `logs.json` 为本机运行数据，已在 `.gitignore` 中忽略。
-
-**引擎可用性与优雅降级**：
-- `CHART_ENGINE_AVAILABLE`：导入 core 时用 `importlib` 探测一次的引擎可用性字典；`chart_engine_available(engine)` 为查询接口，`resolve_chart_engine(engine)` 把期望引擎解析为实际可用引擎（配置引擎被卸载时自动降级到另一个，都缺返回 `None`）。
-- 占位模式（`_engine is None`）：`_build_placeholder_widget()` 显示"未检测到图表引擎"提示（含安装命令），绘制 API 变为空操作（事务仍记录到 `_last`），`clear_chart()` / `apply_chart_theme()` / `set_engine()` 全部安全。
-- 设置页与 `MainWindow.change_chart_engine` 都以 `chart_engine_available()` 守卫，未安装引擎的切换请求会被拒绝。
-
-**AI 分析实验**（图表卡右上角浮动按钮，仅 `ChartPanel` 提供）：
-- 入口流程：点击「AI分析实验」→ 取模块数据回调（无数据弹提示先采集）→ **`AIExperimentInfoDialog` 可填写实验名称/实验目的/条件备注（均为选填，留空可直接开始）** → 确认后打开 `AIChatDialog`。实验信息按模块名存入 `app_config.json` 的 `General.AIExperimentInfo`（`JsonDictSerializer`），下次进入自动预填；窗口内「实验信息」按钮可随时修改。
-- 数据接入：模块在 `__init__` 调用 `chart.set_ai_data_provider(self._ai_data)`；回调返回 `{title, x_label, y_label, points, params, system_prompt}`，无数据返回 `None`。
-- system 提示词分层（`build_ai_system_prompt(context, experiment_info)`）：通用规范 `_AI_BASE_PROMPT` → 模块专属 `system_prompt`（兼容旧键 `prompt`）→【本次实验信息】→ 用户补充 `aiUserPrompt` →【实验配置参数】→【实验数据】（超 `aiDataLimit` 行均匀抽样）。
-- 每个模块定制系统提示词：模块顶部定义 `AI_SYSTEM_PROMPT` 常量（角色 + 测量原理/公式 + 数据特征 + 误差来源 + 分析要求），`_ai_data()` 以 `'system_prompt': AI_SYSTEM_PROMPT` 返回。
-- 对话窗口：左右气泡 / Enter 发送（Shift+Enter 换行）/ 同步数据 / 清空对话 / 实验信息 / 右上角设置（`AISettingsDialog`：端点、Key、模型、温度、max_tokens、数据行上限、自定义提示词）。每轮发送实时调用 provider 取最新数据（非快照）。AI 回复气泡用 `Qt.TextFormat.MarkdownText` 富文本渲染（Qt 内置 GitHub 方言：标题/列表/表格/代码/链接），用户输入保持纯文本；链接仅放行 http/https（`_on_bubble_link`）。进入 AI 时对话框 parent 传顶层窗口（`self.window()`），避免 Qt transient-parent 告警且遮罩覆盖整窗。
-- 请求由 `AIRequestThread` 后台线程用标准库 `urllib` 发送到 OpenAI 兼容 `/chat/completions`（零第三方依赖）；线程不挂 parent，发送中关窗自动收尾，避免 QThread 析构崩溃。
-
-### 模块能力要点
-
-- `VoltageSensorWidget` 支持：HX711 24 位 ADC 模式（通道 A/B、增益 128/32）、ADS1115 16 位模式（PGA 增益、通道选择）、kV/V/mV 单位切换、去皮（Tare）功能。
-- `ForceSensorWidget` 支持：去皮（Tare）、两点校准、有线串口和 BLE 两种连接方式。
-- `PhSensorWidget` 支持：单点 / 两点 / 三点校准（Nernst 斜率 / 线性拟合 / 二次多项式拟合）。
-- `CurrentSensorWidget` 支持：ACS712 5A/20A/30A 量程切换、AC/DC 测量、零点校准。
-- **AI 分析**：6 个传感器模块均注册 `_ai_data()` 数据回调并定义模块专属 `AI_SYSTEM_PROMPT`（测量原理/数据特征/误差来源/分析要求），进入分析前由 `AIExperimentInfoDialog` 采集实验名称等信息。
-- **主题支持**：所有传感器模块均实现 `apply_theme(theme)` 方法，委托 `core.apply_module_theme()` 刷新页面/卡片/QLabel 颜色，并调用 `ChartPanel.apply_chart_theme()` 切换图表背景/轴色（双引擎均生效）。页面标题统一使用 FluentWidgets `TitleLabel`，滚动区/页面背景使用 `scroll_area_style()` / `page_bg_style()`。
-- 配置持久化：`load_sensor_config()` / `save_sensor_config()` 读写 `sensor_config.json`。
-- 无自动化测试——`test_serial.py` 仅为手动诊断工具。
-- 无 CI/CD、代码检查或类型检查配置。
-
-## 添加新传感器模块
-
-新增传感器**无需修改 `main.py`**，只需 2 步：
-
-### 1. 建目录 + 丢文件
-
-在 `传感器代码/` 下新建子目录，放入下位机 `.ino` 和上位机 `.py`：
-
-```
-传感器代码/
-└── 温度传感器/                  ← 新建目录
-    ├── ds18b20.ino              ← 下位机固件
-    └── temperature_sensor.py    ← 上位机模块（带识别区）
-```
-
-### 2. 在 `.py` 文件头写识别区
+### 2.2 在 `.py` 文件头写识别区
 
 ```python
 # === MODULE META ===
 # icon: T
 # name: 温度传感器
-# category: physics          # physics 或 chemistry
+# category: physics
 # class: TemperatureSensorWidget
 # ===================
-
-# -*- coding: utf-8 -*-
-"""温度传感器模块"""
-
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel, isDarkTheme
-from core import (
-    SerialThread, load_sensor_config, save_sensor_config, ChartPanel,
-    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    scroll_area_style, page_bg_style, apply_module_theme,
-)
-
-class TemperatureSensorWidget(QWidget):
-    def __init__(self):
-        ...
-        # 图表：ChartPanel 双引擎抽象（matplotlib / pyqtgraph 由设置决定）
-        self.chart = ChartPanel()
-
-    def update_chart(self):
-        """绘制曲线：事务式 API，两种引擎下行为一致"""
-        c = self.chart
-        c.begin()
-        c.plot(self.time_data, self.temp_data, color='#0078d4', width=2, label='温度')
-        c.set_labels('时间 (秒)', '温度 (°C)')
-        c.legend()
-        c.end()
-
-    def apply_theme(self, theme):
-        """主题切换：委托通用刷新助手 + 切换图表主题（双引擎均生效）"""
-        apply_module_theme(self, theme)
-        self.chart.apply_chart_theme(isDarkTheme())
 ```
-
-重启 `main.py` 即自动出现在侧边栏（文字图标）+ 主页卡片 + 内容栈。
-
-**主题支持要点**（新模块若想适配亮/暗主题）：
-1. 页面标题用 `TitleLabel`（自动适配主题），不要用 `QLabel` + 硬编码颜色。
-2. 滚动区用 `scroll.setStyleSheet(scroll_area_style())`，页面背景用 `content.setStyleSheet(page_bg_style())`。
-3. 实现 `apply_theme(self, theme)` 方法，委托 `apply_module_theme(self, theme)` 刷新页面/卡片/QLabel 颜色，再调用 `self.chart.apply_chart_theme(...)` 切换图表背景（双引擎均生效）。
-
-**UI 组件规约**（贴合 WinUI3 风格，2026-08 统一打磨）：
-1. 一律使用 FluentWidgets 组件，**禁止**构造原生 `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`。
-2. 标签语义化映射：静态表单标签（"连接方式:""串口:"等）用 `BodyLabel`；次要说明/统计信息（原硬编码 `#666/#888` 灰色小字）用 `CaptionLabel`（不设硬编码色，主题自适应）；实时大数值与状态强调保留 `setFont` + 强调色（主题切换由 `apply_module_theme` 自动 remap）。
-3. 数字输入用 `SpinBox` / `DoubleSpinBox`（Fluent 样式，API 与 Qt 原生兼容）。
-4. 模式开关用 `SwitchButton`（WinUI3 开关）替代复选框，信号为 `checkedChanged`（**不是** `toggled`）。
-5. 卡片容器用 `FluentCard`（core 提供，基于原生 ExpandGroupSettingCard），可传已构建内容控件或 `add_row/add_widget` 填充；仅图表卡（需要全屏/浮动面板）用 `CollapsibleCard`。**不要**再拼接 `QWidget#card QLabel { color: ... }` 硬编码（FluentLabel 已随主题变色）。
-
-**图表开发要点**（新模块必须遵守）：
-1. 图表控件一律用 `core.ChartPanel`，**禁止**直接创建 matplotlib `Figure`/`FigureCanvas` 或 pyqtgraph `PlotWidget`——绕过抽象会导致设置页引擎切换对该模块失效。
-2. 绘制走 `begin()` → `plot()`/`hline()`/`set_labels()`/... → `end()` 事务流程，切换引擎时 `ChartPanel` 会自动重放最近一次事务。
-3. 多子图场景用 `ChartPanel(n_plots=N)`，各调用通过 `index` 参数指定子图。
-
-**AI 分析接入要点**（新模块建议遵守）：
-1. 在 `__init__` 中 `self.chart.set_ai_data_provider(self._ai_data)`；`_ai_data()` 返回 `{title, x_label, y_label, points, params, system_prompt}`，无数据返回 `None`。
-2. 在模块顶部定义 `AI_SYSTEM_PROMPT` 常量，写清角色、测量原理与公式、正常数据特征、常见误差来源、期望的分析方式；`_ai_data()` 通过 `'system_prompt'` 返回（旧键 `'prompt'` 仍兼容）。
-3. 实验信息（名称/目的/备注）由 core 统一采集与持久化，模块无需处理；数据每轮实时取最新值，不要在模块内做快照缓存。
-
-### 识别区字段说明
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `icon` | 是 | 图标文字（如 `x`、`V`、`pH`），由 `make_text_icon()` 渲染成 `QIcon` 显示在侧边栏 |
-| `name` | 是 | 模块显示名（如 `超声波位移`），用于侧边栏和主页卡片 |
-| `category` | 是 | 模块类别：`physics`（物理）/ `chemistry`（化学），决定主页分组 |
-| `class` | 是 | 模块的主类名（如 `UltrasonicWidget`），必须继承 `QWidget` |
+| `icon` | 是 | 图标文字，经 `make_text_icon()` 渲染成侧边栏图标（如 `V` / `pH` / `A`） |
+| `name` | 是 | 模块显示名，用于侧边栏与主页磁贴 |
+| `category` | 是 | `physics` 或 `chemistry`，决定主页分组 |
+| `class` | 是 | 主类名，须继承 `QWidget` |
 
-## 注意事项
+**格式严格**：字段名、冒号、空格写错会导致模块加载失败（`importlib` 动态加载依赖此格式）。
 
-- `sensor_config.json` 在 `.gitignore` 中——它是用户本地校准数据
-- `.ino` 文件名含空格（如 `ph esp32.ino`），某些系统可能出问题
-- Arduino 代码目录使用中文命名
-- `main_legacy.py` 是迁移前单文件存档，**不再维护**，新功能请改 `main.py` + 模块文件
-- `NavButton` / `SidebarWidget` 是遗留代码，`MainWindow` 已改用 `FluentWindow` 自带导航，不要基于它们开发新功能
-- 设置页已实现主题切换（亮色 / 暗色 / 跟随系统）、主题色（跟随系统 / 自定义取色）、图表引擎切换（matplotlib / pyqtgraph，热切换，未安装的引擎灰显不可选）、保存配置开关、传感器配置管理（清除 / 导出 / 导入）、恢复默认设置、关于信息、开源信息、仓库链接（`SettingsWidget`）
-- 图表引擎是**可选依赖**：matplotlib / pyqtgraph 至少安装其一；两个都缺时程序照常启动，图表区域显示"未检测到图表引擎"占位提示
-- **pyserial 是可选依赖**：未安装时程序照常启动，各传感器模块自动切"模拟器"模式，串口连接弹安装指引；模块代码**禁止**直接 `import serial`，一律走 `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`
-- 新增传感器模块时建议实现 `apply_theme()` 方法以适配亮/暗主题（委托 `core.apply_module_theme()`）；图表一律用 `core.ChartPanel`，保证引擎热切换与占位降级对模块生效
-- 模块文件名使用英文蛇形命名（如 `voltage_sensor.py`），与 PEP 8 一致
-- BLE 功能需要 `bleak`（可选依赖），未安装时会自动降级
-- **日志一律用 `core.get_logger('模块名')`，禁止新增 `print`**：控制台始终输出运行日志；「运行日志」开关只决定是否写入 `logs.json`（本机运行数据，已在 `.gitignore` 中忽略）
-- 动态加载依赖识别区格式严格，字段名/冒号/空格写错会导致模块加载失败
-- **任务栏图标/名称**：`_apply_taskbar_identity(window)` 必须在 `window.show()` **之前**调用（在窗口 property store 写入 `PKEY_AppUserModel_*`）；源码运行时任务栏按钮显示应用名与 `docs/images/icon.ico`，否则回退为宿主 `python.exe` 的「Python」
-- **虚拟环境**：推荐根目录 `.venv/`（已加入 `.gitignore`）；运行 / 调试示例见「安装依赖」一节
-- **两条已知无害 Qt 告警**（`QFont::setPointSize <= 0`、`QWidgetWindow ... must be a top level window`）由 `main._install_qt_warning_filter()` 在创建 QApplication 前统一过滤，其余 Qt 消息照常输出
-- **退出确认框禁止在 `closeEvent` 内直接 `exec()`**：父窗口处于关闭状态时弹模态对话框会出现对话框无法激活、按钮点击无响应（表现为界面卡死，定时器仍在跑但输入进不去）；正确做法是 `event.ignore()` 取消本次关闭，再用 `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹框，确认后置 `_exit_confirmed` 并再次 `close()`（见 `MainWindow.closeEvent` / `_prompt_exit`）
-- **模块断开线程一律用 `core.stop_thread()`**（内部 `stop()` + 限时 `wait(2000)`，超时收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃）；通信线程 `running` 初值为 `True`、`run()` 首行检查，防止 `stop()` 先于 `run()` 执行时线程永不退出、`wait()` 卡死
-- **退出确认框必须用顶层 `Dialog`**（`MainWindow._prompt_exit`），并配合 `closeEvent` 的 `event.ignore()` + `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹出：窗口处于关闭状态时弹模态框可能无法激活、接收不到鼠标输入（表现为界面卡死）。其余提示 / 校准弹窗保持原有 `fluent_message_box()` / `MessageBoxBase` 实现不变。模态弹窗 `exec()` 返回后如需释放用 `deleteLater()`（延迟销毁），**不要**用 `WA_DeleteOnClose`——它会立即删掉 C++ 对象，之后访问控件会报 `RuntimeError: Internal C++ object already deleted`
+### 2.3 模块必须实现
 
----
+- `self.chart = core.ChartPanel(...)`，并在 `__init__` 里 `self.chart.set_ai_data_provider(self._ai_data)`。
+- `apply_theme(self, theme)`：委托 `core.apply_module_theme(self, theme)`，再调 `self.chart.apply_chart_theme(isDarkTheme())`。
+- `_ai_data()`：返回 `{title, x_label, y_label, points, params, system_prompt}`，无数据返回 `None`；模块顶部定义 `AI_SYSTEM_PROMPT` 常量，经 `'system_prompt'` 键返回（旧键 `'prompt'` 兼容）。
+- 用 `core.stop_thread()` 回收自己起的通信线程，不要只调 `stop()`。
 
-# English Version {#english-version}
+### 2.4 组件选型对照
 
-**[English](#english-version)** | **[中文版](#项目简介)**
+| 用途 | 用什么 |
+|------|--------|
+| 静态表单标签（「连接方式:」） | `BodyLabel` |
+| 次要说明 / 统计小字（原先硬编码 `#666` 的灰色小字） | `CaptionLabel`（不设硬编码颜色） |
+| 数字输入 | `SpinBox` / `DoubleSpinBox` |
+| 模式开关 | `SwitchButton`，信号是 `checkedChanged`（**不是** `toggled`） |
+| 普通卡片（连接控制 / 参数 / 实时数据 / 操作按钮） | `core.FluentCard` |
+| 图表卡（需要全屏 / 浮动面板） | `core.CollapsibleCard` |
+| 页面标题 | `TitleLabel` |
+| 滚动区 / 页面背景 | `scroll_area_style()` / `page_bg_style()` |
 
-## What is this
+**不要**再拼 `QWidget#card QLabel { color: ... }` 这类硬编码样式，Fluent 组件本身已随主题变色。
 
-PySide6 + FluentWidgets (WinUI3 style) GUI application + Arduino/ESP32 firmware for low-cost physics/chemistry lab data acquisition (sensors: ultrasonic, pH, HX711 force/voltage, ACS712 current). Uses a **modular architecture** — adding a sensor requires only dropping a file, no changes to the main program.
+## 3. 图表（`core.ChartPanel`）
 
-## Entry points
-
-- **Python app**: `python main.py` (modular architecture, dynamically loads sensor modules)
-- **Core module**: `core.py` (SerialThread / BLESerialThread / config / dialogs / modern styles)
-- **Serial diagnostics**: `python test_serial.py`
-- **Legacy archive**: `main_legacy.py` (pre-refactor single-file version, 5000 lines, **no longer maintained**, kept for reference only)
-
-## Install
-
-```bash
-pip install PySide6>=6.4.0 numpy>=1.21.0
-# Serial communication (needed for real hardware; without it serial features degrade gracefully and the simulator still works)
-pip install pyserial>=3.5
-# Chart engines (install at least one of matplotlib / pyqtgraph; both recommended)
-pip install matplotlib>=3.5.0 pyqtgraph>=0.13.0
-# WinUI3 style component library (required, main window is based on FluentWindow)
-pip install PySide6-Fluent-Widgets
-# Optional (for BLE wireless):
-pip install bleak
-```
-
-A `requirements.txt` is provided at the project root (all required and optional deps) — just run `pip install -r requirements.txt`.
-
-Using [uv](https://docs.astral.sh/uv/) is recommended (optional — both workflows coexist): the root `pyproject.toml` is the project's single PEP 621 dependency manifest, `[dependency-groups].dev` holds the packaging tool (PyInstaller), `[[tool.uv.index]]` defaults to the Tsinghua PyPI mirror (override with `uv sync --default-index https://pypi.org/simple`), and `[tool.uv] package = false` declares a **virtual project** (this is a script-style app with no `build-system`, so `uv build` is skipped — packaging still uses `PhysChem-DigitizerP.spec`).
-
-```bash
-uv sync              # create .venv, resolve deps from pyproject.toml, write uv.lock (incl. dev group)
-uv sync --no-dev     # runtime deps only (packaging / distribution)
-uv run main.py       # launch the app (no manual activate needed)
-uv run test_serial.py
-uv lock --upgrade    # bump dependency versions in uv.lock
-```
-
-`uv run` must be invoked from the project root (the directory containing `main.py`) — `sensor_config.json` / `app_config.json` / `logs.json` are anchored to `main.py`'s directory. Commit `uv.lock` to keep environments identical; `uv sync` reuses the existing `.venv/` (already in `.gitignore`). **No `setup.py` exists.**
-
-A virtual environment in the project root is recommended (`.venv/` is already in `.gitignore`):
-
-```powershell
-# Windows (PowerShell)
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1    # if script execution is blocked: Set-ExecutionPolicy -Scope Process Bypass
-pip install -r requirements.txt
-python main.py
-```
-
-```bash
-# macOS / Linux
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
-```
-
-## Run & debug
-
-- Serial baud rate: **115200** (hardcoded across all firmware and Python)
-- All firmware output CSV: `timestamp,value` — Python parses this directly
-- `sensor_config.json` stores calibration params (auto-created/updated at runtime)
-- Dual chart engines: pyqtgraph (default) / matplotlib, persisted via the `app_cfg.chartEngine` config item, hot-switchable at runtime from the settings page; matplotlib font (Microsoft YaHei) is set globally in `core.py`
-- Graceful degradation when an engine is missing: unavailable engine options are grayed out (disabled) in the settings combo box; if the configured engine is uninstalled, the app falls back to the other available engine at startup; when both are missing, `ChartPanel` shows a "no chart engine detected" placeholder and drawing APIs become no-ops — all other features keep working
-- Graceful degradation when pyserial is missing: `core.SERIAL_AVAILABLE` detects availability; `core.list_serial_ports()` is the single port-enumeration entry (returns an empty list when missing); without it every sensor module auto-switches to simulator mode, the port combo shows a placeholder, and connecting pops an install hint (`core.serial_unavailable_hint()`)
-- The startup console prints optional-dependency status: pyserial / bleak missing hints and chart engine installation status (including a humorous line when both chart engines are missing)
-- Headless sandbox verification: `QT_QPA_PLATFORM=offscreen python main.py`
-
-## Directory structure
-
-```
-PhysChem-DigitizerP/
-├── main.py                     ← Main: FluentWindow + home + dynamic loader
-├── core.py                     ← Shared: comm threads / config / dialogs / styles
-├── main_legacy.py              ← Legacy archive (single-file, unmaintained)
-├── test_serial.py              ← Serial diagnostics
-├── pyproject.toml              ← PEP 621 dependency manifest (uv sync / uv run; dev group has PyInstaller)
-├── uv.lock                     ← uv lockfile (exact versions; commit it)
-├── requirements.txt            ← Dependency list (pip install -r requirements.txt; coexists with pyproject)
-├── PhysChem-DigitizerP.spec    ← PyInstaller packaging config (build/dist outputs are .gitignore'd)
-├── README.md                   ← Project docs
-├── CONTRIBUTING.md / LICENSE   ← Contribution guide / GPL-3.0 license
-├── docs/images/                ← Docs images
-├── sensor_config.json          ← Local calibration (.gitignore, runtime-generated)
-└── 传感器代码/                  ← Firmware .ino + host .py in same dir
-    ├── README.md               ← Directory overview + per-sensor index
-    ├── 超声波位移传感器/
-    │   ├── README.md
-    │   ├── HC-SR04esp32.ino
-    │   ├── HC-SR04esp8266.ino
-    │   ├── csbwithbt.ino
-    │   ├── ultrasonic_displacement.py   ← Module file (with meta header)
-    │   └── ultrasonic_velocity.py
-    ├── ph传感器/
-    │   ├── README.md
-    │   ├── ph esp32.ino
-    │   ├── PH传感器原理图.pdf
-    │   └── ph_sensor.py
-    ├── 力传感器/
-    │   ├── README.md
-    │   ├── force.ino
-    │   ├── force_sensor.py
-    │   └── 资料（HX711称重模块商家提供的）/   ← Vendor reference material (wiring/schematics/drivers)
-    ├── 电压传感器/
-    │   ├── README.md
-    │   ├── ESP32_Voltage_Sensor.ino
-    │   ├── HX711_Voltage.ino
-    │   ├── ADS1115_Voltage.ino
-    │   └── voltage_sensor.py
-    ├── 电流传感器/
-    │   ├── README.md
-    │   ├── ESP32_ADC_Raw_Data.ino
-    │   └── current_sensor.py      ← ACS712 current (5A/20A/30A ranges, AC/DC)
-    └── 电学综合/                  ← Ohm's law + electric power (host modules under development)
-        ├── README.md
-        ├── VI_ESP32_ADC.ino       ← Voltage (built-in ADC) + current (ACS712), merged firmware
-        ├── VI_ADS1115.ino         ← Voltage (ADS1115 16-bit) + current, merged firmware
-        ├── VI_HX711.ino           ← Voltage (HX711 24-bit) + current, merged firmware
-        └── V_*.ino / I_ACS712.ino ← Single-channel copies for dual-board measurement
-```
-
-## Arduino firmware
-
-Located in `传感器代码/` (Chinese directory names). Each subfolder contains `.ino` files and a host `.py` module.
-
-| Sensor | Board | Firmware path | Host module |
-|--------|-------|---------------|-------------|
-| HC-SR04 ultrasonic | ESP32 | `传感器代码/超声波位移传感器/HC-SR04esp32.ino` | `ultrasonic_displacement.py` |
-| HC-SR04 ultrasonic | ESP8266 | `传感器代码/超声波位移传感器/HC-SR04esp8266.ino` | `ultrasonic_displacement.py` |
-| HC-SR04 + BLE | ESP32-S3 | `传感器代码/超声波位移传感器/csbwithbt.ino` | `ultrasonic_displacement.py` |
-| Ultrasonic velocity | — | (shares above firmware) | `ultrasonic_velocity.py` |
-| pH (SEN0161) | ESP32-S3 | `传感器代码/ph传感器/ph esp32.ino` | `ph_sensor.py` |
-| HX711 force | ESP32-S3 | `传感器代码/力传感器/force.ino` | `force_sensor.py` |
-| Voltage ADC | ESP32-S3 | `传感器代码/电压传感器/ESP32_Voltage_Sensor.ino` | `voltage_sensor.py` |
-| HX711 voltage | ESP32-S3 | `传感器代码/电压传感器/HX711_Voltage.ino` | `voltage_sensor.py` (HX711 mode) |
-| ADS1115 voltage | ESP32-S3 | `传感器代码/电压传感器/ADS1115_Voltage.ino` | `voltage_sensor.py` (ADS1115 mode) |
-| Current (ACS712) | ESP32-S3 | `传感器代码/电流传感器/ESP32_ADC_Raw_Data.ino` | `current_sensor.py` (5A/20A/30A ranges, AC/DC, zero calibration) |
-| Ohm's law (R=U/I) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (built-in ADC / ADS1115 / HX711 + ACS712, one board; dual-board mode uses the `V_*.ino` + `I_ACS712.ino` single-channel copies in the same folder) | **host module under development** (`VIConnection*` / `TimestampPairer` helpers are ready in core) |
-| Electric power (P=UI) | ESP32-S3 | `传感器代码/电学综合/VI_*.ino` (same as above) | **host module under development** |
-
-Flash via Arduino IDE. Board packages:
-- ESP8266: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
-- ESP32: `https://dl.espressif.com/dl/package_esp32_index.json`
-- ESP32 CN mirror: `https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json`
-
-## Architecture notes
-
-### Overall architecture (FluentWindow main body)
-
-- **Main window `MainWindow`** subclasses `FluentWindow` (from `PySide6-Fluent-Widgets`), automatically getting the WinUI3-style left `NavigationInterface` + content `stackedWidget`. Each sensor widget is registered to navigation via `addSubInterface(widget, icon, name)`.
-- **Modular loading**: `main.py` scans `传感器代码/` at startup, dynamically loads modules via `importlib` (`scan_modules` / `parse_module_meta`).
-- **Navigation order**: home (`FIF.HOME`, top) → sensor modules (text icons, middle) → settings (`FIF.SETTING`, bottom `NavigationItemPosition.BOTTOM`).
-
-### main.py composition
-
-- **`make_text_icon(text, size=128)`**: renders the meta-header text (e.g. `V`/`F`/`x`/`pH`/`v`/`A`) into a square `QIcon`. FluentIcon enum has no icons for "voltage/current/pH/force/ultrasonic", so text is rendered directly into an icon to preserve the modular design. Font size is auto-measured with `QFontMetrics` (starts at `size*0.9` and shrinks to just fill the canvas, leaving 8% margin), supporting Normal/Active/Selected state colors.
-- **`HomePageWidget`**: home page. The upper half holds the project info card + 3-platform repo address card (`ExpandGroupSettingCard`); the lower half is the **sensor module tile grid** — one `ModuleFolderTile` (`CardWidget` subclass) per module: a module text icon (meta `V`/`F`/`x`/`pH`/`v`/`A`, rendered via `make_text_icon()` with a theme-reactive `refresh_icon()`) + module name + a pin button in the top-right (`PillToolButton` + `FIF.PIN`, pin-to-top toggle). The grid uses `AdaptiveFlowLayout` (`setWidgetMinimumWidth(160)` computes columns automatically and wraps to fill rows as the window resizes). Pinned modules sort first within their group; the state persists to `General.PinnedModules` in `app_config.json` (serialized as a JSON array by `core.StringListSerializer`); clicking a tile emits `module_clicked` → switches to that module. Titles use FluentWidgets `TitleLabel` / `SubtitleLabel` for automatic light/dark theme adaptation; `apply_theme()` refreshes the page/scroll background and redraws each tile's text icon (tiles themselves are native FluentWidgets components and adapt automatically — no rebuild needed).
-- **`SettingsWidget`**: settings page built on FluentWidgets `SettingCardGroup` + `SettingCard` components. Groups: ① Personalization (**app theme**: light / dark / follow system; **theme color**: follow the Windows system accent color — read from the registry, `SystemAccentListener` listens for DWM broadcasts and updates live, system color is never persisted — or custom via a `ColorDialog` color picker, persisted on selection; **config persistence switch**: when off, sensor_config.json is neither read nor written; **sensor config management**: clear / export / import via `core.clear/export/import_sensor_config` using system folder/file dialogs; **reset to defaults**: restores app_config.json and sensor_config.json; **chart engine: matplotlib / pyqtgraph** — unavailable engines are grayed out via `ComboBox.setItemEnabled` and labeled "未安装/not installed"; switching from pyqtgraph to matplotlib pops a compatibility warning confirmation) ② About (app name / version / license) ③ Open-source info (`ExpandGroupSettingCard` listing dependency libraries, licenses and official links) ④ Source & feedback (GitHub / Gitee / GitCode / Issue links). Theme switching is wired to `MainWindow.change_app_theme` via `theme_change_requested`; engine switching is wired to `MainWindow.change_chart_engine` via `engine_change_requested`; the "运行日志" switch (console + logs.json, adjustable verbosity/max entries, on by default).
-- **`MainWindow(FluentWindow)`**: main window + dynamic loader, responsible for module discovery, instantiation, navigation registration, theme switching, and chart engine switching. `change_app_theme(theme)` flow: for fixed modes (light/dark) it first calls `setTheme()` to switch the FluentWidgets theme (auto-refreshes all FluentWidgets child components), then calls `apply_theme()` on the settings page / home page / each sensor module to refresh hardcoded widget colors; in **auto (follow system) mode `setTheme` is NOT called** (qconfig is already set to `Theme.AUTO`; system theme changes fire `qconfig.themeChanged` → `_on_fluent_theme_changed`, which only refreshes custom widgets — this avoids overwriting AUTO with a fixed theme, which would cause the mode to flip-flop and trigger full-refresh loops). `change_chart_engine(engine)` flow: first rejects requests for uninstalled engines via `chart_engine_available()`, then iterates each sensor module via `findChildren(ChartPanel)` and calls `panel.set_engine(engine)` to rebuild the engine widget and replay the last committed draw transaction — curves carry over seamlessly without data loss.
-- **`_set_windows_appusermodelid()` / `_apply_taskbar_identity(window)`**: Windows taskbar identity. The first sets the process-level AppUserModelID (separate taskbar grouping); the second must run **before the window's first `show()`** and writes `PKEY_AppUserModel_ID / RelaunchCommand / RelaunchDisplayNameResource / RelaunchIconResource` (icon: `docs/images/icon.ico`) through `SHGetPropertyStoreForWindow`; otherwise the taskbar shows the host `python.exe` "Python" name and icon. Under PyInstaller (`sys.frozen`) the RelaunchCommand degrades to the exe itself.
-- **`_install_qt_warning_filter()`**: installs a Qt message handler that suppresses exactly two known-harmless warnings (`QFont::setPointSize: Point size <= 0`, `QWidgetWindow ... must be a top level window`) and forwards everything else to the previously installed handler; called in `main()` before the QApplication is created.
-- **Legacy code**: `NavButton` / `SidebarWidget` are the hand-written sidebar implementation from before the FluentWindow migration, **no longer used by `MainWindow`** (FluentWindow has its own navigation). They are still kept in `main.py` for reference — do not build new features on them.
-
-### core.py composition
-
-Centralized shared code — `SerialThread`, `SimulatorThread`, `BLESerialThread`, `scan_ble_devices`, `load/save/export/import/clear_sensor_config`, `reset_all_config`, `system_accent_color` / `SystemAccentListener`, `CalibrationDialog`, `CalibrationMessageBox`, `SampleRateDialog`, `SampleRateComboBox`, AI analysis (`AIRequestThread` / `AIExperimentInfoDialog` / `AISettingsDialog` / `AIChatDialog` / `build_ai_system_prompt`), modern style functions (`card_style`/`primary_btn_style`/`accent_btn_style`/`modern_combo_style`/`modern_combo_style_dark`/`page_bg_style`/`scroll_area_style`).
-
-**Theme infrastructure** (full light/dark theme support):
-- `_theme_colors()`: returns a dict of semantic colors for the current theme based on `isDarkTheme()` (`page_bg`/`card_bg`/`text_primary`/`accent`, etc.).
-- `page_bg_style()` / `scroll_area_style()`: page and scroll area background styles, theme-aware.
-- `card_style()` / `primary_btn_style()` / `accent_btn_style()`: card and button styles that switch colors based on `isDarkTheme()`.
-- `apply_module_theme(widget, theme=None)`: generic theme refresh helper that recursively refreshes QScrollArea / `QWidget#card` / `CollapsibleCard` / QLabel / QLineEdit / QFrame stylesheets within a module widget. Uses a cached `_orig_qss` dynamic property to enable bidirectional light↔dark switching (avoids "stuck light colors after switching back"). Sensor modules' `apply_theme()` should delegate to this. **Note**: `FluentCard` (the native card) is skipped — it ships its own Fluent theme styles, and applying custom QSS would break its native background.
-- `CollapsibleCard`: hand-drawn collapsible card (rounded corners + border + clickable header), title uses `SubtitleLabel`; `paintEvent` / `_apply_theme_style` are theme-aware; `apply_theme(theme)` refreshes arrow and fullscreen button colors. **Only the chart card still uses it** (it needs fullscreen + floating-panel capability).
-- `FluentCard`: a compact card adapter over the native `ExpandGroupSettingCard`, used for the modules' **regular cards** (connection control / parameters / live data / action buttons). Native WinUI3 look out of the box: theme-adaptive background & separator, rotating expand arrow with animation. API: `FluentCard(title, content_widget=None, expanded=True)` is drop-in compatible with the old `CollapsibleCard(title, content, expanded=...)` call; it automatically strips the passed content's `objectName='card'` + `card_style()` (avoids double borders); or fill from scratch with `add_row(label, widget)` / `add_widget(w)` / `add_layout(l)`; `add_header_widget(w)` appends a button to the header's right side; `toggle()` / `is_expanded()` control collapsing. It overrides `_adjustViewSize()` (sizes by content height) and forwards `wheelEvent` to the parent widget (fixes the scroll conflict when nested inside the module's outer QScrollArea).
-- `FloatingDataPanel`: theme-aware background painting.
-
-**Electrical-module shared components** (Ohm's law / electric power host modules are under development; the core helpers are already in place):
-- `VIConnectionUnit`: single "voltage + current" data channel (config + SerialThread/SimulatorThread + parsing/scaling + dual-channel pairing + AC RMS + zero calibration + sample throttling + thread-safe cleanup); the `role` field (both/voltage/current/none) marks the data role for electrical modules to bind via the parameter cards' "current connection" selector.
-- `TimestampPairer`: dual-board pairing — two "timestamp,ADC" streams are matched within a ±50 ms tolerance; out-of-tolerance old samples are dropped to prevent misalignment build-up (the two boards have independent clock bases and cannot be subtracted directly).
-- `VIConnectionUnitCard` (FluentCard): single connection card (custom name / line color / connection mode / sampling method / serial port / merged-vs-dual-board switch).
-- `VIConnectionPanel` (FluentCard): multi-connection panel (add/remove units + dual-board switch + sample rate + connect/disconnect + config persistence via `get_configs/set_configs`).
-- `LINE_COLORS` / `_pick_line_color()` / `_color_icon()`: preset palette and color-swatch icons for multi-curve charts.
-
-**Dual chart engine `ChartPanel`** (unified abstraction over matplotlib / pyqtgraph):
-- All sensor module charts are drawn exclusively through `ChartPanel` — do **not** use `Figure`/`FigureCanvas` or `pg.PlotWidget` directly.
-- Transactional API: `begin()` opens a draw → `plot(x, y, color, width, label, index)` draws curves → `hline(y, ...)` draws horizontal reference lines → `set_labels()` / `set_title()` / `set_xlim()` / `set_ylim()` / `legend()` add decorations → `end()` commits and renders. Multi-plot layouts use `ChartPanel(n_plots=N)` with the `index` parameter.
-- Engine selection: reads `app_cfg.chartEngine` at construction and resolves it against availability via `resolve_chart_engine()`; `set_engine(engine)` rebuilds the underlying widget at runtime and **replays the last committed transaction** (cached in `_last`), so no curve data is lost on engine switch.
-- **Incremental updates (pyqtgraph live path)**: `_commit_pg` first compares a structural signature via `_pg_incremental_ok()` (sub-plot count, curves/hlines per sub-plot, legend toggle, explicit axis-range toggles); when it matches, `_incremental_pg()` reuses existing controls and only calls `setData`, avoiding a full `pi.clear()` + control rebuild every frame (the main cause of pyqtgraph lag under high-rate live drawing); structural changes automatically fall back to a full rebuild.
-- Theme adaptation: `apply_chart_theme(dark)` handles both matplotlib (figure/axes background & axis colors) and pyqtgraph (`setBackground` / axis text colors); call it from each module's `apply_theme()`.
-- **Hover interaction (pyqtgraph)**: on mouse move the panel locates the nearest data point and shows a dashed vertical guide line plus a following label (x-axis name/time + each curve's value; the label flips below the point near the top edge to stay in view). Nearest-point lookup uses binary search for time series (50k points in < 0.1ms per move). The panel records the last hover position (`_pg_hover_view`) and re-positions the hover items on the freshest data after every `_commit_pg` redraw — during live acquisition the label keeps showing with updated values even when the mouse is still, instead of flickering away on each redraw; hover items are restyled on theme change, migrate across sub-plots automatically, and the record is cleared by `clear_chart`.
-- **Chart analysis panel (pyqtgraph only)**: `get_analysis_panel()` returns a compact vertical analysis bar (modules place it in the left column of the chart card) offering: **view window** (`SwitchButton` toggles "show full range / scrolling window"; the scrolling window locks the x axis to the last N seconds via a `DoubleSpinBox` supporting 0.1s~3h fractional seconds); **curve fitting** (linear / quadratic / cubic / logarithmic y=a·ln(x)+b / power y=a·x^b — same-color dashed overlay plus equation & R² text anchored to the top-left of the viewport; points outside the domain are auto-dropped); **clear scatter points** (double-click confirm to prevent mis-taps); **outlier removal** (residual-ratio method: re-fit the remaining data and drop the top x% largest-residual points, with a multi-level undo stack `_outlier_stack` for step-by-step restore; masks apply only to each sub-plot's first curve, newly appended points stay by default). The panel auto-hides on matplotlib / placeholder modes.
-- **Legend managed internally**: legend entries are explicitly `legend.clear()`-ed before every redraw (older pyqtgraph's `pi.clear()` does not clear the legend, so live updates would accumulate entries indefinitely); reference lines (`InfiniteLine`) must **never** be added to the legend directly — they lack the `opts` attribute, and older pyqtgraph's `ItemSample.paint` crashes on them, taking down the whole widget tree's paint chain (broken charts, blank UI after clicks). Legend samples use an empty `PlotDataItem` with the same pen instead.
-
-**Logging (stdlib `logging`, console always on)**:
-- `AppConfig` items `General.LogEnabled` (default True; controls whether logs.json is written), `LogLevel` (warning/info/debug, default info) and `LogMaxEntries` (default 5000) are controlled by the settings page's "运行日志" / "日志详细度" cards; changes take effect immediately and persist.
-- `core.setup_logging()` runs at core import and in `main()`; `set_log_enabled/level/max_entries()` hot-update at runtime. The **console handler is always attached** (startup/module/config messages keep showing, prefixed `[HH:MM:SS.mmm] [LEVEL] source`); the switch only controls whether the `logs.json` handler is additionally attached, and a `NullHandler` prevents `logging.lastResort` duplicates.
-- `JsonLinesLogHandler` appends JSON Lines (one `{time, level, source, message}` object per line, UTF-8, flush-per-record, lock-protected) to the project-root `logs.json` and trims the oldest records beyond the limit (with a 10% margin).
-- New code must **not use `print`** — use `from core import get_logger` plus `log = get_logger('module_name')`; debug-level details (e.g. raw serial lines) only appear in the `debug` verbosity.
-- `logs.json` is local runtime data and is ignored via `.gitignore`.
-
-**Engine availability & graceful degradation**:
-- `CHART_ENGINE_AVAILABLE`: dict probed once via `importlib` at core import; `chart_engine_available(engine)` is the query API, `resolve_chart_engine(engine)` maps the desired engine to an actually available one (falls back to the other engine when the configured one is uninstalled; returns `None` when both are missing).
-- Placeholder mode (`_engine is None`): `_build_placeholder_widget()` shows a "no chart engine detected" hint (with install commands); drawing APIs become no-ops (transactions are still recorded into `_last`); `clear_chart()` / `apply_chart_theme()` / `set_engine()` are all safe.
-- Both the settings page and `MainWindow.change_chart_engine` guard with `chart_engine_available()` — switch requests for uninstalled engines are rejected.
-
-**AI experiment analysis** (floating button at the chart card's top-right, provided by `ChartPanel` only):
-- Flow: click "AI分析实验" → call the module data provider (prompt to acquire data first if empty) → **`AIExperimentInfoDialog` lets you fill in experiment name / purpose / notes (all optional — leave blank to start directly)** → `AIChatDialog` opens. Info is stored per module in `app_config.json` under `General.AIExperimentInfo` (`JsonDictSerializer`) and pre-filled next time; the in-window "实验信息" button edits it anytime.
-- Module wiring: call `chart.set_ai_data_provider(self._ai_data)` in `__init__`; the callback returns `{title, x_label, y_label, points, params, system_prompt}` (or `None` when empty).
-- System prompt layering (`build_ai_system_prompt(context, experiment_info)`): base prompt `_AI_BASE_PROMPT` → per-module `system_prompt` (legacy `prompt` key still supported) → experiment info → user `aiUserPrompt` → config params → data (uniformly down-sampled above `aiDataLimit` rows).
-- Per-module system prompts: define an `AI_SYSTEM_PROMPT` constant (role + measurement principle/formula + data characteristics + error sources + analysis guidance) and return it via `'system_prompt'`.
-- Chat window: left/right bubbles, Enter to send (Shift+Enter newline), sync data, clear chat, experiment info, settings (`AISettingsDialog`: endpoint, key, model, temperature, max tokens, data row limit, custom prompt). Every request re-reads the latest data through the provider (no snapshot). AI reply bubbles are rendered as rich text via `Qt.TextFormat.MarkdownText` (Qt built-in GitHub dialect: headings/lists/tables/code/links); user input stays plain text; links only allow http/https (`_on_bubble_link`). AI dialogs are parented to the top-level window (`self.window()`), avoiding Qt transient-parent warnings and making the mask cover the whole window.
-- `AIRequestThread` posts to any OpenAI-compatible `/chat/completions` endpoint with the stdlib `urllib` (zero third-party deps); the thread has no parent so closing the window mid-request is safe (avoids a QThread-destroyed-while-running crash).
-
-### Module capability notes
-
-- `VoltageSensorWidget` supports: HX711 24-bit ADC mode (channel A/B, gain 128/32), ADS1115 16-bit mode (PGA gain, channel selection), kV/V/mV unit switching, Tare function.
-- `ForceSensorWidget` supports: Tare, two-point calibration, wired serial and BLE connections.
-- `PhSensorWidget` supports: single-point / two-point / three-point calibration (Nernst slope / linear fit / quadratic polynomial fit).
-- `CurrentSensorWidget` supports: ACS712 5A/20A/30A range switching, AC/DC measurement, zero calibration.
-- **AI analysis**: all 6 sensor modules register an `_ai_data()` callback and define a module-specific `AI_SYSTEM_PROMPT` (principle / data characteristics / error sources / analysis guidance); `AIExperimentInfoDialog` collects the experiment name and other info before entering analysis.
-- **Theme support**: all sensor modules implement `apply_theme(theme)`, delegating to `core.apply_module_theme()` to refresh page/card/QLabel colors and calling `ChartPanel.apply_chart_theme()` to switch chart background/axis colors (works on both engines). Page titles uniformly use FluentWidgets `TitleLabel`; scroll area / page background use `scroll_area_style()` / `page_bg_style()`.
-- Config persistence: `load_sensor_config()` / `save_sensor_config()` write to `sensor_config.json`.
-- No automated tests — `test_serial.py` is a manual diagnostic tool.
-- No CI/CD, linting, or type-checking configured.
-
-## Adding a new sensor module
-
-Adding a sensor requires **no changes to `main.py`** — just 2 steps:
-
-### 1. Create directory + drop files
-
-Create a subfolder under `传感器代码/`, drop in firmware `.ino` and host `.py`:
-
-```
-传感器代码/
-└── temperature_sensor/         ← new folder
-    ├── ds18b20.ino             ← firmware
-    └── temperature_sensor.py   ← host module (with meta header)
-```
-
-### 2. Write meta header in the `.py` file
+事务式 API，两种引擎行为一致：
 
 ```python
-# === MODULE META ===
-# icon: T
-# name: Temperature Sensor
-# category: physics          # physics or chemistry
-# class: TemperatureSensorWidget
-# ===================
-
-# -*- coding: utf-8 -*-
-"""Temperature sensor module"""
-
-from qfluentwidgets import PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel, isDarkTheme
-from core import (
-    SerialThread, load_sensor_config, save_sensor_config, ChartPanel,
-    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    scroll_area_style, page_bg_style, apply_module_theme,
-)
-
-class TemperatureSensorWidget(QWidget):
-    def __init__(self):
-        ...
-        # Chart: ChartPanel dual-engine abstraction (matplotlib / pyqtgraph, per settings)
-        self.chart = ChartPanel()
-
-    def update_chart(self):
-        """Draw curves via the transactional API — identical behavior on both engines"""
-        c = self.chart
-        c.begin()
-        c.plot(self.time_data, self.temp_data, color='#0078d4', width=2, label='Temperature')
-        c.set_labels('Time (s)', 'Temperature (°C)')
-        c.legend()
-        c.end()
-
-    def apply_theme(self, theme):
-        """Theme switch: delegate to generic helper + switch chart theme (both engines)"""
-        apply_module_theme(self, theme)
-        self.chart.apply_chart_theme(isDarkTheme())
+c = self.chart
+c.begin()
+c.plot(x, y, color='#0078d4', width=2, label='温度')
+c.hline(0, color='#999', label='参考线')
+c.set_labels('时间 (秒)', '温度 (°C)')
+c.set_xlim(0, 60); c.set_ylim(-10, 110)
+c.legend()
+c.end()
 ```
 
-Restart `main.py` — the module auto-appears in sidebar (text icon) + home cards + content stack.
+- 多子图用 `ChartPanel(n_plots=N)`，各调用通过 `index` 参数寻址。
+- 切换引擎时 `ChartPanel` 自动重放最近一次事务，无需手动重绘。
+- 分析面板（拟合 / 离群点剔除 / 滚动窗口）用 `get_analysis_panel()` 取得，仅 pyqtgraph 下可见，matplotlib / 占位模式下自动隐藏。
+- **水平参考线不得直接加入图例**：`InfiniteLine` 没有 `opts` 属性，旧版 pyqtgraph 的 `ItemSample.paint` 会崩，并拖垮整棵控件树的绘制。
 
-**Theme support tips** (for new modules to adapt to light/dark themes):
-1. Use `TitleLabel` for the page title (auto-adapts to theme) — avoid `QLabel` with hardcoded colors.
-2. Use `scroll.setStyleSheet(scroll_area_style())` for the scroll area and `content.setStyleSheet(page_bg_style())` for the page background.
-3. Implement `apply_theme(self, theme)` that delegates to `apply_module_theme(self, theme)` to refresh page/card/QLabel colors, then call `self.chart.apply_chart_theme(...)` to switch the chart theme (works on both engines).
+## 4. 主题
 
-**UI component conventions** (WinUI3-style polish, standardized 2026-08):
-1. Always use FluentWidgets components — **never** construct native `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`.
-2. Semantic label mapping: static form labels (e.g. "连接方式:", "串口:") use `BodyLabel`; secondary hints/statistics (previously hardcoded `#666/#888` gray small text) use `CaptionLabel` (no hardcoded colors — theme-adaptive); large live values and emphasized status keep `setFont` + accent color (theme switching is auto-remapped by `apply_module_theme`).
-3. Numeric input uses `SpinBox` / `DoubleSpinBox` (Fluent-styled, API-compatible with the Qt natives).
-4. Mode toggles use `SwitchButton` (WinUI3 switch) instead of checkboxes; its signal is `checkedChanged` (not `toggled`).
-5. Card containers use `FluentCard` (from core, based on the native ExpandGroupSettingCard) — pass a pre-built content widget or fill with `add_row`/`add_widget`; only the chart card (needing fullscreen/floating panel) uses `CollapsibleCard`. Do **not** append `QWidget#card QLabel { color: ... }` hardcodes — Fluent labels already adapt to the theme.
+- 所有模块须实现 `apply_theme(theme)`，亮 ↔ 暗双向可切。
+- `core.apply_module_theme()` 用缓存的 `_orig_qss` 动态属性实现双向切换，**不要自己重写样式替换逻辑**。
+- `FluentCard` 会被 `apply_module_theme` 跳过（它自带 Fluent 样式，套自定义 QSS 反而破坏背景）。
 
-**Chart development rules** (mandatory for new modules):
-1. Always use `core.ChartPanel` for charts — **never** create matplotlib `Figure`/`FigureCanvas` or pyqtgraph `PlotWidget` directly; bypassing the abstraction makes the settings-page engine switch ineffective for that module.
-2. Draw via the `begin()` → `plot()`/`hline()`/`set_labels()`/... → `end()` transaction flow; on engine switch `ChartPanel` automatically replays the last transaction.
-3. For multi-plot layouts use `ChartPanel(n_plots=N)` and target sub-plots via the `index` parameter.
+## 5. 环境与构建
 
-**AI analysis integration rules** (recommended for new modules):
-1. Call `self.chart.set_ai_data_provider(self._ai_data)` in `__init__`; return `{title, x_label, y_label, points, params, system_prompt}` (or `None` when there is no data).
-2. Define an `AI_SYSTEM_PROMPT` constant at module top (role, principle/formula, normal data characteristics, error sources, expected analysis); return it via `'system_prompt'` (legacy `'prompt'` still supported).
-3. Experiment info (name/purpose/notes) is collected and persisted by core — modules need not handle it; always read the latest data per request instead of caching snapshots.
+- 依赖清单以 `pyproject.toml` 为唯一来源（`[dependency-groups].dev` 放 PyInstaller）。改依赖须同步更新 `requirements.txt`。
+- 用 uv：`uv sync` 建环境、`uv run main.py` 启动、`uv run test_serial.py` 诊断。
+- 用 pip：`pip install -r requirements.txt`。
+- **命令的工作目录必须是项目根目录**（`main.py` 所在目录）：`sensor_config.json` / `app_config.json` / `logs.json` 均以 `main.py` 所在目录为基准路径。
+- 本项目是脚本式应用（无 `build-system`），`pyproject.toml` 里已声明 `[tool.uv] package = false`，`uv build` 会被跳过；打包走 `PhysChem-DigitizerP.spec`：
 
-### Meta header fields
+```bash
+uv sync
+uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
+```
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `icon` | Yes | Icon text (e.g. `x`, `V`, `pH`), rendered into a `QIcon` by `make_text_icon()` and shown in the sidebar |
-| `name` | Yes | Display name (e.g. `Ultrasonic`), for sidebar and home cards |
-| `category` | Yes | Category: `physics` or `chemistry`, determines home grouping |
-| `class` | Yes | Main class name (e.g. `UltrasonicWidget`), must subclass `QWidget` |
+- PyInstaller **必须用 onedir**（不是 onefile）：onefile 每次解压到临时目录，启动慢，且 `sensor_config.json` / `app_config.json` 无法跨次持久化。
+- 传感器模块由 `importlib` 按 `__file__` 相对路径动态加载，PyInstaller 静态分析发现不了，**必须在 spec 的 `datas` 里作为数据文件收集**。
+- 无自动化测试、无 CI/CD、无 lint / 类型检查配置。`test_serial.py` 只是手动诊断工具。
 
-## Gotchas
+## 6. 约定
 
-- `sensor_config.json` is in `.gitignore` — it's user-local calibration data
-- `.ino` filenames with spaces (e.g. `ph esp32.ino`) may cause issues on some systems
-- Chinese directory/file names throughout the firmware folder
-- `main_legacy.py` is the pre-refactor single-file archive, **no longer maintained** — edit `main.py` + module files for new features
-- `NavButton` / `SidebarWidget` are legacy code; `MainWindow` now uses `FluentWindow`'s built-in navigation — do not build new features on them
-- The settings page now implements theme switching (light / dark / follow system), theme color (follow system / custom picker), chart engine switching (matplotlib / pyqtgraph, hot-switch; uninstalled engines grayed out and unselectable), config persistence switch, sensor config management (clear / export / import), reset to defaults, about info, open-source info, and repo links (`SettingsWidget`)
-- Chart engines are **optional dependencies**: install at least one of matplotlib / pyqtgraph; when both are missing the app still starts and chart areas show a "no chart engine detected" placeholder
-- **pyserial is an optional dependency**: without it the app still starts, every sensor module auto-switches to simulator mode, and serial connection pops an install hint; module code must **never** `import serial` directly — always go through `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`
-- When adding a new sensor module, implement `apply_theme()` to support light/dark themes (delegate to `core.apply_module_theme()`); always draw charts via `core.ChartPanel` so engine hot-switching and placeholder degradation work for the module
-- Module filenames use English snake_case (e.g. `voltage_sensor.py`), per PEP 8
-- BLE requires `bleak` (optional dependency) — graceful fallback if missing
-- **Always log via `core.get_logger('module')`, never add `print`**: the console always shows run logs; the "运行日志" switch only controls whether they are also written to `logs.json` (local runtime data, ignored via `.gitignore`)
-- Dynamic loading depends on strict meta header format — typos in field names/colons/spaces will cause load failures
-- **Taskbar icon/name**: `_apply_taskbar_identity(window)` must be called **before `window.show()`** (writes `PKEY_AppUserModel_*` into the window property store); when run from source the taskbar button shows the app name and `docs/images/icon.ico`, otherwise it falls back to the host `python.exe` "Python"
-- **Virtual environment**: `.venv/` at the project root is recommended (already in `.gitignore`); see the Install section for run/debug commands
-- **Two known-harmless Qt warnings** (`QFont::setPointSize <= 0`, `QWidgetWindow ... must be a top level window`) are filtered by `main._install_qt_warning_filter()` before the QApplication is created; all other Qt messages are forwarded as usual
-- **Never call `exec()` on the exit-confirmation dialog directly inside `closeEvent`**: showing a modal dialog while the parent window is in the closing state can leave it unable to activate and unresponsive to button clicks (looks like a UI freeze — timers keep running but input never arrives). Instead call `event.ignore()`, then open the dialog on the next event-loop turn via `QTimer.singleShot(0, ...)`, and re-`close()` after setting `_exit_confirmed` (see `MainWindow.closeEvent` / `_prompt_exit`)
-- **Always stop module threads with `core.stop_thread()`**: it calls `stop()` + a bounded `wait(2000)` and keeps timed-out threads alive in `_retired_threads` (avoids the fail-fast crash when a running QThread gets collected); comm threads initialize `running = True` and check it on the first line of `run()` so a `stop()` issued before `run()` starts can never leave the thread running forever and hang `wait()`
-- **The exit-confirmation dialog must be a top-level `Dialog`** (`MainWindow._prompt_exit`), opened on the next event-loop turn via `event.ignore()` + `QTimer.singleShot(0, ...)` in `closeEvent`: a modal dialog shown while the parent window is closing may fail to activate and receive mouse input (looks like a UI freeze). All other prompt / calibration popups keep their existing `fluent_message_box()` / `MessageBoxBase` implementations. Release a modal dialog after `exec()` with `deleteLater()` (deferred); do **not** use `WA_DeleteOnClose`, which deletes the C++ object immediately and makes later widget access raise `RuntimeError: Internal C++ object already deleted`
+- 串口波特率固定 **115200**（固件与 Python 两侧硬编码）。
+- 固件输出格式固定 `timestamp,value`（CSV）。
+- 校准弹窗若为非模态或需要 `exec()`，返回后用 `deleteLater()` 释放，**不要**用 `WA_DeleteOnClose`（会立即销毁 C++ 对象，后续访问控件报 `RuntimeError: Internal C++ object already deleted`）。
+- 新代码的标识符用英文；**保留**既有中文注释与中文命名。
+- 文档与注释用中文。
+
+## 7. 已知陷阱
+
+### 中文路径
+
+`传感器代码/` 及传感器子目录用中文命名（实测 golang/Python/git 均可正常工作，无需改名）。但以下位置用中文路径会踩坑：
+
+- **Arduino Sketch 的目录名与 `.ino` 文件名必须完全一致**，这是 Arduino IDE 的硬性要求，与本项目的中文命名互相冲突——现有 `.ino` 全部不符合此要求（如 `传感器代码/力传感器/force.ino`）。**结果是这些固件必须在 Arduino IDE 里新建同名 sketch 粘贴烧录，无法直接打开编译**。新增固件时避免此坑：把 `.ino` 放在与其同名的目录下，或直接接受「粘贴烧录」的现状。
+- 含空格的 `.ino` 文件名（现有 `ph esp32.ino`）在部分系统 / 构建链上会出问题。
+- `git` 默认转义中文路径（`core.quotepath=true`），`git status` 显示为 `\346\204...`。要看清中文路径需临时关掉：
+
+```bash
+git -c core.quotepath=false status
+```
+
+### 退出确认框
+
+**禁止在 `closeEvent` 内直接 `exec()`**：父窗口处于关闭状态时弹模态框会无法激活、按钮点击无响应（界面看似卡死，定时器仍在跑）。
+
+正确做法见 `MainWindow.closeEvent` / `_prompt_exit`：
+
+1. `event.ignore()` 取消本次关闭；
+2. `QTimer.singleShot(0, ...)` 延迟到正常事件循环弹**顶层 `Dialog`**；
+3. 确认后置 `_exit_confirmed` 并再次 `close()`。
+
+### 线程回收
+
+- 断开模块线程一律用 `core.stop_thread()`：内部 `stop()` + 限时 `wait(2000)`，超时的线程收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃。
+- 通信线程的 `running` 初值须为 `True`，并在 `run()` 首行检查，防止 `stop()` 先于 `run()` 执行导致线程永不退出、`wait()` 卡死。
+- `AIRequestThread` 不挂 parent，发送中关窗可自动收尾，避免 QThread 析构崩溃。
+
+### Qt 告警与任务栏
+
+- `main._install_qt_warning_filter()` 只屏蔽两条已知无害告警（`QFont::setPointSize: Point size <= 0`、`QWidgetWindow ... must be a top level window`），其余照常输出。
+- `_apply_taskbar_identity(window)` **必须在 `window.show()` 之前**调用（写入 `PKEY_AppUserModel_*`），否则任务栏显示宿主 `python.exe` 的「Python」名称与图标。
