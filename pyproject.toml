@@ -1,0 +1,80 @@
+# PhysChem-DigitizerP —— uv / PEP 621 项目配置
+#
+# 本项目是「脚本式应用」（main.py + core.py + 传感器代码/ 动态加载模块），
+# 不是可安装的包：没有 build-system，用 `tool.uv.package = false` 声明为
+# "virtual 项目"。因此构建类命令会被跳过，但依赖管理、锁文件、venv、
+# 运行入口全部照常可用。
+#
+# 常用命令：
+#   uv sync                 # 创建 .venv 并安装全部依赖（含 dev 组）
+#   uv run main.py          # 启动主程序（自动使用项目环境，无需手动激活）
+#   uv run test_serial.py   # 串口诊断工具
+#   uv run <任意命令>        # 在项目环境里执行命令（如 uv run python -c "..."）
+#   uv lock --upgrade       # 升级 uv.lock 中的依赖版本
+#   uv build                # 打包（本项目为 virtual 项目，此命令跳过）
+# 注意：运行/打包命令请在项目根目录（即 main.py 所在目录）执行，
+#       程序的配置与日志文件均以 main.py 所在目录为基准路径。
+
+[project]
+name = "physchem-digitizerp"
+version = "1.6"                 # 与 main.py 中 SettingsWidget.APP_VERSION 保持一致
+description = "低成本物理化学实验室数据采集上位机（PySide6 + FluentWidgets，模块化架构，配套 Arduino/ESP32 固件）"
+readme = "README.md"
+requires-python = ">=3.10"      # README / AGENTS.md 声明的下限（代码使用 3.10+ 语法）
+license = "GPL-3.0-only"        # PEP 639，无需 License :: classifier
+authors = [{ name = "wangzhidong2" }]
+keywords = ["pyside6", "fluentwidgets", "arduino", "esp32", "data-acquisition", "physics", "chemistry", "lab"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+
+# 依赖与 requirements.txt 一一对应，并补充了 PyPI 上的版本下限：
+#   PySide6-Fluent-Widgets 已并入 PySideSix-Frameless-Window，
+#   且 1.7.0 起才支持 PySide6 6.6+，故设 >=1.7.0（此处用 PyPI 包名，
+#   import 名仍是 qfluentwidgets）；bleak 的 Windows 后端依赖
+#   winrt-runtime，由 pip/uv 自动解析，无需显式声明。
+dependencies = [
+    "PySide6>=6.4.0",                       # 图形界面框架
+    "PySide6-Fluent-Widgets>=1.7.0",        # WinUI3 风格组件库（必需）
+    "numpy>=1.21.0",                        # 数值计算
+    "pyserial>=3.5",                        # 串口通信（可选依赖，缺失降级为模拟器模式）
+    "matplotlib>=3.5.0",                    # 绘图引擎（与 pyqtgraph 至少安装其一）
+    "pyqtgraph>=0.13.0",                    # 绘图引擎（与 matplotlib 至少安装其一）
+    "bleak>=0.21.0",                        # BLE 无线通信（可选依赖，缺失自动降级）
+]
+
+[project.urls]
+Homepage = "https://github.com/wangzhidong2/PhysChem-DigitizerP"
+Repository = "https://github.com/wangzhidong2/PhysChem-DigitizerP"
+"Bug Tracker" = "https://github.com/wangzhidong2/PhysChem-DigitizerP/issues"
+Gitee = "https://gitee.com/wangzhidong2/PhysChem-DigitizerP"
+GitCode = "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP"
+
+# 开发/打包工具，不属于运行时依赖：
+#   uv sync          默认会安装 dev 组
+#   uv sync --no-dev 只要运行时环境（打包时常用）
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.6",                     # 打包，配置见 PhysChem-DigitizerP.spec
+]
+
+[tool.uv]
+package = false                 # 非包项目（无 build-system），装依赖但跳过构建
+
+# 国内镜像：默认走清华 PyPI，无需每次加 -i。
+# 海外网络或 CI 若嫌慢/失败，覆盖默认源即可（无需改本文件）：
+#   env UV_DEFAULT_INDEX=https://pypi.org/simple uv sync
+# 或在命令行指定：uv sync --default-index https://pypi.org/simple
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true

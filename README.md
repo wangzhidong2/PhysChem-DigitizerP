@@ -104,7 +104,38 @@ pip install pyqtgraph
 pip install matplotlib
 pip install bleak
 ```
-#### 3.2.4.下载代码（如有git）
+#### 3.2.4.用 uv 一键管理环境（推荐，可选）
+
+项目根目录已提供 `pyproject.toml`（依赖清单）。如果你用 [uv](https://docs.astral.sh/uv/)（Rust 写的极速 Python 包管理器），**不必手工建虚拟环境、也不必逐条 pip**——一条命令搞定：
+
+```bash
+# 安装 uv（任选其一）
+winget install --id=astral-sh.uv -e          # Windows
+pip install uv                                # 已有 Python 时最省事
+# macOS / Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+uv sync          # 自动下载 Python（若需要）+ 创建 .venv + 按 uv.lock 精确安装依赖
+uv run main.py   # 启动主程序（自动使用项目环境，无需手动激活）
+```
+
+要点：
+
+- **`uv sync` 会自动生成 `uv.lock` 锁文件**（记录每个依赖的精确版本），提交到仓库后，其他人和 CI 都能装出**完全一致**的环境，不会出现“我这儿能跑你那儿报错”。
+- **`uv run <命令>`** 不用先 `activate`，它临时把项目环境放到最前面执行命令，例如 `uv run test_serial.py`、`uv run python -c "import PySide6"`。
+- **默认走清华 PyPI 镜像**（写在 `pyproject.toml` 的 `[[tool.uv.index]]`），国内无需再加 `-i`。海外网络想换回官方源：`uv sync --default-index https://pypi.org/simple`。
+- **打包工具单独分组**：`uv sync` 默认会装 `dev` 组里的 PyInstaller；要纯净的运行时环境用 `uv sync --no-dev`。
+- 想升级依赖版本：`uv lock --upgrade` 后重新 `uv sync`。
+- 项目是「脚本式应用」而非可安装的包，`pyproject.toml` 里已用 `[tool.uv] package = false` 声明，因此 `uv build` 会被跳过——打包仍走 `PhysChem-DigitizerP.spec`：
+
+```bash
+uv sync                       # 确保 dev 组（PyInstaller）已装
+uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
+```
+
+- **`uv` 与 `pip` 可以共存**：不想用 uv 时，`pip install -r requirements.txt` 的老流程完全不受影响（`requirements.txt` 会继续保留）。
+- 注意在**项目根目录**（即 `main.py` 所在目录）执行 `uv sync` / `uv run`——程序的 `sensor_config.json`、`app_config.json`、`logs.json` 都以 `main.py` 所在目录为基准路径。
+
+#### 3.2.5.下载代码（如有git）
 ```bash
 # GitHub
 git clone https://github.com/wangzhidong2/PhysChem-DigitizerP.git
@@ -118,10 +149,10 @@ cd PhysChem-DigitizerP
 .\.venv\Scripts\Activate.ps1
 python ./main.py
 ```
-#### 3.2.5.或者，使用平台的源代码打包功能
-##### 3.2.5.1.下载代码
+#### 3.2.6.或者，使用平台的源代码打包功能
+##### 3.2.6.1.下载代码
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/e776925b-b898-4fe4-82b9-1b01bd4260e2/image.png 'image.png')
-##### 3.2.5.2.解压，双击 `main.py` 打开
+##### 3.2.6.2.解压，双击 `main.py` 打开
 ### 3.3.功能模块
 
 项目采用**模块化架构**——主程序 `main.py` 启动时扫描 `传感器代码/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
@@ -170,6 +201,8 @@ PhysChem-DigitizerP/
 ├── app_config.json             # 应用配置（主题/引擎/置顶/日志等，运行时生成，.gitignore）
 ├── logs.json                   # 运行日志（JSON Lines，默认开启记录，.gitignore）
 ├── requirements.txt            # 依赖清单（pip install -r requirements.txt）
+├── pyproject.toml              # PEP 621 依赖清单 + uv 配置（uv sync / uv run）
+├── uv.lock                     # uv 锁文件（精确版本，建议提交）
 ├── CONTRIBUTING.md             # 贡献指南
 ├── PhysChem-DigitizerP.spec    # PyInstaller 打包配置
 ├── .venv/                      # 虚拟环境（可选，.gitignore；创建方法见 3.2.2）

@@ -31,7 +31,19 @@ pip install PySide6-Fluent-Widgets
 pip install bleak
 ```
 
-项目根目录已提供 `requirements.txt`（包含全部必需与可选依赖），可直接 `pip install -r requirements.txt`。没有 `setup.py` 或 `pyproject.toml`。
+项目根目录已提供 `requirements.txt`（含全部必需与可选依赖），可直接 `pip install -r requirements.txt`。
+
+推荐用 [uv](https://docs.astral.sh/uv/)（可选，两种方式并存不冲突）：根目录 `pyproject.toml` 是本项目唯一的 PEP 621 依赖清单，`[dependency-groups].dev` 单独放打包工具 PyInstaller，`[[tool.uv.index]]` 默认指向清华 PyPI 镜像（海外可用 `uv sync --default-index https://pypi.org/simple` 覆盖），并用 `[tool.uv] package = false` 声明为 **virtual 项目**（本项目是脚本式应用、无 `build-system`，因此 `uv build` 会被跳过，打包仍走 `PhysChem-DigitizerP.spec`）。
+
+```bash
+uv sync              # 建 .venv + 按 pyproject.toml 解析依赖并生成 uv.lock（含 dev 组）
+uv sync --no-dev     # 只要运行时依赖（打包/分发场景）
+uv run main.py       # 启动主程序（无需手动 activate）
+uv run test_serial.py
+uv lock --upgrade    # 升级 uv.lock 中的依赖版本
+```
+
+`uv run` 必须以项目根目录（`main.py` 所在目录）为工作目录——`sensor_config.json` / `app_config.json` / `logs.json` 均以 `main.py` 所在目录为基准路径。`uv.lock` 应提交到仓库以保证环境一致；`uv sync` 使用现有 `.venv/`（已在 `.gitignore` 中）。**没有 `setup.py`**。
 
 推荐在项目根目录创建虚拟环境（`.venv/` 已加入 `.gitignore`）：
 
@@ -70,7 +82,9 @@ PhysChem-DigitizerP/
 ├── core.py                     ← 公共模块：通信线程 / 配置 / 对话框 / 样式
 ├── main_legacy.py              ← 历史存档（单文件版，不再维护）
 ├── test_serial.py              ← 串口诊断工具
-├── requirements.txt            ← 依赖清单（pip install -r requirements.txt）
+├── pyproject.toml              ← PEP 621 依赖清单（uv sync / uv run，dev 组含 PyInstaller）
+├── uv.lock                     ← uv 锁文件（精确版本，建议提交）
+├── requirements.txt            ← 依赖清单（pip install -r requirements.txt，与 pyproject 并存）
 ├── PhysChem-DigitizerP.spec    ← PyInstaller 打包配置（build/dist 产物已 .gitignore）
 ├── README.md                   ← 项目文档
 ├── CONTRIBUTING.md / LICENSE   ← 贡献指南 / GPL-3.0 许可证
@@ -359,7 +373,19 @@ pip install PySide6-Fluent-Widgets
 pip install bleak
 ```
 
-A `requirements.txt` is now provided at the project root (all required and optional deps) — just run `pip install -r requirements.txt`. No `setup.py` or `pyproject.toml` exists.
+A `requirements.txt` is provided at the project root (all required and optional deps) — just run `pip install -r requirements.txt`.
+
+Using [uv](https://docs.astral.sh/uv/) is recommended (optional — both workflows coexist): the root `pyproject.toml` is the project's single PEP 621 dependency manifest, `[dependency-groups].dev` holds the packaging tool (PyInstaller), `[[tool.uv.index]]` defaults to the Tsinghua PyPI mirror (override with `uv sync --default-index https://pypi.org/simple`), and `[tool.uv] package = false` declares a **virtual project** (this is a script-style app with no `build-system`, so `uv build` is skipped — packaging still uses `PhysChem-DigitizerP.spec`).
+
+```bash
+uv sync              # create .venv, resolve deps from pyproject.toml, write uv.lock (incl. dev group)
+uv sync --no-dev     # runtime deps only (packaging / distribution)
+uv run main.py       # launch the app (no manual activate needed)
+uv run test_serial.py
+uv lock --upgrade    # bump dependency versions in uv.lock
+```
+
+`uv run` must be invoked from the project root (the directory containing `main.py`) — `sensor_config.json` / `app_config.json` / `logs.json` are anchored to `main.py`'s directory. Commit `uv.lock` to keep environments identical; `uv sync` reuses the existing `.venv/` (already in `.gitignore`). **No `setup.py` exists.**
 
 A virtual environment in the project root is recommended (`.venv/` is already in `.gitignore`):
 
@@ -398,7 +424,9 @@ PhysChem-DigitizerP/
 ├── core.py                     ← Shared: comm threads / config / dialogs / styles
 ├── main_legacy.py              ← Legacy archive (single-file, unmaintained)
 ├── test_serial.py              ← Serial diagnostics
-├── requirements.txt            ← Dependency list (pip install -r requirements.txt)
+├── pyproject.toml              ← PEP 621 dependency manifest (uv sync / uv run; dev group has PyInstaller)
+├── uv.lock                     ← uv lockfile (exact versions; commit it)
+├── requirements.txt            ← Dependency list (pip install -r requirements.txt; coexists with pyproject)
 ├── PhysChem-DigitizerP.spec    ← PyInstaller packaging config (build/dist outputs are .gitignore'd)
 ├── README.md                   ← Project docs
 ├── CONTRIBUTING.md / LICENSE   ← Contribution guide / GPL-3.0 license
