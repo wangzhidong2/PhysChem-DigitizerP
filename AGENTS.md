@@ -92,7 +92,6 @@ c.end()
 
 ## 5. 环境与构建
 
-- 依赖清单以 `pyproject.toml` 为唯一来源（`[dependency-groups].dev` 放 PyInstaller）。改依赖须同步更新 `requirements.txt`。
 - 用 uv：`uv sync` 建环境、`uv run main.py` 启动、`uv run test_serial.py` 诊断。
 - 用 pip：`pip install -r requirements.txt`。
 - **命令的工作目录必须是项目根目录**（`main.py` 所在目录）：`sensor_config.json` / `app_config.json` / `logs.json` 均以 `main.py` 所在目录为基准路径。
