@@ -868,6 +868,12 @@ class DataAPIDialog(MessageBoxBase):
         self._refresh()
 
     # ---- 地址/URL 帮手 ----
+    def _copy_to_clipboard(self, text: str):
+        """把文本拷到系统剪贴板（弹窗内自持，不依赖主窗口方法）。"""
+        clip = QGuiApplication.clipboard()
+        if clip and text:
+            clip.setText(text)
+
     def _local_url(self):
         return 'http://127.0.0.1:%s' % app_cfg.serverPort.value
 
@@ -894,8 +900,7 @@ class DataAPIDialog(MessageBoxBase):
             btn = PushButton("复制")
             btn.setFixedHeight(30)
             btn.clicked.connect(
-                lambda _=False, t=url or edit.text():
-                self.parent()._copy_to_clipboard(t) if self.parent() else None)
+                lambda _=False, t=url or edit.text(): self._copy_to_clipboard(t))
             h.addWidget(btn)
         if regen:
             rbtn = PushButton("重生")
@@ -1004,6 +1009,12 @@ class DataAPIDialog(MessageBoxBase):
 
     def _open_browser(self):
         url = self._plugin.url or self._local_url()
+        # 鉴权开启时自动带上密钥：浏览器端 app.js 会读取 ?token= 免手输
+        if app_cfg.serverAuth.value:
+            token = self._plugin.token or ''
+            if token:
+                sep = '&' if '?' in url else '?'
+                url = f"{url}{sep}token={token}"
         QDesktopServices.openUrl(QUrl(url))
 
     # ---- 动态显示规则（统一由 _refresh 驱动） ----
