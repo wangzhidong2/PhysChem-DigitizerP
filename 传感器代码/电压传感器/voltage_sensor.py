@@ -53,7 +53,7 @@ AI_SYSTEM_PROMPT = (
     "（ESP32 内置 ADC / ADS1115 16 位 / HX711 24 位，信号可经分压与放大电路接入）。"
     "测量原理：ADC 端电压 V_adc = raw / 满量程 × 参考电压（内置 ADC 有符号模式量程 "
     "-VREF~+VREF，VREF=3.3V；ADS1115 为 raw/32768 × FSR(PGA)；HX711 为 "
-    "raw/2^23 × AVDD/Gain）；被测电压 = V_adc × 分压比 ÷ 放大倍数，启用去皮时再减"
+    "raw/2^23 × AVDD/Gain/2，满量程差分输入 = ±0.5×(AVDD/Gain)）；被测电压 = V_adc × 分压比 ÷ 放大倍数，启用去皮时再减"
     "空载偏移。理论分辨率 = 参考电压/满量程 × 分压比 ÷ 放大倍数，有效分辨率受噪声限制。"
     "数据特征：稳压源应呈平直曲线；电池等电源呈缓慢下降趋势；ADC 量化台阶、随机噪声"
     "与工频干扰叠加在真实信号上。"
@@ -233,10 +233,12 @@ class VoltageSensorWidget(QWidget):
         -4095 对应 -VREF，+4095 对应 +VREF。
         公式：(adc / max_adc) × VREF
         """
-        # HX711 模式：24位有符号，参考电压 = AVDD / Gain
+        # HX711 模式：24位有符号补码（饱和码 ±2^23）
+        # 数据手册：满量程差分输入范围 = ±0.5 × (AVDD / Gain)，
+        # 即满码对应电压 = AVDD / Gain / 2（通道A Gain128@5V → ±20mV，B Gain32@5V → ±80mV）
         if self.hx711_mode:
             gain = 128 if self.hx711_channel == 'A' else 32
-            return adc_value / 8388608.0 * (self.hx711_avdd / gain)
+            return adc_value / 8388608.0 * (self.hx711_avdd / gain / 2)
         # ADS1115 模式：16位有符号补码，电压 = raw / 32768 × FSR
         # 数据手册 SBAS444E 9.3.3 节：FSR 由 PGA 设置（±6.144V ~ ±0.256V）
         if self.ads1115_mode:
@@ -419,7 +421,7 @@ class VoltageSensorWidget(QWidget):
 
         hx711_row.addWidget(BodyLabel("通道:"))
         self.hx711_channel_combo = ComboBox()
-        self.hx711_channel_combo.addItems(["B (增益 32, ±156mV)", "A (增益 128, ±39mV)"])
+        self.hx711_channel_combo.addItems(["B (增益 32, ±80mV)", "A (增益 128, ±20mV)"])
         self.hx711_channel_combo.setCurrentIndex(0 if self.hx711_channel == 'B' else 1)
         self.hx711_channel_combo.currentIndexChanged.connect(self.on_hx711_channel_changed)
         self.hx711_channel_combo.setEnabled(self.hx711_mode)
@@ -835,7 +837,7 @@ class VoltageSensorWidget(QWidget):
     def update_range_display(self):
         if self.hx711_mode:
             gain = 128 if self.hx711_channel == 'A' else 32
-            fs = self.hx711_avdd / gain  # 满量程差分电压（单边）
+            fs = self.hx711_avdd / gain / 2  # 满量程差分电压 = ±0.5×(AVDD/Gain)
             self.range_label.setText(f"量程: ±{fs*1000:.1f}mV (HX711 通道{self.hx711_channel}, Gain{gain})")
             actual_max = fs * self.divider_ratio / self.amp_ratio
             self.actual_range_label.setText(f"实际量程: ±{actual_max*1000:.2f}mV")
@@ -1183,7 +1185,7 @@ class VoltageSensorWidget(QWidget):
             counts = 32768.0
         elif self.hx711_mode:
             gain = 128 if self.hx711_channel == 'A' else 32
-            fs, counts = self.hx711_avdd / gain, 8388608.0
+            fs, counts = self.hx711_avdd / gain / 2, 8388608.0  # 满量程 = ±0.5×(AVDD/Gain)
         else:
             fs = self.VREF
             counts = float(self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095))

@@ -5,7 +5,7 @@
 //  HX711 电压传感器模块 - ESP32-S3 固件
 //  模块名称：HX711 电压采集模块（Voltage Sensor）
 //  功能：基于 HX711 24位 ADC 实现微小电压测量，通过串口输出原始 ADC 值
-//  测量范围：±156mV 差分输入（通道 B，增益 32，AVDD=5V）
+//  测量范围：±80mV 差分输入（通道 B，增益 32，AVDD=5V，满量程 = ±0.5×AVDD/Gain）
 //  数据格式：时间戳(ms),ADC原始值
 //  详细说明：参见 README.md
 // ============================================================
@@ -34,7 +34,7 @@ void setup() {
   Serial.println("HX711 Voltage Sensor Collector");
   Serial.println("ADC Configuration:");
   Serial.println("- Resolution: 24 bits (signed)");
-  Serial.println("- Channel: B (Gain 32, +-156mV)");
+  Serial.println("- Channel: B (Gain 32, +-80mV)");
   Serial.println("- Sample Rate: 10Hz");
   Serial.println("- Output: Raw ADC Value (-8388608 ~ +8388607)");
   Serial.println("START");
