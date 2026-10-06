@@ -346,8 +346,8 @@ def api_command(self, action, params):
 | 超声波位移 | `ultrasonic_displacement` | — | 仅通用动作 |
 | 超声波速度 | `ultrasonic_velocity` | — | 仅通用动作 |
 | pH 传感器 | `ph_sensor` | — | 仅通用动作 |
-| 力传感器 | `force_sensor` | `tare` / `calibrate` | `send_tare` / `start_calibration` |
-| 电压传感器 | `voltage_sensor` | `tare` | `toggle_tare` |
+| 力传感器 | `force_sensor` | `tare` / `calibrate` | `tare_now` / `start_calibration` |
+| 电压传感器 | `voltage_sensor` | `tare` | `tare_now` |
 | 电流传感器 | `current_sensor` | `zero_cal` / `cancel_zero_cal` | `toggle_zero_cal` |
 
 `start` / `stop` / `clear` / `toggle` 四个通用动作用 §4.1 的动作表统一兜底，各模块零重复代码。

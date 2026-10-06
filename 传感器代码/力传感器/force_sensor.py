@@ -14,6 +14,7 @@
 import sys
 import os
 import threading
+from collections import deque
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
@@ -164,6 +165,8 @@ class ForceSensorWidget(QWidget):
         self.cal_raw_after = 0
         self.cal_step = 0
         self.current_unit = "g"
+        # 最近若干个采样（含未开始采集时的实时数据），去皮时取平均作为新零点
+        self._live_raw_window = deque(maxlen=10)
 
         self.config = self.load_config()
         self.offset = self.config.get('offset', 0)
@@ -348,14 +351,8 @@ class ForceSensorWidget(QWidget):
         cal_card_layout.setContentsMargins(20, 4, 20, 16)
         cal_card_layout.setSpacing(12)
 
-        self.cal_status_label = BodyLabel(
-            "校准状态: 未校准" if not self.calibrated
-            else f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})"
-        )
-        self.cal_status_label.setStyleSheet(
-            "color: #2e7d32; font-weight: bold;" if self.calibrated
-            else "color: #555; font-weight: bold;"
-        )
+        self.cal_status_label = BodyLabel("")
+        self.update_cal_status_label()
         cal_card_layout.addWidget(self.cal_status_label)
 
         cal_btn_row = QHBoxLayout()
@@ -364,7 +361,10 @@ class ForceSensorWidget(QWidget):
         self.tare_btn = PushButton("去皮（TARE）")
         self.tare_btn.setFixedHeight(36)
         self.tare_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.tare_btn.clicked.connect(self.send_tare)
+        self.tare_btn.setToolTip("取最近 10 个采样点的平均值作为零点（offset），从测量值中扣除。\n"
+                                 "连接设备后即可点，不必先开始采集；可反复点击重新去皮，\n"
+                                 "没有「取消去皮」按钮。")
+        self.tare_btn.clicked.connect(self.tare_now)
         self.tare_btn.setEnabled(False)
         cal_btn_row.addWidget(self.tare_btn)
 
@@ -693,48 +693,57 @@ class ForceSensorWidget(QWidget):
         self.current_force_label.setText("力/质量: --.-")
         self.current_raw_label.setText("原始ADC: 已断开")
 
-    def send_tare(self):
-        """发送去皮命令"""
-        if not self.serial_thread and not self.ble_thread:
-            fluent_message_box(self, "警告", "请先连接设备")
+    def tare_now(self):
+        """去皮：把最近若干个采样的平均值记为新的零点（offset），支持反复点击。
+
+        与旧实现（send_tare）的区别：
+        1. 不要求先「开始采集」——设备连着、有数据流入即可去皮（用实时采样窗口）；
+        2. 有线串口照旧向固件发 TARE 命令（固件内部状态保持同步）；
+           模拟器 / BLE 不再弹「无法发送去皮命令」，直接走上位机侧零点；
+        3. 可反复点击，每点一次都以当前读数重新归零，没有「取消去皮」。
+        """
+        if not self._live_raw_window:
+            fluent_message_box(self, "提示", "还没有收到数据，等数据流入后再去皮")
             return
 
+        # 上位机侧零点：最近 10 个采样的平均值（比取单点更抗噪声）
+        self.offset = int(round(float(np.mean(self._live_raw_window))))
+        self.save_config()
+        self.update_cal_status_label()
+        log.info("去皮：零点 offset=%d（取最近 %d 个采样）",
+                 self.offset, len(self._live_raw_window))
+
+        # 真串口才通知固件（固件回 TARE_DONE 后会用它的 10 次平均值覆盖上面的零点）
+        if self._write_firmware_tare():
+            self.current_force_label.setText("力/质量: 去皮完成（已通知固件）")
+        else:
+            self.current_force_label.setText("力/质量: 去皮完成")
+
+    def _write_firmware_tare(self):
+        """向固件发送 TARE 命令；仅真串口可用（模拟器 / BLE 没有这个命令）。"""
+        thread = self.serial_thread
+        if not (thread and thread.isRunning()):
+            return False
+        port = getattr(thread, 'serial', None)
+        if not (port and port.is_open):
+            return False
         try:
-            if self.serial_thread and self.serial_thread.isRunning():
-                if hasattr(self.serial_thread, 'serial') and self.serial_thread.serial and self.serial_thread.serial.is_open:
-                    self.serial_thread.serial.write(b"TARE\n")
-                    self.current_force_label.setText("力/质量: 去皮中...")
-
-                    if len(self.raw_data) > 0:
-                        self.offset = self.raw_data[-1]
-                        self.save_config()
-                        self.cal_status_label.setText(f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
-
-                        QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 去皮完成"))
-                    else:
-                        QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 等待数据..."))
-                else:
-                    fluent_message_box(self, "错误", "串口未打开，无法发送去皮命令")
-
-            elif self.ble_thread and self.ble_thread.isRunning():
-                if hasattr(self.ble_thread, 'send_command'):
-                    self.ble_thread.send_command("TARE")
-                    self.current_force_label.setText("力/质量: 去皮中（BLE）...")
-
-                    if len(self.raw_data) > 0:
-                        self.offset = self.raw_data[-1]
-                        self.save_config()
-                        self.cal_status_label.setText(f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
-
-                        QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 去皮完成"))
-                    else:
-                        QTimer.singleShot(500, lambda: self.current_force_label.setText("力/质量: 等待数据..."))
-                else:
-                    fluent_message_box(self, "提示", "BLE连接不支持去皮命令，请使用空载校准功能")
-
+            port.write(b"TARE\n")
+            return True
         except Exception as e:
-            fluent_message_box(self, "去皮失败", f"发送去皮命令时出错：{e}")
-            self.current_force_label.setText("力/质量: 去皮失败")
+            log.warning("固件去皮命令发送失败：%s", e)
+            return False
+
+    def update_cal_status_label(self):
+        """刷新校准状态标签（未校准时也显示当前零点，方便确认去皮结果）"""
+        if self.calibrated:
+            self.cal_status_label.setText(
+                f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
+            self.cal_status_label.setStyleSheet("color: #2e7d32; font-weight: bold;")
+        else:
+            self.cal_status_label.setText(
+                f"校准状态: 未校准 (偏移={self.offset}，显示原始 ADC 值)")
+            self.cal_status_label.setStyleSheet("color: #555; font-weight: bold;")
 
     def api_actions(self):
         """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
@@ -746,8 +755,10 @@ class ForceSensorWidget(QWidget):
         if action == 'tare':
             if not self.serial_thread and not self.ble_thread:
                 return {'ok': False, 'message': '设备未连接，无法去皮'}
-            self.send_tare()
-            return {'ok': True, 'message': '已发送去皮命令'}
+            if not self._live_raw_window:
+                return {'ok': False, 'message': '还没有收到数据，无法去皮'}
+            self.tare_now()
+            return {'ok': True, 'message': f'已去皮（零点 offset={self.offset}）'}
         if action == 'calibrate':
             if not self.serial_thread and not self.ble_thread:
                 return {'ok': False, 'message': '设备未连接，无法校准'}
@@ -783,8 +794,7 @@ class ForceSensorWidget(QWidget):
                     self.offset = self.cal_raw_before
                     self.calibrated = True
                     self.save_config()
-                    self.cal_status_label.setText(f"校准状态: ✓ 已校准 (比例={self.scale:.6f}, 偏移={self.offset})")
-                    self.cal_status_label.setStyleSheet("color: green; font-weight: bold;")
+                    self.update_cal_status_label()
                     self.current_unit_label.setText(f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}（校准比例={self.scale:.6f}）")
                     log.info("校准完成：offset=%s, scale=%.6f, 砝码=%.4g g",
                              self.offset, self.scale, self.cal_known_weight)
@@ -861,9 +871,13 @@ class ForceSensorWidget(QWidget):
             parts = data.split(",")
             if len(parts) == 2:
                 try:
+                    # 固件用 10 次平均得到零点，比上位机单点更稳，以它为准
                     self.offset = int(parts[1])
+                    self.save_config()
+                    self.update_cal_status_label()
                     self.current_force_label.setText("力/质量: 去皮完成")
-                except:
+                    log.info("固件去皮完成：零点 offset=%d", self.offset)
+                except (ValueError, TypeError):
                     pass
             return
 
@@ -879,6 +893,7 @@ class ForceSensorWidget(QWidget):
                         timestamp_ms = int(parts[0])
                         raw_value = int(parts[1])
                         self.raw_data.append(raw_value)
+                        self._live_raw_window.append(raw_value)
 
                         if self.calibrated:
                             force_value_grams = (raw_value - self.offset) * self.scale
@@ -913,6 +928,7 @@ class ForceSensorWidget(QWidget):
                     relative_time_s = (timestamp_ms - self.start_timestamp_ms) / 1000.0
 
                     self.raw_data.append(raw_value)
+                    self._live_raw_window.append(raw_value)
 
                     if self.calibrated:
                         force_value_grams = (raw_value - self.offset) * self.scale
