@@ -17,6 +17,20 @@ let modules = [];
 let currentKey = null;
 let pollTimer = null;
 
+/* ---------- 启动：支持 ?token=xxx 自动鉴权 ---------- */
+// 书签形如 http://host:port/?token=xxx —— 打开即把密钥存入 localStorage
+// 并从地址栏抹掉（避免密钥留在历史记录/分享链接里），然后正常初始化。
+(function () {
+  const p = new URLSearchParams(location.search);
+  const t = p.get('token');
+  if (t) {
+    localStorage.setItem('pcd_token', t);
+    p.delete('token');
+    const qs = p.toString();
+    history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
+
 /* ---------- 数据源（唯一出口，将来换 SSE 只改这一处） ---------- */
 async function api(path, opts) {
   const token = localStorage.getItem('pcd_token') || '';
@@ -121,63 +135,76 @@ async function sendAction(action) {
   }
 }
 
-/* ---------- Canvas 曲线（滚动窗口，自适应大小与暗色） ---------- */
-function drawChart(points, xLabel, yLabel) {
-  const ctx = chartEl.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  const w = chartEl.clientWidth, h = chartEl.clientHeight;
-  if (chartEl.width !== w * dpr) { chartEl.width = w * dpr; chartEl.height = h * dpr; }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
+/* ---------- ECharts 曲线（滚动窗口，自适应大小与暗色） ---------- */
+let chart = null;
 
-  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const axis = dark ? '#9aa0a8' : '#666';
-  const line = '#0078d4';
-  const pad = {l: 56, r: 14, t: 14, b: 30};
-  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
-
-  if (!points || points.length < 2) {
-    ctx.fillStyle = axis;
-    ctx.font = '13px sans-serif';
-    ctx.fillText('暂无数据（开始采集后这里会出现曲线）', pad.l, h / 2);
-    return;
-  }
-
-  const xs = points.map((p) => p[0]), ys = points.map((p) => Number(p[1]));
-  let x0 = Math.min(...xs), x1 = Math.max(...xs);
-  let y0 = Math.min(...ys), y1 = Math.max(...ys);
-  if (x1 - x0 === 0) { x1 = x0 + 1; }
-  if (y1 - y0 === 0) { y1 = y0 + 1; }
-  const yPad = (y1 - y0) * 0.08;
-  y0 -= yPad; y1 += yPad;
-
-  const px = (t) => pad.l + ((t - x0) / (x1 - x0)) * iw;
-  const py = (v) => pad.t + (1 - (v - y0) / (y1 - y0)) * ih;
-
-  // 坐标轴与刻度
-  ctx.strokeStyle = axis; ctx.fillStyle = axis;
-  ctx.lineWidth = 1; ctx.font = '11px sans-serif';
-  ctx.strokeRect(pad.l, pad.t, iw, ih);
-  for (let i = 0; i <= 4; i++) {
-    const vy = y0 + ((y1 - y0) * i) / 4;
-    const yy = py(vy);
-    ctx.fillText(fmt(vy), 4, yy + 4);
-    const vx = x0 + ((x1 - x0) * i) / 4;
-    ctx.fillText(fmt(vx), px(vx) - 12, h - 10);
-  }
-  // 轴标题
-  ctx.fillText(yLabel || '', 4, pad.t - 2);
-  ctx.fillText(xLabel || '', w - pad.r - 60, h - 10);
-
-  // 曲线
-  ctx.strokeStyle = line; ctx.lineWidth = 2;
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    const X = px(p[0]), Y = py(Number(p[1]));
-    i === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
-  });
-  ctx.stroke();
+function themeDark() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
+
+function getChart() {
+  if (!chart) {
+    chart = echarts.init(chartEl, null, {renderer: 'canvas'});
+  }
+  return chart;
+}
+
+function drawChart(points, xLabel, yLabel) {
+  const dark = themeDark();
+  const axis = dark ? '#9aa0a8' : '#666';
+  const split = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)';
+  const c = getChart();
+
+  const hasData = points && points.length >= 2;
+  const option = {
+    backgroundColor: 'transparent',
+    animation: false,
+    grid: {left: 64, right: 20, top: 28, bottom: 36},
+    title: hasData ? undefined : {
+      text: '暂无数据（开始采集后这里会出现曲线）',
+      left: 'center', top: 'middle',
+      textStyle: {color: axis, fontSize: 13, fontWeight: 'normal'},
+    },
+    xAxis: {
+      type: 'value',
+      name: xLabel || '',
+      nameLocation: 'end',
+      nameTextStyle: {color: axis, fontSize: 11},
+      min: hasData ? (v) => v.min : 0,
+      max: hasData ? (v) => (v.max === v.min ? v.min + 1 : v.max) : 1,
+      axisLabel: {color: axis, fontSize: 11, formatter: fmt},
+      axisLine: {lineStyle: {color: axis}},
+      splitLine: {show: false},
+    },
+    yAxis: {
+      type: 'value',
+      name: yLabel || '',
+      nameTextStyle: {color: axis, fontSize: 11, align: 'left'},
+      scale: true,
+      axisLabel: {color: axis, fontSize: 11, formatter: fmt},
+      axisLine: {lineStyle: {color: axis}},
+      splitLine: {lineStyle: {color: split}},
+    },
+    tooltip: {
+      trigger: 'axis',
+      confine: true,
+      valueFormatter: (v) => fmt(Number(v)),
+    },
+    series: [{
+      type: 'line',
+      showSymbol: false,
+      lineStyle: {color: '#0078d4', width: 2},
+      itemStyle: {color: '#0078d4'},
+      data: hasData ? points.map((p) => [p[0], Number(p[1])]) : [],
+    }],
+  };
+  c.setOption(option, true);
+}
+
+window.addEventListener('resize', () => {
+  if (chart) chart.resize();
+  if (currentKey) pollDetail();
+});
 
 function fmt(v) {
   if (!isFinite(v)) return '-';
@@ -188,6 +215,5 @@ function fmt(v) {
 }
 
 /* ---------- 启动 ---------- */
-window.addEventListener('resize', () => { if (currentKey) pollDetail(); });
 refreshModules();
 setInterval(refreshModules, 3000);

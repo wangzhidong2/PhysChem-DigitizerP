@@ -75,7 +75,7 @@ class FlaskServerPlugin:
         log = context.get('log')
 
     def start(self, host='127.0.0.1', port=8765, token=None, allow_lan=None,
-              enable_cors=None):
+              enable_cors=None, enable_auth=None):
         """启动 HTTP 服务（werkzeug make_server，daemon 线程）。
 
         Returns:
@@ -96,9 +96,14 @@ class FlaskServerPlugin:
                 allow_lan = bool(self._app_cfg.serverLanAccess.value) if self._app_cfg else False
             if enable_cors is None:
                 enable_cors = bool(self._app_cfg.serverCors.value) if self._app_cfg else False
+            if enable_auth is None:
+                enable_auth = bool(self._app_cfg.serverAuth.value) if self._app_cfg else True
             if allow_lan and host == '127.0.0.1':
                 host = '0.0.0.0'
-            if not token and self._app_cfg is not None:
+            if not enable_auth:
+                # 鉴权关闭：token 置空，server 侧所有端点免校验
+                token = ''
+            elif not token and self._app_cfg is not None:
                 token = self._app_cfg.serverToken.value or self.regenerate_token()
 
             try:

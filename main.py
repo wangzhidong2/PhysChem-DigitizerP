@@ -828,12 +828,20 @@ class DataAPIDialog(MessageBoxBase):
 
         # ---- 开关区 ----
         self._sw_server = SwitchButton("数据接口")
+        self._sw_server.setOnText("数据接口")  # 勾选后标签仍显示名称（默认会变成 On）
         self._sw_server.checkedChanged.connect(self._on_server_switch)
         self.viewLayout.addWidget(self._sw_server)
 
         self._sw_lan = SwitchButton("局域网访问")
+        self._sw_lan.setOnText("局域网访问")
         self._sw_lan.checkedChanged.connect(self._on_lan_switch)
         self.viewLayout.addWidget(self._sw_lan)
+
+        self._sw_auth = SwitchButton("访问密钥鉴权")
+        self._sw_auth.setOnText("访问密钥鉴权")
+        self._sw_auth.setChecked(bool(app_cfg.serverAuth.value))
+        self._sw_auth.checkedChanged.connect(self._on_auth_switch)
+        self.viewLayout.addWidget(self._sw_auth)
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.HLine)
@@ -956,6 +964,29 @@ class DataAPIDialog(MessageBoxBase):
         self._sw_lan.setEnabled(True)
         self._refresh()
 
+    def _on_auth_switch(self, checked):
+        """切鉴权开关：写配置并重启服务使其生效（重启期间禁用开关防连点）。"""
+        if self._restart_busy:
+            return
+        app_cfg.serverAuth.value = bool(checked)
+        self._restart_busy = True
+        for sw in (self._sw_server, self._sw_lan, self._sw_auth):
+            sw.setEnabled(False)
+        if self._plugin.is_running():
+            self._plugin.stop()
+            ok, msg = self._plugin.start(
+                port=app_cfg.serverPort.value,
+                allow_lan=app_cfg.serverLanAccess.value,
+                enable_cors=app_cfg.serverCors.value)
+            if not ok:
+                InfoBar.error(title="重启失败", content=msg, duration=3000,
+                              position=InfoBarPosition.TOP, parent=self)
+                self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)
+        self._restart_busy = False
+        for sw in (self._sw_server, self._sw_lan, self._sw_auth):
+            sw.setEnabled(True)
+        self._refresh()
+
     def _regen_token(self):
         """重生成访问密钥（仅运行中可用），旧密钥立即失效。"""
         if not self._plugin.is_running():
@@ -985,8 +1016,9 @@ class DataAPIDialog(MessageBoxBase):
         # 局域网地址行：仅局域网开关 = 开 且有 IP
         self._lan_row.setVisible(lan_on and bool(self._lan_url()))
         self._lan_row._edit.setText(self._lan_url())
-        # 密钥行 & 打开仪表盘行：仅服务运行中
-        self._token_row.setVisible(running)
+        # 密钥行：仅服务运行中且鉴权开启；鉴权关闭时整行隐藏
+        auth_on = bool(app_cfg.serverAuth.value)
+        self._token_row.setVisible(running and auth_on)
         self._token_row._edit.setText(self._plugin.token or '')
         self._open_row.setVisible(running)
 
@@ -1582,6 +1614,7 @@ class SettingsWidget(QWidget):
         card = SettingCard(FIF.WIFI, "允许局域网访问",
                            "开启后同一网络的设备可访问数据接口（含控制）", None)
         sw = SwitchButton(card)
+        sw.setOnText("开"); sw.setOffText("关")
         sw.setChecked(bool(app_cfg.serverLanAccess.value))
         sw.checkedChanged.connect(self._on_setting_lan_changed)
         card.hBoxLayout.addWidget(sw)
@@ -1608,6 +1641,7 @@ class SettingsWidget(QWidget):
         card = SettingCard(FIF.CODE, "允许跨域 (CORS)",
                            "允许网页前端跨域调用数据接口（默认关闭）", None)
         sw = SwitchButton(card)
+        sw.setOnText("开"); sw.setOffText("关")
         sw.setChecked(bool(app_cfg.serverCors.value))
         sw.checkedChanged.connect(
             lambda c: setattr(app_cfg.serverCors, 'value', bool(c)))

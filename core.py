@@ -272,6 +272,8 @@ class AppConfig(QConfig):
     serverPort = ConfigItem("DataAPI", "Port", 8765)
     serverLanAccess = ConfigItem("DataAPI", "LanAccess", False)
     serverCors = ConfigItem("DataAPI", "CorsEnabled", False)
+    # 访问密钥鉴权开关：关闭后所有读写请求均免密钥（回环本机自用时可选）
+    serverAuth = ConfigItem("DataAPI", "TokenRequired", True)
     # 访问密钥：首次开启服务时自动生成并持久化，重启后书签仍可用
     serverToken = ConfigItem("DataAPI", "Token", "")
 
