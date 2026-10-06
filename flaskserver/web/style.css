@@ -95,6 +95,7 @@ main { flex: 1; display: flex; min-height: 0; }
 #chart {
   flex: 1;
   width: 100%;
+  min-height: 260px; /* flex 压缩时保底高度，避免 ECharts 初始化到 0 尺寸画布 */
   margin-top: 12px;
   background: var(--card);
   border: 1px solid var(--border);

@@ -144,12 +144,24 @@ function themeDark() {
 
 function getChart() {
   if (!chart) {
+    if (typeof echarts === 'undefined') {
+      // echarts.min.js 加载失败（旧缓存 HTML / 文件缺失）时给出可见提示而非静默空白
+      chartEl.innerHTML = '<div class="msg">图表库加载失败：请按 Ctrl+F5 强制刷新页面</div>';
+      throw new Error('echarts 未加载');
+    }
     chart = echarts.init(chartEl, null, {renderer: 'canvas'});
+    // #chart 是 flex 布局，容器尺寸变化不触发 window.resize，
+    // 必须监听容器本身，否则 canvas 被 CSS 拉伸（文字巨大且模糊）
+    new ResizeObserver(() => chart && chart.resize()).observe(chartEl);
   }
   return chart;
 }
 
 function drawChart(points, xLabel, yLabel) {
+  if (typeof echarts === 'undefined') return; // 库未加载时不重复刷错误提示
+  // 容器尚无尺寸（display:none / 布局未完成）时初始化会得到 0 尺寸画布，
+  // 等 ResizeObserver 触发后再绘制
+  if (chartEl.clientWidth === 0 || chartEl.clientHeight === 0) return;
   const dark = themeDark();
   const axis = dark ? '#9aa0a8' : '#666';
   const split = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)';
