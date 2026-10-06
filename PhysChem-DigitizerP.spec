@@ -42,6 +42,14 @@ for dirpath, dirnames, filenames in os.walk('传感器代码'):
             sensor_datas.append((os.path.join(dirpath, fn), dirpath))
 
 datas = sensor_datas + [
+    # flaskserver 插件：importlib 按显式路径动态加载，静态分析发现不了，
+    # 必须按数据文件收集（含 web/ 仪表盘静态文件与 mcp_server.py）
+    (os.path.join('flaskserver', '__init__.py'), 'flaskserver'),
+    (os.path.join('flaskserver', 'server.py'), 'flaskserver'),
+    (os.path.join('flaskserver', 'mcp_server.py'), 'flaskserver'),
+    (os.path.join('flaskserver', 'web', 'index.html'), os.path.join('flaskserver', 'web')),
+    (os.path.join('flaskserver', 'web', 'app.js'), os.path.join('flaskserver', 'web')),
+    (os.path.join('flaskserver', 'web', 'style.css'), os.path.join('flaskserver', 'web')),
     # 窗口图标：main.py 按 __file__ 相对 docs/images/icon.ico 加载
     (os.path.join('docs', 'images', 'icon.ico'), os.path.join('docs', 'images')),
     # Gitee / GitCode 平台 logo：主页与设置页按 docs/images/ 相对路径加载，
@@ -62,6 +70,9 @@ a = Analysis(
         # qfluentwidgets 图标渲染依赖 QtSvg（静态扫描可能漏掉）
         'PySide6.QtSvg',
         'PySide6.QtSvgWidgets',
+        # flaskserver 插件延迟导入 flask（插件顶层不 import），静态分析漏掉
+        'flask',
+        'werkzeug',
     ],
     hookspath=[],
     runtime_hooks=[],

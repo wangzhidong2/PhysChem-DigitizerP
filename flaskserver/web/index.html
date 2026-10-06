@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhysChem 实验仪表盘</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>PhysChem 实验仪表盘</h1>
+  <span id="health" class="health">连接中…</span>
+  <input id="token" type="password" placeholder="访问密钥（写操作用）" title="写操作需要的访问密钥，保存在本地浏览器">
+</header>
+
+<main>
+  <aside id="module-list"></aside>
+  <section id="detail">
+    <div id="detail-header">
+      <h2 id="detail-name">选择一个模块</h2>
+      <div id="controls"></div>
+    </div>
+    <canvas id="chart"></canvas>
+    <pre id="params" class="params"></pre>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

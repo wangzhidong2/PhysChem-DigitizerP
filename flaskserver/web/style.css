@@ -1,0 +1,117 @@
+/* PhysChem 实验仪表盘 —— 零构建、零依赖手写样式（离线可用） */
+:root {
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --text: #1f2329;
+  --muted: #8a9099;
+  --accent: #0078d4;
+  --border: #e2e5ea;
+  --ok: #2e7d32;
+  --warn: #9e9e9e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1d21;
+    --card: #26282d;
+    --text: #e8eaed;
+    --muted: #9aa0a8;
+    --border: #3a3d44;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 18px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 17px; margin: 0; }
+.health { font-size: 12px; color: var(--muted); }
+.health.ok { color: var(--ok); }
+#token {
+  margin-left: auto;
+  width: 260px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+main { flex: 1; display: flex; min-height: 0; }
+
+/* ---- 左侧模块列表 ---- */
+#module-list {
+  width: 230px;
+  overflow-y: auto;
+  padding: 10px;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+}
+.module-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.module-item:hover { background: var(--bg); }
+.module-item.active { background: var(--accent); color: #fff; }
+.module-item .name { font-size: 14px; }
+.module-item .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.module-item.active .sub { color: rgba(255,255,255,.75); }
+.dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--warn);
+}
+.dot.on { background: var(--ok); }
+
+/* ---- 右侧详情 ---- */
+#detail { flex: 1; display: flex; flex-direction: column; padding: 14px; min-width: 0; }
+#detail-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#detail-name { font-size: 16px; margin: 0 12px 0 0; }
+#controls button {
+  padding: 5px 14px;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+#controls button:hover { border-color: var(--accent); color: var(--accent); }
+#chart {
+  flex: 1;
+  width: 100%;
+  margin-top: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.params {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 130px;
+  overflow-y: auto;
+}
+.msg { color: var(--muted); padding: 20px; font-size: 13px; }

@@ -14,6 +14,10 @@ pyqtgraph>=0.13.0
 
 # BLE 无线通信（可选，但如果要用蓝牙功能则需安装）
 bleak
+
+# 数据接口插件 flaskserver/（可选：不装则主页「数据接口」灰显，程序照常运行）
+flask>=3.0
+
 #如果网络较慢，可以加上国内镜像，例如：
 #pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 

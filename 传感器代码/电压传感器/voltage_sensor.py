@@ -803,6 +803,21 @@ class VoltageSensorWidget(QWidget):
             self.update_tare_status_label()
             self.recompute_voltage_data()
 
+    def api_actions(self):
+        """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
+        return ['tare']
+
+    def api_command(self, action, params=None):
+        """执行模块特有控制动作（由 DataService 保证在 GUI 线程调用）。
+        通用动作（start/stop/clear/toggle）返回 None 交给通用动作表。"""
+        if action == 'tare':
+            if not self.tare_active and not self.voltage_data:
+                return {'ok': False, 'message': '请先开始采集数据后再去皮'}
+            self.toggle_tare()
+            msg = '已取消去皮' if not self.tare_active else '已去皮'
+            return {'ok': True, 'message': msg}
+        return None
+
     def recompute_voltage_data(self):
         """去皮状态变化后，按已有 raw_data 重算 voltage_data"""
         if not self.raw_data:
@@ -1183,6 +1198,29 @@ class VoltageSensorWidget(QWidget):
                 f"去皮={'启用(偏移=%.6gV)' % self.tare_offset_v if self.tare_active else '未启用'}, "
                 f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
+        }
+
+    def api_snapshot(self):
+        """当前实验数据快照（供 core.DataService 任意线程读取）。
+        禁止调用任何 Qt 方法：只读模块自身的 Python 数据。"""
+        d = self._ai_data() or {}
+        points = list(d.get('points') or [])
+        latest = None
+        if points:
+            t, y = points[-1]
+            latest = {'t': t, 'y': y,
+                      'raw': self.raw_data[-1] if self.raw_data else None}
+        return {
+            'key': 'voltage_sensor',
+            'name': '电压传感器',
+            'connected': (self.serial_thread is not None
+                          or self.ble_thread is not None),
+            'collecting': self._collecting,
+            'x_label': d.get('x_label', '时间 (秒)'),
+            'y_label': d.get('y_label', '电压 (V)'),
+            'params': d.get('params', {}),
+            'points': points,
+            'latest': latest,
         }
 
     def apply_theme(self, theme):

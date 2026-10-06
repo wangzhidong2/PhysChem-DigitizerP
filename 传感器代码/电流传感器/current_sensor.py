@@ -739,6 +739,21 @@ class CurrentSensorWidget(QWidget):
             self.save_config()
             self.recompute_current_data()
 
+    def api_actions(self):
+        """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
+        return ['zero_cal']
+
+    def api_command(self, action, params=None):
+        """执行模块特有控制动作（由 DataService 保证在 GUI 线程调用）。
+        通用动作（start/stop/clear/toggle）返回 None 交给通用动作表。"""
+        if action == 'zero_cal':
+            if not self.zero_cal_active and not self.vsensor_data:
+                return {'ok': False, 'message': '请先开始采集数据（确保零电流状态）后再校准'}
+            self.toggle_zero_cal()
+            msg = '已取消零点校准' if not self.zero_cal_active else '零点校准完成'
+            return {'ok': True, 'message': msg}
+        return None
+
     def recompute_current_data(self):
         """零点变化后，按已有 raw_data 重算 current_data"""
         if not self.raw_data:
@@ -1187,6 +1202,29 @@ class CurrentSensorWidget(QWidget):
                 f"零点校准={'已校准' if self.zero_cal_active else '未校准'}, "
                 f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
+        }
+
+    def api_snapshot(self):
+        """当前实验数据快照（供 core.DataService 任意线程读取）。
+        禁止调用任何 Qt 方法：只读模块自身的 Python 数据。"""
+        d = self._ai_data() or {}
+        points = list(d.get('points') or [])
+        latest = None
+        if points:
+            t, y = points[-1]
+            latest = {'t': t, 'y': y,
+                      'raw': self.current_data[-1] if self.current_data else None}
+        return {
+            'key': 'current_sensor',
+            'name': '电流传感器',
+            'connected': (self.serial_thread is not None
+                          or self.ble_thread is not None),
+            'collecting': self._collecting,
+            'x_label': d.get('x_label', '时间 (秒)'),
+            'y_label': d.get('y_label', '电流 (A)'),
+            'params': d.get('params', {}),
+            'points': points,
+            'latest': latest,
         }
 
     def apply_theme(self, theme):

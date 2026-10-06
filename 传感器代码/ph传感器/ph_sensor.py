@@ -800,6 +800,27 @@ class PhSensorWidget(QWidget):
             'system_prompt': AI_SYSTEM_PROMPT,
         }
 
+    def api_snapshot(self):
+        """当前实验数据快照（供 core.DataService 任意线程读取）。
+        禁止调用任何 Qt 方法：只读模块自身的 Python 数据。"""
+        d = self._ai_data() or {}
+        points = list(d.get('points') or [])
+        latest = None
+        if points:
+            t, y = points[-1]
+            latest = {'t': t, 'y': y}
+        return {
+            'key': 'ph_sensor',
+            'name': 'pH传感器',
+            'connected': self.serial_thread is not None,
+            'collecting': self._collecting,
+            'x_label': d.get('x_label', '时间 (秒)'),
+            'y_label': d.get('y_label', 'pH值'),
+            'params': d.get('params', {}),
+            'points': points,
+            'latest': latest,
+        }
+
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
         apply_module_theme(self, theme)

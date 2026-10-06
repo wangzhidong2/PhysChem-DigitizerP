@@ -736,6 +736,25 @@ class ForceSensorWidget(QWidget):
             fluent_message_box(self, "去皮失败", f"发送去皮命令时出错：{e}")
             self.current_force_label.setText("力/质量: 去皮失败")
 
+    def api_actions(self):
+        """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
+        return ['tare', 'calibrate']
+
+    def api_command(self, action, params=None):
+        """执行模块特有控制动作（由 DataService 保证在 GUI 线程调用）。
+        通用动作（start/stop/clear/toggle）返回 None 交给通用动作表。"""
+        if action == 'tare':
+            if not self.serial_thread and not self.ble_thread:
+                return {'ok': False, 'message': '设备未连接，无法去皮'}
+            self.send_tare()
+            return {'ok': True, 'message': '已发送去皮命令'}
+        if action == 'calibrate':
+            if not self.serial_thread and not self.ble_thread:
+                return {'ok': False, 'message': '设备未连接，无法校准'}
+            self.start_calibration()
+            return {'ok': True, 'message': '校准流程已启动（请在界面上继续操作）'}
+        return None
+
     def start_calibration(self):
         if self.cal_step == 0:
             self.cal_step = 1
@@ -1035,6 +1054,29 @@ class ForceSensorWidget(QWidget):
                 + f", 显示单位={self.current_unit}, 重力加速度 g=9.8m/s², "
                 f"原始 ADC 范围=±8388607（24 位有符号）, 采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
+        }
+
+    def api_snapshot(self):
+        """当前实验数据快照（供 core.DataService 任意线程读取）。
+        禁止调用任何 Qt 方法：只读模块自身的 Python 数据。"""
+        d = self._ai_data() or {}
+        points = list(d.get('points') or [])
+        latest = None
+        if points:
+            t, y = points[-1]
+            latest = {'t': t, 'y': y,
+                      'raw': self.force_data[-1] if self.force_data else None}
+        return {
+            'key': 'force_sensor',
+            'name': '力传感器',
+            'connected': (self.serial_thread is not None
+                          or self.ble_thread is not None),
+            'collecting': self._collecting,
+            'x_label': d.get('x_label', '时间 (秒)'),
+            'y_label': d.get('y_label', '力'),
+            'params': d.get('params', {}),
+            'points': points,
+            'latest': latest,
         }
 
     def apply_theme(self, theme):

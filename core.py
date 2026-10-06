@@ -25,6 +25,7 @@ import random
 import asyncio
 import bisect
 import logging
+import queue
 import threading
 import importlib
 import importlib.util
@@ -35,7 +36,7 @@ from PySide6.QtWidgets import (
     QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
     QApplication, QScrollArea,
 )
-from PySide6.QtCore import (Qt, Signal, QThread, QPoint, QTimer, QEvent,
+from PySide6.QtCore import (Qt, Signal, QThread, QObject, QPoint, QTimer, QEvent,
                             QAbstractNativeEventFilter)
 from PySide6.QtGui import (
     QFont, QColor, QPainter, QPen, QBrush, QPainterPath,
@@ -267,6 +268,12 @@ class AppConfig(QConfig):
         "General", "AIModulePrompts", {},
         serializer=JsonDictSerializer(),
     )
+    # 数据接口（HTTP 服务，flaskserver 插件消费这些配置项）
+    serverPort = ConfigItem("DataAPI", "Port", 8765)
+    serverLanAccess = ConfigItem("DataAPI", "LanAccess", False)
+    serverCors = ConfigItem("DataAPI", "CorsEnabled", False)
+    # 访问密钥：首次开启服务时自动生成并持久化，重启后书签仍可用
+    serverToken = ConfigItem("DataAPI", "Token", "")
 
 
 app_cfg = AppConfig()
@@ -6218,3 +6225,207 @@ class SampleRateComboBox(EditableComboBox):
         if interval_ms != self._interval_ms:
             self._interval_ms = interval_ms
             self.sampleIntervalChanged.emit(interval_ms)
+
+
+# ============================================================
+# DataService — 实验数据与控制总线（与传输方式无关）
+#
+# 任何外部接口（flaskserver 插件 / MCP / 未来的 WebSocket）都只依赖本类：
+# - 只读方法（modules / snapshot / series / csv / actions）可由任意线程调用，
+#   内部只读模块的 Python 数据，不触碰 Qt 控件
+# - submit_command() 由任意线程调用，但命令实际由 GUI 线程执行
+#   （QTimer 逐批从队列取出 → 先试模块 api_command → 回退通用动作表）
+# ============================================================
+
+# 通用动作表：按方法名探测，覆盖各模块共有的采集语义。
+# 模块 api_command() 返回 None（或未实现）时依次回退到这里。
+DATA_SERVICE_GENERIC_ACTIONS = {
+    'start': 'start_collection',
+    'stop': 'stop_collection',
+    'clear': 'clear_data',
+    'toggle': 'toggle_collection',
+}
+
+
+class DataService(QObject):
+    """实验数据与控制总线（与传输方式无关）。
+
+    必须在 QApplication 之后构造（__init__ 里会创建 QTimer）。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._modules = {}          # key -> widget
+        self._names = {}            # key -> 显示名
+        self._queue = queue.Queue()
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._drain)
+        self._timer.start()
+        self._started_at = time.time()
+
+    # ---- 注册（main.py 在模块实例化后调用） ----
+    def register(self, key, name, widget):
+        """注册一个模块实例。key 为 URL 使用的稳定标识（如 'force_sensor'）。"""
+        self._modules[key] = widget
+        self._names[key] = name
+        log.info("DataService 注册模块: %s (%s)", name, key)
+
+    def unregister(self, key):
+        self._modules.pop(key, None)
+        self._names.pop(key, None)
+
+    # ---- 只读（任意线程安全） ----
+    def keys(self):
+        return list(self._modules.keys())
+
+    def modules(self):
+        """所有模块的状态摘要列表。"""
+        out = []
+        for key in self._modules:
+            snap = self.snapshot(key, points=0)
+            if snap is not None:
+                snap.pop('points', None)
+                out.append(snap)
+        return out
+
+    def snapshot(self, key, points=0):
+        """单模块快照。points>0 时附带最多 points 个降采样序列点。
+
+        优先用模块自己的 api_snapshot()；未实现时回退到 _ai_data()。
+        """
+        widget = self._modules.get(key)
+        if widget is None:
+            return None
+        try:
+            if hasattr(widget, 'api_snapshot'):
+                snap = dict(widget.api_snapshot() or {})
+            elif hasattr(widget, '_ai_data'):
+                d = widget._ai_data() or {}
+                pts = d.get('points') or []
+                snap = {
+                    'key': key,
+                    'name': self._names.get(key, key),
+                    'x_label': d.get('x_label', ''),
+                    'y_label': d.get('y_label', ''),
+                    'params': d.get('params', {}),
+                    'points': list(pts),
+                }
+            else:
+                return None
+        except Exception as e:
+            log.error("DataService.snapshot(%s) 失败: %s", key, e)
+            return None
+
+        snap.setdefault('key', key)
+        snap.setdefault('name', self._names.get(key, key))
+        # 降采样：等间隔抽取（与 _format_ai_data 一致）
+        pts = snap.get('points') or []
+        if points and len(pts) > points:
+            step = len(pts) / float(points)
+            pts = [pts[int(i * step)] for i in range(points)]
+        snap['points'] = pts
+        snap['total_points'] = len(pts)
+        snap['actions'] = self.actions(key)
+        return snap
+
+    def series(self, key, limit=2000):
+        """仅返回降采样后的序列点 [(t, y), ...]。"""
+        snap = self.snapshot(key, points=limit)
+        return snap.get('points', []) if snap else []
+
+    def csv(self, key):
+        """CSV 文本（含参数注释头，与模块 save_data 同格式）。
+
+        优先用模块自己的 api_csv()；未实现时由快照拼出简化版本。
+        """
+        widget = self._modules.get(key)
+        if widget is None:
+            return None
+        if hasattr(widget, 'api_csv'):
+            try:
+                text = widget.api_csv()
+                if isinstance(text, str):
+                    return text
+            except Exception as e:
+                log.error("DataService.csv(%s) api_csv 失败: %s", key, e)
+        snap = self.snapshot(key)
+        if snap is None:
+            return None
+        lines = ['# module: %s' % snap.get('name', key)]
+        for k, v in (snap.get('params') or {}).items():
+            lines.append('# %s: %s' % (k, v))
+        lines.append(snap.get('x_label', 't') + ',' + snap.get('y_label', 'value'))
+        for p in snap.get('points', []):
+            lines.append('%s,%s' % (p[0], p[1]))
+        return '\n'.join(lines) + '\n'
+
+    def actions(self, key):
+        """该模块支持的控制动作列表（通用动作 + 模块特有动作）。"""
+        widget = self._modules.get(key)
+        if widget is None:
+            return []
+        acts = set(DATA_SERVICE_GENERIC_ACTIONS.keys())
+        try:
+            extra = getattr(widget, 'api_actions', None)
+            if callable(extra):
+                acts.update(extra() or [])
+        except Exception as e:
+            log.error("DataService.actions(%s) 失败: %s", key, e)
+        return sorted(acts)
+
+    # ---- 控制（命令在 GUI 线程执行） ----
+    def submit_command(self, key, action, params=None, timeout=8.0):
+        """投递控制命令，阻塞等待 GUI 线程执行结果。
+
+        Returns:
+            dict: {'ok': bool, 'message': str}
+            超时或未知模块返回 {'ok': False, 'error': ...}
+        """
+        if key not in self._modules:
+            return {'ok': False, 'error': 'module_not_found',
+                    'message': '模块不存在: %s' % key}
+        result_box = {}
+        done = threading.Event()
+        self._queue.put((key, action, params or {}, result_box, done))
+        if not done.wait(timeout):
+            return {'ok': False, 'error': 'timeout',
+                    'message': 'GUI 线程未在 %.0f 秒内响应' % timeout}
+        return result_box.get('result', {'ok': False, 'message': '命令无结果'})
+
+    # ---- 内部：GUI 线程逐批执行队列里的命令 ----
+    def _drain(self):
+        while True:
+            try:
+                key, action, params, result_box, done = self._queue.get_nowait()
+            except queue.Empty:
+                return
+            result = self._execute(key, action, params)
+            result_box['result'] = result
+            done.set()
+
+    def _execute(self, key, action, params):
+        """在 GUI 线程执行一条命令：先试模块 api_command，再回退通用动作表。"""
+        widget = self._modules.get(key)
+        if widget is None:
+            return {'ok': False, 'error': 'module_not_found',
+                    'message': '模块不存在: %s' % key}
+        try:
+            handler = getattr(widget, 'api_command', None)
+            if callable(handler):
+                res = handler(action, params)
+                if res is not None:
+                    return res
+            method_name = DATA_SERVICE_GENERIC_ACTIONS.get(action)
+            if method_name is None:
+                return {'ok': False, 'error': 'unsupported_action',
+                        'message': '不支持的命令: %s' % action}
+            method = getattr(widget, method_name, None)
+            if not callable(method):
+                return {'ok': False, 'error': 'unsupported_action',
+                        'message': '模块不支持命令: %s' % action}
+            method()
+            return {'ok': True, 'message': '已执行: %s' % action}
+        except Exception as e:
+            log.error("DataService 执行命令失败 %s/%s: %s", key, action, e)
+            return {'ok': False, 'error': 'execution_failed', 'message': str(e)}
