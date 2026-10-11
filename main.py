@@ -552,7 +552,10 @@ class HomePageWidget(QWidget):
         row.setContentsMargins(18, 10, 18, 10)
         row.setSpacing(12)
 
-        icon = IconWidget(FIF.WIFI, card)
+        # 图标：FIF.IOT（设备互联的插口节点图形）。库内没有字面意义的
+        # 插座/插头图标，IOT 是 174 个 FluentIcon 里最接近的一个；
+        # 「允许局域网访问」那张设置卡仍用 FIF.WIFI，两处不再重复
+        icon = IconWidget(FIF.IOT, card)
         icon.setFixedSize(28, 28)
         row.addWidget(icon)
 
