@@ -76,8 +76,13 @@ except ImportError:
 # ============================================================
 try:
     import matplotlib.pyplot as plt
-    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
-    plt.rcParams['axes.unicode_minus'] = False
+
+    def _set_mpl_base_font():
+        """matplotlib 中文字体兜底（内嵌字体注册后会被 _apply_mpl_font 覆盖）。"""
+        plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei']
+        plt.rcParams['axes.unicode_minus'] = False
+
+    _set_mpl_base_font()
 except ImportError:
     plt = None
 

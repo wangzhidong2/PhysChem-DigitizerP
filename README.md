@@ -24,7 +24,8 @@
 - **低成本替代**：单传感器成本 < ¥80（商业方案通常 > ¥200）
 - **开源透明**：`GPL-3.0` 协议，硬件设计和软件代码完全开源，同时提供我认为写的比较详细的教程
 - **模块化设计**：新增传感器只需丢文件，详情参看`Agents.md`，同时也方便AI Agent开发
-- **现代化界面**：`PySide6 `+`Fluent-widgets`库图形界面，UI美观，尽可能的复刻`fluent design`
+- **现代化界面**：`PySide6 `+`Fluent-widgets`库图形界面，UI美观，尽可能的复刻`fluent design`；**字体可换**（内嵌 MiSans，也可从系统字体里任选，见 6.9）
+- **数据接口**：可选插件把数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**，手机也能看（见 6.10）
 
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/1f6418ee-c7c5-48d0-948f-c704f9c59442/image.png 'image.png')
 
@@ -194,21 +195,35 @@ python ./main.py
 ```
 PhysChem-DigitizerP/
 ├── main.py                     # 主程序：FluentWindow + 主页 + 动态加载器
-├── core.py                     # 公共模块：通信线程 / 配置 / 图表分析（拟合/离群点剔除）/ 对话框 / AI 分析 / 现代样式
-├── main_legacy.py              # 历史存档（迁移前单文件版本，不再维护）
+├── core.py                     # 公共模块：通信线程 / 配置 / 图表分析（拟合/离群点剔除）/ 对话框 / AI 分析 / 字体 / 现代样式
 ├── test_serial.py              # 串口连接测试工具
 ├── sensor_config.json          # 传感器校准配置（运行时自动生成，.gitignore）
-├── app_config.json             # 应用配置（主题/引擎/置顶/日志等，运行时生成，.gitignore）
+├── app_config.json             # 应用配置（主题/字体/引擎/置顶/日志等，运行时生成，.gitignore）
 ├── logs.json                   # 运行日志（JSON Lines，默认开启记录，.gitignore）
 ├── requirements.txt            # 依赖清单（pip install -r requirements.txt）
-├── pyproject.toml              # PEP 621 依赖清单 + uv 配置（uv sync / uv run）
-├── uv.lock                     # uv 锁文件（精确版本，建议提交）
+├── pyproject.toml              # PEP 621 依赖清单 + uv 配置（uv sync / uv run；首次 uv sync 会生成 uv.lock）
 ├── CONTRIBUTING.md             # 贡献指南
 ├── PhysChem-DigitizerP.spec    # PyInstaller 打包配置
 ├── .venv/                      # 虚拟环境（可选，.gitignore；创建方法见 3.2.2）
 ├── README.md                   # 主文档（本文件）
 ├── AGENTS.md                   # 开发者指南（含添加新模块教程）
 ├── LICENSE                     # GPL-3.0 许可证
+├── assets/
+│   └── fonts/                  # 内嵌字体（随程序分发，见 6.9）
+│       ├── MiSans-Regular.ttf              # 桌面端默认字体（小米 MiSans）
+│       ├── HarmonyOS_Sans_SC_Regular.ttf   # 可选内嵌字体（华为 HarmonyOS Sans SC）
+│       ├── HarmonyOS_Sans_SC_Regular.woff2 # 同上，网页仪表盘专用（体积约为 TTF 一半）
+│       └── HarmonyOS_Sans_SC_LICENSE.txt   # 华为字体许可证（随字体分发所必需）
+├── flaskserver/                # 数据接口插件（HTTP + 浏览器仪表盘 + MCP，见 6.10）
+│   ├── __init__.py             # 插件生命周期（启停/密钥/可用性探测）
+│   ├── server.py               # Flask 路由：REST API + 字体托管 + 静态仪表盘
+│   ├── mcp_server.py           # MCP stdio 代理（供 AI Agent 调用，需单独装 mcp）
+│   ├── README.md               # 插件接口文档（端点一览 / curl 示例 / MCP 配置）
+│   └── web/                    # 仪表盘前端（零构建、零 CDN，离线可用）
+│       ├── index.html          # 桌面式界面骨架
+│       ├── style.css           # 样式（字体由 --app-font 变量驱动）
+│       ├── app.js              # 前端逻辑（窗口/任务栏/密钥/字体设置）
+│       └── echarts.min.js      # 图表库（本地内置，不联网）
 ├── docs/
 │   └── images/                 # 文档图片
 └── 传感器代码/                  # 下位机 .ino + 上位机 .py 同目录
@@ -236,7 +251,7 @@ PhysChem-DigitizerP/
     │   ├── HX711_Voltage.ino         # HX711 24 位 ADC 固件
     │   ├── ADS1115_Voltage.ino       # ADS1115 16 位 ADC 固件
     │   └── voltage_sensor.py         # 电压上位机模块（支持 HX711 / ADS1115 模式）
-    └── 电流传感器/              # ACS712 电流（5A/20A/30A，AC/DC，零点校准）
+    └── 电流传感器/              # ACS712 电流（5A/20A/30A，AC/DC，零点校准/去皮）
         ├── ESP32_ADC_Raw_Data.ino   # ESP32-S3 固件
         └── current_sensor.py        # 电流上位机模块（5A/20A/30A 量程，AC/DC）
     └── 电学综合/                # 欧姆定律 + 电功率（上位机模块开发中）
@@ -262,9 +277,12 @@ python main.py
 1. 通过 USB 连接开发板到电脑
 2. 在软件左侧选择对应传感器模块
 3. 点击"刷新"选择 COM 端口，点击"连接"
-4. 点击"开始采集"实时显示数据与曲线
-5. 点击"停止采集"结束
-6. 点击"保存数据"导出为 CSV 文件
+4. （可选）**去皮 / 零点校准**：连接后即有实时数据，不必先开始采集。力传感器在"校准与去皮"卡、电压传感器在图表卡左侧、电流传感器在"ACS712 参数"卡（设置区）内，点一下就以当前读数归零；**可以反复点**，每次都以最新读数重新归零、不会叠加，用来消除零点漂移很顺手
+5. 点击"开始采集"实时显示数据与曲线
+6. 点击"停止采集"结束
+7. 点击"保存数据"导出为 CSV 文件
+
+> 想去掉漂移或换量程后重新归零，随时再点一次"去皮"即可；已有数据会按新零点自动重算，曲线同步归零。
 
 ### 6.3.切换绘图引擎
 
@@ -323,6 +341,41 @@ python main.py
 - 「打开日志」按钮用系统默认程序打开 `logs.json`（未开启或尚无记录时弹提示）
 - 控制台输出带 `[时:分:秒.毫秒] [级别] 模块` 前缀；`logs.json` 与 `sensor_config.json` 一样是本机运行数据，已在 `.gitignore` 中忽略
 
+### 6.9.应用字体（可自定义，含内嵌字体）
+
+界面默认使用**内嵌的 MiSans 字体**（assets/fonts/MiSans-Regular.ttf，小米出品，免费商用）。字体会随程序一起分发并在启动时注册进 Qt，所以**换电脑、换系统都不依赖本机装过该字体**，显示效果始终一致。
+
+想换字体：进入 **设置 → 外观 → 应用字体 → 「选择…」**，会打开一个仿 Word 的字体选择器——列出系统里**已安装的全部字体**（Qt 直接给出中文名，如微软雅黑／宋体／楷体／隶书），每条用**该字体自身的字形**渲染，支持搜索与实时预览。选中即生效，无需重启，并写入 `app_config.json` 的 `General.FontFamily` 下次沿用。
+
+> - 除 MiSans 外还内嵌了 **HarmonyOS Sans SC**（华为，含许可证），在字体选择器里带「（内嵌）」标记，属于"任何机器上都有"的稳妥选择。
+>   ⚠️ 注意必须用 **SC** 版本：`HarmonyOS_Sans/` 目录下的 `HarmonyOS_Sans_Regular.ttf` 是纯拉丁面（仅 874 个码位、不含任何汉字），拿它当中文字体会整片回退到系统字体。
+> - **数据记录区与原始数据读数固定使用等宽字体**（Cascadia Code），不随此项切换——等宽才能保证数字对齐。
+> - 图表坐标轴文字会跟随新字体重绘。
+
+### 6.10.数据接口与浏览器仪表盘（flaskserver）
+
+把实验数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。这是**可选插件**：删掉整个 `flaskserver/` 目录，主程序行为完全不变（主页卡片消失、不占端口）。
+
+**开启**：主页 →「数据接口」卡片 →「打开…」→ 打开「数据接口」开关（默认监听 `http://127.0.0.1:8765`）；浏览器访问该地址即为实时仪表盘，首次开启自动生成访问密钥。
+
+| 能力 | 说明 |
+|------|------|
+| **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器／蓝牙，与主程序复用同一套逻辑） |
+| **仪表盘登录** | 开启鉴权后先显示登录页，输对密钥才进桌面；登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
+| **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`，以及 `collect`／`command`／`params` 控制端点 |
+| **MCP 代理** | `flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
+
+仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
+
+⚠️ 「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机／其他电脑可访问）。**同一网络内的任何人都能查看并控制实验，请仅在可信网络中开启。**
+
+```bash
+pip install flask          # 插件依赖（可选；未装时主页「数据接口」卡片灰显，程序照常运行）
+pip install mcp            # 仅 MCP 代理需要
+```
+
+完整的端点清单、curl 示例与 MCP 配置见 [flaskserver/README.md](flaskserver/README.md)。
+
 ## 7.故障排除
 
 ### 7.1.快速诊断
@@ -341,6 +394,10 @@ python test_serial.py
 | 数据跳变异常 | 传感器干扰/接线松动 | 检查接线，远离干扰源 |
 | 图表不显示 / 显示"未检测到图表引擎" | 绘图引擎未安装 | `pip install matplotlib pyqtgraph`（至少其一）后重启 |
 | 需要排查问题 / 记录运行日志 | 日志文件默认不写盘 | 设置 → 个性化 → 开启「运行日志」，再用「打开日志」查看 `logs.json`（控制台始终有输出） |
+| 界面字体不是 MiSans | 内嵌字体文件缺失，或配置里选了其他字体 | 确认 `assets/fonts/MiSans-Regular.ttf` 存在（打包分发时该目录须一并带上）；再在 设置 → 外观 → 应用字体 中选回 MiSans |
+| 仪表盘中文显示成方块 | 内嵌网页字体未随包分发 | 确认 `assets/fonts/HarmonyOS_Sans_SC_Regular.woff2` 存在；缺失时服务端 `/font.css` 返回空样式并回退系统字体 |
+| 主页「数据接口」卡片灰显 | flask 未安装 | `pip install flask` 后重启程序 |
+| 仪表盘能打开但图表空白 | 打包时漏收 `flaskserver/web/echarts.min.js` | 用仓库内的 `PhysChem-DigitizerP.spec` 重新打包（插件目录是整目录收集的） |
 
 ## 8.技术文档
 

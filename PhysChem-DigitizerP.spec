@@ -15,8 +15,11 @@
   PyInstaller 静态分析发现不了，必须作为数据文件手动收集；
   onedir 模式下 main 脚本的 `__file__` 指向 _internal/（PyInstaller 6+），
   datas 收集的文件恰好落在同一目录，运行时路径自然对上。
-- 窗口图标 docs/images/icon.ico 同理按 `__file__` 相对路径查找，一并打包。
-- qfluentwidgets 的 FluentIcon SVG 资源用 collect_data_files 收集。
+- flaskserver 插件同理整目录收集（collect_data_files），含 web/ 静态资源。
+- 窗口图标 docs/images/icon.ico、内嵌字体 assets/fonts/ 均按 `__file__`
+  相对路径查找，一并打包。
+- qfluentwidgets 的 FluentIcon SVG/QSS 资源用 collect_data_files 收集
+  （含 i18n 翻译，缺了界面文案会回退英文）。
 
 注意事项：
 - onedir 目录模式（非单文件）：onefile 每次运行解压到临时目录，启动慢且
@@ -24,6 +27,8 @@
 - console=True 保留控制台窗口，传感器加载、串口收发日志实时可见。
 - 新增传感器模块后重新打包；打包产物内也可以直接往
   _internal/传感器代码/<子目录>/ 丢 .py 实现免重打包热插拔。
+- pyserial 未安装时打包仍可成功，但产物只能跑「模拟器」模式；
+  要支持真实串口请先 `pip install pyserial` 再打包。
 """
 
 import os
@@ -41,15 +46,17 @@ for dirpath, dirnames, filenames in os.walk('传感器代码'):
         if fn.endswith('.py') and not fn.startswith('_') and not fn.startswith('test'):
             sensor_datas.append((os.path.join(dirpath, fn), dirpath))
 
-datas = sensor_datas + [
-    # flaskserver 插件：importlib 按显式路径动态加载，静态分析发现不了，
-    # 必须按数据文件收集（含 web/ 仪表盘静态文件与 mcp_server.py）
-    (os.path.join('flaskserver', '__init__.py'), 'flaskserver'),
-    (os.path.join('flaskserver', 'server.py'), 'flaskserver'),
-    (os.path.join('flaskserver', 'mcp_server.py'), 'flaskserver'),
-    (os.path.join('flaskserver', 'web', 'index.html'), os.path.join('flaskserver', 'web')),
-    (os.path.join('flaskserver', 'web', 'app.js'), os.path.join('flaskserver', 'web')),
-    (os.path.join('flaskserver', 'web', 'style.css'), os.path.join('flaskserver', 'web')),
+# --- flaskserver 插件：整目录收集（.py 也要！）---
+# 注意 include_py_files=True：collect_data_files 默认**不收集 .py**，
+# 而插件的 __init__.py / server.py 正是靠 importlib 按路径动态加载的，
+# 只收 web/ 静态资源会导致打包后插件整个加载不上。
+plugin_datas = [
+    (src, dst) for src, dst in
+    collect_data_files('flaskserver', include_py_files=True)
+    if '__pycache__' not in src
+]
+
+datas = sensor_datas + plugin_datas + [
     # 窗口图标：main.py 按 __file__ 相对 docs/images/icon.ico 加载
     (os.path.join('docs', 'images', 'icon.ico'), os.path.join('docs', 'images')),
     # Gitee / GitCode 平台 logo：主页与设置页按 docs/images/ 相对路径加载，
