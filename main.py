@@ -31,7 +31,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect, QTimer, QUrl
 from PySide6.QtGui import (QFont, QIcon, QPixmap, QPainter, QColor,
-                           QFontMetrics, QGuiApplication, QDesktopServices)
+                           QFontMetrics, QGuiApplication, QDesktopServices,
+                           QTextDocument)
 
 # FluentWidgets — WinUI3 风格组件库（社区版，GPLv3 + 商业双协议）
 # 文档：https://qfluentwidgets.com/
@@ -49,7 +50,7 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         SwitchSettingCard, SwitchButton, SpinBox, MessageBox, MessageBoxBase, Dialog,
         qconfig, IndicatorPosition,
         LineEdit,
-        CardWidget, IconWidget, PillToolButton,
+        CardWidget, IconWidget, PillToolButton, CheckBox,
         AdaptiveFlowLayout, ToolTipFilter,
     )
 
@@ -407,7 +408,11 @@ def lan_ip():
 # 主页
 # ============================================================
 class HomePageWidget(QWidget):
-    """主页面 —— 项目信息 + 仓库地址 + 传感器模块磁贴网格。
+    """主页面 —— 项目信息入口按钮 + 传感器模块磁贴网格。
+
+    项目介绍与三平台仓库地址不再常驻页面：默认聚合为一行
+    「项目信息」按钮（见 `_build_project_entry`），点击弹出
+    `ProjectInfoDialog` 卡片展示详情，卡片底部「返回」按钮关回主页。
 
     模块区采用 Windows 资源管理器磁贴风格：每个模块一张卡片，
     模块文字图标 + 名称 + 右上角图钉（置顶）。网格由
@@ -421,6 +426,7 @@ class HomePageWidget(QWidget):
         super().__init__()
         self._modules = []  # [(icon, name, category), ...]
         self._tiles = {}    # name -> ModuleFolderTile（磁贴跨重建复用）
+        self._project_dialog = None  # 项目信息卡片（首次打开时创建并复用）
         # 自绘 Gitee / GitCode logo（FluentWidgets 没有内置）
         self._img_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "docs", "images")
@@ -456,18 +462,14 @@ class HomePageWidget(QWidget):
         title = TitleLabel("主页")
         self.content_layout.addWidget(title)
 
-        # ========== 项目信息卡片（不可折叠） ==========
-        info_card = self._build_info_card()
-        self._expand_and_lock(info_card)
+        # ========== 项目信息入口（聚合按钮，点击弹出详情卡片） ==========
+        # 项目简介 / 标签 / 三平台仓库地址统一收进弹窗，页面上只留一行
+        self.content_layout.addWidget(self._build_project_entry())
 
         # ========== 数据接口入口卡片（插件存在时才显示） ==========
         self._data_card = self._build_data_card()
         self._data_card.setVisible(False)
         self.content_layout.addWidget(self._data_card)
-
-        # ========== 项目地址（可折叠卡片，默认展开） ==========
-        repo_card = self._build_repo_card()
-        self._default_expand(repo_card)
 
         # ========== 传感器模块（文字图标磁贴网格，按物理/化学分组） ==========
         self._phys_title = TitleLabel("物理实验模块")
@@ -493,45 +495,45 @@ class HomePageWidget(QWidget):
         self.scroll.setWidget(self.content)
         main_layout.addWidget(self.scroll)
 
-    def _build_info_card(self):
-        """项目信息卡片：项目名 + 简介 + 标签（不可折叠）。"""
-        card = ExpandGroupSettingCard(
-            FIF.HOME, "PhysChem-DigitizerP",
-            "基于 Arduino/ESP32 的低成本理化实验数字化采集系统")
+    def _build_project_entry(self):
+        """项目信息入口卡片：默认聚合为一行按钮，点击弹出详情卡片。
 
-        # 项目简介（content 留空，避免与副标题重复的灰色注释）
-        desc = BodyLabel(
-            "为中学和大学物理/化学实验室提供低成本、高精度的传感器解决方案。"
-            "采用模块化架构，新增传感器只需丢文件，无需修改主程序。"
-        )
-        desc.setWordWrap(True)
-        card.addGroup(FIF.INFO, "项目简介", "", desc)
+        样式对齐「数据接口」入口卡片（CardWidget + IconWidget +
+        BodyLabel/CaptionLabel），整行可点；右侧 CHEVRON_RIGHT 图标
+        提示可展开（不用「❯」等字符：内嵌 MiSans 无该字形，会显示成方框）。
+        """
+        card = CardWidget(self)
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setFixedHeight(76)
+        row = QHBoxLayout(card)
+        row.setContentsMargins(18, 10, 18, 10)
+        row.setSpacing(12)
 
-        # 标签
-        tags = QHBoxLayout()
-        tags.setSpacing(8)
-        for text, bg, fg in (
-            ("GPL-3.0 开源", "#e8f5e9", "#2e7d32"),
-            ("教学实验", "#f3e5f5", "#7b1fa2"),
-            ("模块化架构", "#e3f2fd", "#1565c0"),
-        ):
-            tag = QLabel(text)
-            tag.setFont(QFont("Segoe UI", 9))
-            tag.setStyleSheet(f"""
-                background-color: {bg};
-                color: {fg};
-                border-radius: 10px;
-                padding: 4px 12px;
-            """)
-            tags.addWidget(tag)
-        tags.addStretch()
+        icon = IconWidget(FIF.INFO, card)
+        icon.setFixedSize(28, 28)
+        row.addWidget(icon)
 
-        tags_widget = QWidget()
-        tags_widget.setLayout(tags)
-        card.addGroup(FIF.TAG, "标签", "", tags_widget)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        col.addWidget(BodyLabel("项目信息", card))
+        col.addWidget(CaptionLabel(
+            "项目简介 · GPL-3.0 开源 · GitHub / Gitee / GitCode 仓库地址", card))
+        row.addLayout(col, stretch=1)
 
-        self.content_layout.addWidget(card)
+        chevron = IconWidget(FIF.CHEVRON_RIGHT, card)
+        chevron.setFixedSize(12, 12)
+        row.addWidget(chevron)
+
+        card.setToolTip("点击查看项目简介与仓库地址")
+        card.mousePressEvent = lambda e: self._open_project_dialog()
         return card
+
+    def _open_project_dialog(self):
+        """打开「项目信息」卡片（弹窗，复用同一实例）。"""
+        if self._project_dialog is None:
+            self._project_dialog = ProjectInfoDialog(self.window())
+        self._project_dialog.refresh()
+        self._project_dialog.exec()
 
     def set_data_plugin(self, plugin):
         """注入数据接口插件（None = 插件缺失，整张卡片不显示）。"""
@@ -611,60 +613,6 @@ class HomePageWidget(QWidget):
             return QIcon(pix)
         return fallback
 
-    def _build_repo_card(self):
-        """项目地址可折叠卡片：3 平台 URL，可复制可访问。"""
-        gitee_icon = self._load_platform_icon("gitee.svg")
-        gitcode_icon = self._load_platform_icon("gitcode.svg")
-
-        card = ExpandGroupSettingCard(
-            FIF.LINK, "项目地址",
-            "GitHub / Gitee / GitCode 三平台仓库地址")
-
-        repo_urls = [
-            ("GitHub", "https://github.com/wangzhidong2/PhysChem-DigitizerP",
-             FIF.GITHUB),
-            ("Gitee", "https://gitee.com/wangzhidong2/PhysChem-DigitizerP",
-             gitee_icon),
-            ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP",
-             gitcode_icon),
-        ]
-
-        # 每个平台一行：URL 输入框（FluentWidgets 原生 LineEdit，主题自适应）+ 复制按钮 + 访问按钮
-        for name, url, icon in repo_urls:
-            row = QHBoxLayout()
-            row.setSpacing(8)
-
-            url_edit = LineEdit()
-            url_edit.setText(url)
-            url_edit.setReadOnly(True)
-            url_edit.setFont(QFont("Consolas", 10))
-            url_edit.setCursor(Qt.CursorShape.IBeamCursor)
-            url_edit.setMinimumWidth(420)  # 加宽，完整显示整个 URL
-            url_edit.setToolTip("点击全选，Ctrl+C 复制")
-            row.addWidget(url_edit, stretch=1)
-
-            copy_btn = PushButton("复制")
-            copy_btn.setFixedHeight(30)
-            copy_btn.setFixedWidth(64)
-            copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            copy_btn.clicked.connect(lambda _=False, u=url: self._copy_to_clipboard(u))
-            row.addWidget(copy_btn)
-
-            open_btn = PushButton("访问")
-            open_btn.setFixedHeight(30)
-            open_btn.setFixedWidth(64)
-            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            open_btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
-            row.addWidget(open_btn)
-
-            row_widget = QWidget()
-            row_widget.setLayout(row)
-            # content 留空，避免灰色重复注释
-            card.addGroup(icon, name, "", row_widget)
-
-        self.content_layout.addWidget(card)
-        return card
-
     def _rebuild_module_cards(self):
         """根据 self._modules 重建磁贴网格（置顶优先，物理/化学分组）。
 
@@ -727,37 +675,6 @@ class HomePageWidget(QWidget):
             log.warning("保存置顶配置失败: %s", e)
         self._rebuild_module_cards()
 
-    @staticmethod
-    def _default_expand(card):
-        """默认展开可折叠卡片（保留折叠功能）。"""
-        try:
-            card.setExpand(True)
-        except Exception:
-            pass
-
-    @staticmethod
-    def _expand_and_lock(card):
-        """默认展开可折叠卡片，并隐藏折叠按钮使其不可折叠。
-
-        同时把内部 #view 背景设为透明，让展开内容区继承卡片整体背景色，
-        避免 header（透明）与 view（半透明白）背景不一致的视觉割裂。
-        """
-        try:
-            card.setExpand(True)
-        except Exception:
-            pass
-        try:
-            card.card.expandButton.hide()
-            # 断开折叠按钮的点击信号，防止点击 header 任意位置触发折叠
-            try:
-                card.card.expandButton.clicked.disconnect()
-            except Exception:
-                pass
-            # 阻断 HeaderSettingCard.eventFilter 里的"点击→折叠"链路
-            card.card.eventFilter = lambda obj, e: False
-        except Exception:
-            pass
-
     def _copy_to_clipboard(self, text: str):
         """把文本拷到系统剪贴板，并在状态栏给一个轻提示。"""
         clip = QGuiApplication.clipboard()
@@ -793,6 +710,408 @@ class HomePageWidget(QWidget):
                 tile.refresh_icon()
             except Exception as e:
                 log.warning("磁贴图标主题刷新失败 [%s]: %s", tile._name, e)
+        if self._project_dialog is not None:
+            self._project_dialog.apply_theme()
+
+
+# ============================================================
+# 自由软件声明（「项目信息」卡片与设置页共用）
+# ============================================================
+def free_software_notice_text():
+    """声明文案（含主题相关的高亮色，主题切换后需重设）。"""
+    accent = "#ffd166" if isDarkTheme() else "#b45309"   # 暖色强调
+    return (
+        "本软件是自由软件，你可以自由使用、修改和分发；"
+        "分发时请遵守许可证约定，保留版权与许可声明。<br>"
+        "<b><span style='color:%s'>官方目前没有提供付费服务</span></b>，"
+        "如果你认为你的自由受到了侵害，请"
+        "<b><span style='color:%s'>提交 Issue</span></b>给我，"
+        "并与卖家协商解决。" % (accent, accent))
+
+
+def free_software_notice_style():
+    """声明块外观：淡色面板 + 左侧竖条，底色/边框随主题。"""
+    if isDarkTheme():
+        bg, border, bar = "#3a3320", "#4d4326", "#ffd166"
+    else:
+        bg, border, bar = "#fff8e6", "#f0dfae", "#e0a020"
+    return ("""
+        #freeSoftwareNotice {
+            background: %s;
+            border: 1px solid %s;
+            border-left: 3px solid %s;
+            border-radius: 6px;
+        }
+        #freeSoftwareNotice QLabel { background: transparent; }
+    """ % (bg, border, bar))
+
+
+def apply_notice_theme(notice):
+    """按当前主题刷新声明块（文案高亮色、正文色、面板底色一起换）。"""
+    if notice is None:
+        return
+    fg = _theme_colors()['text_primary']
+    notice.setStyleSheet(free_software_notice_style())
+    label = notice.findChild(_WrappedLabel)
+    if label is not None:
+        label.setStyleSheet("color: %s;" % fg)
+        label.setText(free_software_notice_text())
+    title = notice.findChild(QLabel, "freeSoftwareNoticeTitle")
+    if title is not None:
+        title.setStyleSheet("color: %s; background: transparent;" % fg)
+
+
+def build_free_software_notice(parent, title_size=12, body_size=11):
+    """构建自由软件声明块（设置页顶部与「项目信息」卡片共用）。
+
+    文案分三层：定性（本软件是自由软件）→ 义务（分发遵守许可证）→
+    维权路径（官方无付费服务；被收费时先提 Issue，再与卖家协商）。
+    维权路径那句用强调色加粗，即"异色"部分；配色随主题切换。
+
+    Args:
+        parent: 父控件
+        title_size: 标题字号（卡片里 12，设置页顶部 13）
+        body_size: 正文字号（卡片里 11）
+    """
+    notice = QWidget(parent)
+    notice.setObjectName("freeSoftwareNotice")
+    col = QVBoxLayout(notice)
+    col.setContentsMargins(12, 10, 12, 10)
+    col.setSpacing(6)
+
+    head = QHBoxLayout()
+    head.setSpacing(8)
+    icon = IconWidget(FIF.INFO, notice)
+    icon.setFixedSize(18, 18)
+    head.addWidget(icon, 0, Qt.AlignVCenter)
+    title = QLabel("自由软件声明", notice)
+    title.setObjectName("freeSoftwareNoticeTitle")
+    title.setFont(QFont("Segoe UI", title_size, QFont.Weight.DemiBold))
+    head.addWidget(title)
+    head.addStretch()
+    col.addLayout(head)
+
+    label = _WrappedLabel(parent=notice)
+    label.setFont(QFont("Segoe UI", body_size))
+    col.addWidget(label)
+
+    apply_notice_theme(notice)
+    return notice
+
+
+# ============================================================
+# 「项目信息」卡片（主页聚合按钮弹出）
+# ============================================================
+class _WrappedLabel(QLabel):
+    """自动换行且高度随宽度变化的富文本标签。
+
+    普通 QLabel 在垂直布局里只上报单行 sizeHint，多行富文本会被压扁；
+    这里补上 heightForWidth，把文档按当前宽度排版后回填最小高度，长段落
+    才能完整显示。内容里的 `<br>` 由富文本渲染，避免依赖具体字体换行。
+    """
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setWordWrap(True)
+        self.setTextFormat(Qt.TextFormat.RichText)
+        policy = self.sizePolicy()
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        """按给定宽度计算所需高度（宽度未定时退回单行高度）。"""
+        if width <= 0:
+            return self.sizeHint().height()
+        doc = QTextDocument()
+        doc.setDefaultFont(self.font())
+        doc.setHtml(self.text())
+        doc.setTextWidth(width)
+        return int(doc.size().height()) + 2
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.setMinimumHeight(self.heightForWidth(self.width()))
+
+
+class ProjectInfoDialog(MessageBoxBase):
+    """项目信息卡片：项目简介 + 标签 + 自由软件声明 + 三平台仓库地址。
+
+    主页把「项目介绍」与「项目地址」聚合为一行按钮，详情收在本卡片里；
+    底部按钮改写为「返回」，点它（或 Esc）关回主页。卡片内容超出高度时
+    在内部滚动区滚动，地址行的复制 / 访问按钮行为保持与原卡片一致。
+    """
+
+    #: 三平台仓库地址（名称, URL, SVG 文件名；SVG 缺失时回退 FluentIcon）
+    REPOS = (
+        ("GitHub", "https://github.com/wangzhidong2/PhysChem-DigitizerP",
+         "github.svg", FIF.GITHUB),
+        ("Gitee", "https://gitee.com/wangzhidong2/PhysChem-DigitizerP",
+         "gitee.svg", FIF.CODE),
+        ("GitCode", "https://gitcode.com/wangzhidong2/PhysChem-DigitizerP",
+         "gitcode.svg", FIF.CODE),
+    )
+
+    #: 标签配色（亮色底 + 深色字，明暗主题下都是浅色胶囊，故固定色值）
+    TAGS = (
+        ("GPL-3.0 开源", "#e8f5e9", "#2e7d32"),
+        ("教学实验", "#f3e5f5", "#7b1fa2"),
+        ("模块化架构", "#e3f2fd", "#1565c0"),
+    )
+
+    #: 内容超出时的最大高度上限（小屏 / 高 DPI 时内部滚动，不撑破弹窗）
+    MAX_SCROLL_H = 480
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._svg_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "docs", "images")
+        self._tag_labels = []
+        self._fitted = False
+
+        # 只需「返回」：隐藏确定按钮，取消按钮改文案
+        self.yesButton.hide()
+        self.cancelButton.setText("返回")
+        self.cancelButton.setMinimumWidth(100)
+        self.widget.setMinimumWidth(680)   # 容下整条仓库 URL（约 55 字符）
+
+        self.viewLayout.addWidget(SubtitleLabel("项目信息", self))
+
+        # 内容超高（小屏 / 高 DPI）时内部滚动，不撑破弹窗
+        self.content = QWidget()
+        self.content.setObjectName("projectBody")   # 供 apply_theme 的背景 QSS 定位
+        body = QVBoxLayout(self.content)
+        body.setContentsMargins(12, 8, 12, 8)
+        body.setSpacing(6)
+
+        # 自由软件声明：字号加大后置于卡片顶部（最需要先被看到的一段）
+        body.addWidget(self._build_notice())
+
+        body.addWidget(CaptionLabel("项目简介", self.content))
+        desc = BodyLabel(
+            "PhysChem-DigitizerP —— 基于 Arduino/ESP32 的低成本理化实验"
+            "数字化采集系统。为中学和大学物理/化学实验室提供低成本、"
+            "高精度的传感器解决方案；采用模块化架构，新增传感器只需"
+            "丢文件，无需修改主程序。", self.content)
+        desc.setWordWrap(True)
+        body.addWidget(desc)
+
+        body.addLayout(self._build_tags())
+
+        sep = QFrame(self.content)
+        sep.setFrameShape(QFrame.HLine)
+        body.addWidget(sep)
+
+        body.addWidget(CaptionLabel("项目地址", self.content))
+        for name, url, svg, fallback in self.REPOS:
+            body.addLayout(self._build_repo_row(name, url, svg, fallback))
+
+        # 末尾伸缩项放在滚动区之外（见 _fit_scroll 的说明），这里不留空白
+
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setWidget(self.content)
+        self._scroll.setMinimumHeight(240)
+        self._scroll.setMaximumHeight(self.MAX_SCROLL_H)
+        self.viewLayout.addWidget(self._scroll)
+        self.viewLayout.addStretch()
+        self.viewLayout.addWidget(self._build_autoshow_box())
+        self.apply_theme()
+
+    def _build_autoshow_box(self):
+        """「下次启动不再弹出」复选框：直接读写 app_config.json。
+
+        勾选态与配置项 ShowIntroOnStartup 语义相反（勾选 = 不再自动弹出），
+        映射只在 _on_autoshow_toggled 里做一次。
+        """
+        self._autoshow = CheckBox("下次启动不再弹出", self)
+        self._autoshow.setFont(QFont("Segoe UI", 10))
+        self._autoshow.setChecked(not bool(app_cfg.showIntroOnStartup.value))
+        self._autoshow.setToolTip(
+            "勾选后启动不再自动弹出；随时可从主页「项目信息」重新打开")
+        self._autoshow.toggled.connect(self._on_autoshow_toggled)
+        return self._autoshow
+
+    def _on_autoshow_toggled(self, checked):
+        """勾选 = 下次启动不再弹出，故写入配置时取反。"""
+        try:
+            qconfig.set(app_cfg.showIntroOnStartup, not bool(checked))
+        except Exception as e:
+            log.warning("保存启动弹出配置失败: %s", e)
+
+    # ---- 高度自适应 ----
+    def showEvent(self, event):
+        """首次显示后按内容量一次高度，避免出现多余的滚动条。"""
+        super().showEvent(event)
+        if not self._fitted:
+            self._fitted = True
+            QTimer.singleShot(0, self._fit_scroll)
+
+    def _fit_scroll(self):
+        """把滚动区高度收到内容自然高度（超出上限才滚动）。
+
+        不用 `content.sizeHint()`：QWidget 的 sizeHint 受滚动区宽度与
+        布局约束影响，实测与"刚好放下"的高度不一致（会白挂一条滚动条）。
+        这里改为累加各级布局的实际高度，结果就是内容的自然高度。
+        """
+        layout = self.content.layout()
+        if layout is None:
+            return
+        margin = layout.contentsMargins()
+        total = margin.top() + margin.bottom()
+        total += layout.spacing() * max(0, layout.count() - 1)
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            widget = item.widget()
+            if widget is not None:
+                total += widget.sizeHint().height()
+            elif item.layout() is not None:
+                total += item.layout().sizeHint().height()
+        self._scroll.setFixedHeight(min(total, self.MAX_SCROLL_H))
+
+
+    # ---- 内容构建 ----
+    def _build_notice(self):
+        """自由软件声明块：与设置页顶部共用同一个构建函数。
+
+        字号比正文大一档（正文 11pt / 标题 12pt），且置于卡片顶部——
+        这是最需要先被看到的一段。
+        """
+        self._notice = build_free_software_notice(
+            self.content, title_size=12, body_size=11)
+        self._notice_label = self._notice.findChild(_WrappedLabel)
+        self._notice_title = self._notice.findChild(
+            QLabel, "freeSoftwareNoticeTitle")
+        return self._notice
+
+    def _style_notice(self, notice=None, label=None):
+        """按当前主题刷新声明块（薄封装，便于 apply_theme 直接调用）。"""
+        apply_notice_theme(notice if notice is not None
+                           else getattr(self, '_notice', None))
+
+    def _build_tags(self):
+        """标签胶囊行（配色固定，亮暗主题下都清晰）。"""
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        for text, bg, fg in self.TAGS:
+            tag = QLabel(text, self.content)
+            tag.setFont(QFont("Segoe UI", 9))
+            tag.setStyleSheet(
+                f"background-color: {bg}; color: {fg};"
+                "border-radius: 10px; padding: 4px 12px;")
+            row.addWidget(tag)
+            self._tag_labels.append(tag)
+        row.addStretch()
+        return row
+
+    def _build_repo_row(self, name, url, svg, fallback=FIF.CODE):
+        """一行「平台名 + 只读 URL + 复制 + 访问」。"""
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        # 不设固定宽度：CaptionLabel 按内容取自然宽度（GitHub/GitCode 长度不同）
+        row.addWidget(CaptionLabel(name, self.content))
+
+        url_edit = LineEdit(self.content)
+        url_edit.setText(url)
+        url_edit.setReadOnly(True)
+        url_edit.setFont(QFont("Consolas", 10))
+        url_edit.setCursor(Qt.CursorShape.IBeamCursor)
+        url_edit.setMinimumWidth(380)   # 加宽，完整显示整个 URL
+        url_edit.setToolTip("点击全选，Ctrl+C 复制")
+        row.addWidget(url_edit, stretch=1)
+
+        copy_btn = PushButton("复制", self.content)
+        copy_btn.setFixedHeight(30)
+        copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_btn.clicked.connect(
+            lambda _=False, u=url: self._copy_to_clipboard(u))
+        row.addWidget(copy_btn)
+
+        # 访问按钮只放平台 logo（图标自带宽度差异，固定宽度会挤扁图标）
+        open_btn = PushButton(self.content)
+        open_btn.setFixedHeight(30)
+        open_btn.setIcon(self._load_icon(svg, fallback))
+        open_btn.setToolTip("在浏览器中打开 %s" % name)
+        open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
+        row.addWidget(open_btn)
+        return row
+
+    def _load_icon(self, svg_name, fallback=FIF.CODE):
+        """加载本地 SVG 平台 logo，失败回退 FluentIcon。"""
+        pix = QPixmap(os.path.join(self._svg_dir, svg_name))
+        return QIcon(pix) if not pix.isNull() else fallback
+
+    # ---- 行为 ----
+    def _copy_to_clipboard(self, text):
+        """复制到剪贴板，并在本卡片右下方轻提示（不依赖主页）。"""
+        clip = QGuiApplication.clipboard()
+        if clip and text:
+            clip.setText(text)
+        try:
+            InfoBar.success(
+                title="已复制", content=text,
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.BOTTOM_RIGHT,
+                duration=1500, parent=self)
+        except Exception as e:
+            log.warning("复制提示失败: %s", e)
+
+    def refresh(self):
+        """每次打开前同步主题与「启动时自动显示」勾选态。
+
+        主题可能在两次打开之间切过；配置项也可能被外部改写（如手改
+        app_config.json），所以打开前以配置为准回填复选框。
+        """
+        self.apply_theme()
+        if hasattr(self, '_autoshow'):
+            self._autoshow.blockSignals(True)
+            self._autoshow.setChecked(not bool(app_cfg.showIntroOnStartup.value))
+            self._autoshow.blockSignals(False)
+
+    def apply_theme(self):
+        """按当前主题刷新内容区与滚动区样式，亮 ↔ 暗双向可切。
+
+        背景必须同时落在 `#projectBody`（内容区）与 QScrollArea 上：
+        只给 QScrollArea 设 QSS 时，内层 QWidget 仍带系统浅色调色板并
+        自绘背景，暗色主题下会出现"浅底 + 浅字"。滚动条也在这里统一
+        配色，避免落到默认外观。
+        """
+        c = _theme_colors()
+        self.content.setStyleSheet(
+            "#projectBody { background: %s; }" % c['content_bg'])
+        self._style_notice()    # 声明块：底色/边框/高亮色都随主题
+        self._scroll.setStyleSheet("""
+            QScrollArea {{
+                border: 1px solid {sep};
+                border-radius: 6px;
+                background: {bg};
+            }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 10px;
+                margin: 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {handle};
+                border-radius: 4px;
+                min-height: 32px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background: {handle_hover}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: transparent;
+            }}
+        """.format(sep=c['separator'], bg=c['content_bg'],
+                   handle=c['text_hint'], handle_hover=c['text_secondary']))
 
 
 # ============================================================
@@ -1344,13 +1663,14 @@ class SettingsWidget(QWidget):
     theme_change_requested = Signal(str)  # 'light' / 'dark'
     engine_change_requested = Signal(str)  # 'matplotlib' / 'pyqtgraph'
 
-    APP_VERSION = "1.6"
+    APP_VERSION = "1.8"
 
     def __init__(self):
         super().__init__()
         # 主题模式：浅色 / 深色 / 跟随系统
         self._theme_combo_items = ["浅色模式", "深色模式", "跟随系统"]
         self._theme_combo_values = ["light", "dark", "auto"]
+        self._notice = None              # 顶部「自由软件声明」块（init_ui 里创建）
         # 当前主题模式（显式记录：qconfig.theme 会把 AUTO 解析成 LIGHT/DARK，
         # 无法据此区分「跟随系统」，故单独维护；同步下拉框用）
         self._theme_mode = "light"
@@ -1384,6 +1704,11 @@ class SettingsWidget(QWidget):
         # 页面标题：用 TitleLabel 自动适配主题
         title = TitleLabel("设置")
         layout.addWidget(title)
+
+        # 自由软件声明（置顶，与「项目信息」卡片同一份文案/配色）
+        self._notice = build_free_software_notice(
+            self._content, title_size=13, body_size=11)
+        layout.addWidget(self._notice)
 
         # ===== 外观分组（主题） =====
         group_appearance = SettingCardGroup("外观", self._content)
@@ -1431,6 +1756,28 @@ class SettingsWidget(QWidget):
             FIF.CERTIFICATE, "开源许可证", "GPL-3.0-only",
             "本应用遵循 GPL-3.0-only 协议开源"))
         layout.addWidget(group_about)
+
+        # ===== 内嵌字体（致谢 + 官网链接） =====
+        # 两家字体的许可条款都要求「在软件中特别注明使用了该字体」
+        # （MiSans FAQ「是否可以用作嵌入式字体」、HarmonyOS Sans 许可 2.1 条），
+        # 这栏同时满足署名要求与致谢
+        group_fonts = SettingCardGroup("内嵌字体", self._content)
+        credit = CaptionLabel("感谢对应字体提供方的免费支持", group_fonts)
+        credit.setAlignment(Qt.AlignmentFlag.AlignLeft
+                            | Qt.AlignmentFlag.AlignVCenter)
+        # 插在标题之后（vBoxLayout 的 0 是标题，1 是标题下方的间距）
+        group_fonts.vBoxLayout.insertWidget(1, credit)
+        for family, vendor, url in (
+            ("MiSans",
+             "小米科技有限责任公司（Xiaomi）",
+             "https://hyperos.mi.com/font/zh"),
+            ("HarmonyOS Sans SC",
+             "华为终端有限公司（Huawei Device Co., Ltd.）",
+             "https://developer.huawei.com/consumer/cn/design/resource-V1/"),
+        ):
+            group_fonts.addSettingCard(
+                self._build_font_credit_card(family, vendor, url))
+        layout.addWidget(group_fonts)
 
         # ===== 开源信息（可折叠卡片） =====
         layout.addWidget(self._build_open_source_card())
@@ -2167,6 +2514,22 @@ class SettingsWidget(QWidget):
             btn.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
         return btn
 
+    def _build_font_credit_card(self, family, vendor, url):
+        """内嵌字体致谢卡片：字体名 + 出品公司 + 官网链接。
+
+        两家字体的许可条款都要求「在软件中特别注明使用了该字体」，
+        这栏既是署名，也是致谢——故 content 统一写明"由…免费提供，
+        谨致谢意"。右侧「官网」按钮用 webbrowser 打开对应字体主页。
+        """
+        card = SettingCard(
+            FIF.FONT, family,
+            "%s 免费提供，谨致谢意" % vendor)
+        link_btn = self._make_link_button("官网", url)
+        link_btn.setFixedHeight(34)
+        card.hBoxLayout.addWidget(link_btn)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
     def _build_open_source_card(self):
         """开源信息可折叠卡片：展示本项目依赖的开源库、协议与官网。
 
@@ -2253,10 +2616,12 @@ class SettingsWidget(QWidget):
             self._theme_combo.blockSignals(False)
 
     def apply_theme(self, theme):
-        """主题切换时刷新本页背景与下拉框同步。"""
+        """主题切换时刷新本页背景、声明块配色与下拉框同步。"""
         # 用存储的引用刷新页面/滚动区背景
         self._scroll.setStyleSheet(scroll_area_style())
         self._content.setStyleSheet(page_bg_style())
+        # 自由软件声明块（自定义 QSS 面板，Fluent 不会自动换色）
+        apply_notice_theme(getattr(self, '_notice', None))
         # 同步下拉框
         self._sync_theme_combo_from_current()
 
@@ -2286,6 +2651,7 @@ class MainWindow(FluentWindow):
         # 退出确认状态：closeEvent 延迟弹框（详见 closeEvent 注释）
         self._exit_confirmed = False
         self._exit_dialog_open = False
+        self._intro_shown = False   # 启动弹出「项目信息」每次运行只弹一次
         self.modules = {}  # name -> widget
         self.module_widgets = []  # 按注册顺序排列的 widget 列表
         self._nav_icons = {}  # name -> (icon_text, nav_item)，主题切换时重建图标
@@ -2367,6 +2733,8 @@ class MainWindow(FluentWindow):
 
         # 把模块列表传给主页
         home_page.set_modules(home_modules)
+        # 主页引用（启动时的「项目信息」卡片经它弹出，见 _maybe_show_project_intro）
+        self.home_page = home_page
 
         # 默认显示主页
         self.switchTo(home_page)
@@ -2422,6 +2790,28 @@ class MainWindow(FluentWindow):
         if snake.endswith('_widget'):
             snake = snake[:-len('_widget')]
         return snake.strip('_')
+
+    def showEvent(self, event):
+        """首次显示主窗口后，按配置自动弹出「项目信息」卡片。
+
+        延迟到事件循环里弹（不阻塞 show 本身），且每次运行只弹一次；
+        关掉窗口内「启动时自动显示」复选框后，下次启动不再弹出。
+        """
+        super().showEvent(event)
+        if self._intro_shown or not bool(app_cfg.showIntroOnStartup.value):
+            return
+        self._intro_shown = True
+        QTimer.singleShot(400, self._show_project_intro)
+
+    def _show_project_intro(self):
+        """弹出「项目信息」卡片（复用主页持有的那一份实例）。"""
+        home = getattr(self, 'home_page', None)
+        if home is None:
+            return
+        try:
+            home._open_project_dialog()
+        except Exception as e:
+            log.warning("启动弹出项目信息失败: %s", e)
 
     def _get_module_desc(self, name):
         """根据模块名返回简短描述"""

@@ -282,6 +282,9 @@ class AppConfig(QConfig):
     )
     # 窗口记忆：上次退出时是否最大化（默认 True，保持原有“启动即最大化”行为）
     windowMaximized = ConfigItem("Window", "Maximized", True)
+    # 启动时自动弹出「项目信息」卡片（首次运行默认开启；卡片内
+    # 「启动时自动显示」复选框可关闭，关掉后不再主动弹出）
+    showIntroOnStartup = ConfigItem("General", "ShowIntroOnStartup", True)
     # AI 分析实验：OpenAI 兼容端点 + API Key + 模型（图表卡「AI分析实验」按钮用）
     aiEndpoint = ConfigItem("General", "AIEndpoint", "")
     aiApiKey = ConfigItem("General", "AIApiKey", "")

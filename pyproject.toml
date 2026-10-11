@@ -17,7 +17,7 @@
 
 [project]
 name = "physchem-digitizerp"
-version = "1.6"                 # 与 main.py 中 SettingsWidget.APP_VERSION 保持一致
+version = "1.8"                 # 与 main.py 中 SettingsWidget.APP_VERSION 保持一致
 description = "低成本物理化学实验室数据采集上位机（PySide6 + FluentWidgets，模块化架构，配套 Arduino/ESP32 固件）"
 readme = "README.md"
 requires-python = ">=3.10"      # README / AGENTS.md 声明的下限（代码使用 3.10+ 语法）
