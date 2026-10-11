@@ -14,6 +14,7 @@
 import sys
 import os
 import threading
+from collections import deque
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
@@ -121,7 +122,7 @@ class CurrentSensorWidget(QWidget):
         self._collecting = False  # 当前是否在采集（合并开始/停止按钮状态）
         self.ble_thread = None
         self.current_data = []   # 电流值（安培，瞬时值）
-        self.vsensor_data = []   # ACS712 输出电压（V，还原后），用于零点校准
+        self.vsensor_data = []   # ACS712 输出电压（V，还原后），用于零点变化后重算
         self.time_data = []
         self.raw_data = []
         self.start_timestamp_ms = 0
@@ -139,6 +140,9 @@ class CurrentSensorWidget(QWidget):
         self.current_mode = 'DC'    # DC / AC
         self.current_unit = 'A'     # A / mA
         self.zero_cal_active = False  # 是否已执行零点校准
+        #: 实时采样滚动窗口：未开始采集时也持续喂数据，供「去皮」取零点用
+        #: （与电压传感器同机制：设备连着就能去皮，无需先开始采集）
+        self._live_raw_window = deque(maxlen=10)
 
         # AC 模式 RMS 滚动窗口大小（采样点数）
         self.ac_rms_window = 50
@@ -452,6 +456,19 @@ class CurrentSensorWidget(QWidget):
         self.zero_status_label.setStyleSheet("color: #888; font-weight: bold;" if not self.zero_cal_active
                                              else "color: green; font-weight: bold;")
         unit_row.addWidget(self.zero_status_label)
+
+        # 去皮按钮放在设置区内（与零点状态同一行）：
+        # 采集前即可反复点击归零，不依赖「开始采集」后的数据
+        self.zero_cal_btn = PushButton("去皮")
+        self.zero_cal_btn.setFixedHeight(32)
+        self.zero_cal_btn.setMinimumWidth(80)
+        self.zero_cal_btn.setToolTip("以当前零电流读数作为零点（可反复点击重新归零）\n"
+                                     "设备连接后即有实时数据，无需先开始采集")
+        self.zero_cal_btn.setStyleSheet("background-color: #fd7e14; color: white;")
+        self.zero_cal_btn.setEnabled(False)   # 连接后由 _set_collect_enabled 打开
+        self.zero_cal_btn.clicked.connect(self.tare_now)
+        unit_row.addWidget(self.zero_cal_btn)
+
         unit_row.addStretch()
         acs_card_layout.addLayout(unit_row)
 
@@ -570,19 +587,6 @@ class CurrentSensorWidget(QWidget):
         self.collect_btn.setEnabled(False)
         actions_layout.addWidget(self.collect_btn)
 
-        # 零点校准按钮：取最近若干个数据点平均的传感器输出作为零点电压
-        self.zero_cal_btn = PushButton("零点校准" if not self.zero_cal_active else "取消零点")
-        self.zero_cal_btn.setFixedHeight(38)
-        set_action_button_width(self.zero_cal_btn)
-        self.zero_cal_btn.clicked.connect(self.toggle_zero_cal)
-        self.zero_cal_btn.setEnabled(False)
-        self.zero_cal_btn.setStyleSheet("background-color: #fd7e14; color: white;"
-                                        if not self.zero_cal_active else
-                                        "background-color: #28a745; color: white;")
-        actions_layout.addWidget(self.zero_cal_btn)
-
-        
-
         self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
         set_action_button_width(self.save_btn)
@@ -664,7 +668,6 @@ class CurrentSensorWidget(QWidget):
         # 手动改零点电压视为已校准
         self.zero_cal_active = True
         self.update_zero_status_label()
-        self.update_zero_cal_btn()
         self.save_config()
 
     def on_divider_changed(self, value):
@@ -696,48 +699,47 @@ class CurrentSensorWidget(QWidget):
             self.zero_status_label.setText(f"未校准（零点=VCC/2={self.vcc/2.0:.3f}V）")
             self.zero_status_label.setStyleSheet("color: #888; font-weight: bold;")
 
-    def update_zero_cal_btn(self):
-        if self.zero_cal_active:
-            self.zero_cal_btn.setText("取消零点")
-            self.zero_cal_btn.setStyleSheet("background-color: #28a745; color: white;")
-        else:
-            self.zero_cal_btn.setText("零点校准")
-            self.zero_cal_btn.setStyleSheet("background-color: #fd7e14; color: white;")
+    def tare_now(self):
+        """去皮（零点校准）：取最近若干个实时采样点的 ACS712 输出电压均值作为零点。
 
-    def toggle_zero_cal(self):
-        """零点校准/取消切换
-
-        校准：取最近若干个数据点的 ACS712 输出电压平均值作为零点电压
-        取消：零点电压恢复为 VCC/2
+        与旧实现的区别（对齐电压传感器的去皮行为）：
+        1. 不要求先「开始采集」——设备连着、有数据流入即可去皮
+           （用 _live_raw_window 实时窗口，采集前后都在持续更新）；
+        2. 可反复点击，每点一次都以当前读数重新归零，没有「取消去皮」；
+        3. 零点按去皮前的传感器输出计算，重复去皮不会互相叠加。
         """
-        if self.zero_cal_active:
-            # 取消零点校准
-            self.zero_cal_active = False
-            self.v_quiescent = self.vcc / 2.0
-            log.info("已取消零点校准（零点恢复 VCC/2）")
-            self.vquies_spin.blockSignals(True)
-            self.vquies_spin.setValue(self.v_quiescent)
-            self.vquies_spin.blockSignals(False)
-            self.update_zero_status_label()
-            self.update_zero_cal_btn()
-            self.save_config()
-            self.recompute_current_data()
-        else:
-            # 执行零点校准：要求有数据
-            if not self.vsensor_data:
-                fluent_message_box(self, "提示", "请先开始采集数据（确保零电流状态）后再校准")
-                return
-            recent = self.vsensor_data[-10:] if len(self.vsensor_data) >= 10 else self.vsensor_data
-            self.v_quiescent = float(np.mean(recent))
-            self.zero_cal_active = True
-            log.info("零点校准完成，零点电压=%.4f V", self.v_quiescent)
-            self.vquies_spin.blockSignals(True)
-            self.vquies_spin.setValue(self.v_quiescent)
-            self.vquies_spin.blockSignals(False)
-            self.update_zero_status_label()
-            self.update_zero_cal_btn()
-            self.save_config()
-            self.recompute_current_data()
+        if not self._live_raw_window:
+            fluent_message_box(self, "提示", "还没有收到数据，等数据流入后再去皮")
+            return
+        # 取最近 10 个采样点的传感器输出电压（未扣零点）平均值作为新零点
+        recent = [self.adc_to_vsensor(r) for r in self._live_raw_window]
+        self.v_quiescent = float(np.mean(recent))
+        self.zero_cal_active = True
+        log.info("去皮：零点=%.4f V（取最近 %d 个采样）",
+                 self.v_quiescent, len(recent))
+        self.vquies_spin.blockSignals(True)
+        self.vquies_spin.setValue(self.v_quiescent)
+        self.vquies_spin.blockSignals(False)
+        self.update_zero_status_label()
+        self.save_config()
+        # 按新零点重算已采集的数据，曲线同步归零
+        self.recompute_current_data()
+
+    def reset_zero_cal(self):
+        """零点恢复为理论值 VCC/2 并关闭去皮（清掉校准痕迹）。
+
+        去皮按钮改为「可反复点击、不提供取消」后，这里保留一个程序化入口，
+        供「恢复默认」等场景使用；手动改「零点电压」输入框同样会置为已校准。
+        """
+        self.zero_cal_active = False
+        self.v_quiescent = self.vcc / 2.0
+        log.info("已重置零点（恢复 VCC/2=%.4f V）", self.v_quiescent)
+        self.vquies_spin.blockSignals(True)
+        self.vquies_spin.setValue(self.v_quiescent)
+        self.vquies_spin.blockSignals(False)
+        self.update_zero_status_label()
+        self.save_config()
+        self.recompute_current_data()
 
     def api_actions(self):
         """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
@@ -747,11 +749,11 @@ class CurrentSensorWidget(QWidget):
         """执行模块特有控制动作（由 DataService 保证在 GUI 线程调用）。
         通用动作（start/stop/clear/toggle）返回 None 交给通用动作表。"""
         if action == 'zero_cal':
-            if not self.zero_cal_active and not self.vsensor_data:
-                return {'ok': False, 'message': '请先开始采集数据（确保零电流状态）后再校准'}
-            self.toggle_zero_cal()
-            msg = '已取消零点校准' if not self.zero_cal_active else '零点校准完成'
-            return {'ok': True, 'message': msg}
+            if not self._live_raw_window:
+                return {'ok': False, 'message': '还没有收到数据，等数据流入后再去皮'}
+            self.tare_now()
+            return {'ok': True,
+                    'message': f'已去皮（零点={self.v_quiescent:.4f} V）'}
         return None
 
     def recompute_current_data(self):
@@ -917,6 +919,8 @@ class CurrentSensorWidget(QWidget):
         log.info("已断开连接")
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
+        # 去皮依赖实时数据流，断开后清空窗口并禁用按钮
+        self._live_raw_window.clear()
         self.zero_cal_btn.setEnabled(False)
         self.current_value_label.setText(f"--.- {self.current_unit}")
         self.current_raw_label.setText("原始ADC: 已断开")
@@ -934,9 +938,14 @@ class CurrentSensorWidget(QWidget):
             self.start_collection()
 
     def _set_collect_enabled(self, enabled):
-        """连接/断开时同步合并按钮与浮动栏按钮的可用性。"""
+        """连接/断开时同步合并按钮与浮动栏按钮的可用性。
+
+        「去皮」依赖实时数据流：连接后即可用（无需先开始采集），断开则禁用
+        —— 与采集按钮同步，避免连没连上都能点。
+        """
         self.collect_btn.setEnabled(enabled)
         self.float_collect_btn.setEnabled(enabled)
+        self.zero_cal_btn.setEnabled(enabled)
 
     def _refresh_collect_btn(self):
         """合并按钮与浮动栏按钮：文案随采集状态切换（停止采集/开始采集）。"""
@@ -953,7 +962,6 @@ class CurrentSensorWidget(QWidget):
         self._collecting = True
         log.info("开始采集")
         self._refresh_collect_btn()
-        self.zero_cal_btn.setEnabled(True)
         self.save_btn.setEnabled(False)
         self.current_value_label.setText("电流: 采集中...")
         self.current_raw_label.setText("原始ADC: 采集中...")
@@ -979,13 +987,15 @@ class CurrentSensorWidget(QWidget):
             self.current_raw_label.setText("原始ADC: 等待数据...")
             return
 
-        # 未开始采集：仅刷新实时显示（不计入数据集）
+        # 未开始采集：仅刷新实时显示（不计入数据集），
+        # 同时把原始值喂进滚动窗口——这样「去皮」在采集前就能用
         if not self._collecting:
             try:
                 if "," in data:
                     parts = data.split(",")
                     if len(parts) == 2:
                         raw_value = int(parts[1])
+                        self._live_raw_window.append(raw_value)
                         self._update_realtime_display(raw_value)
             except ValueError:
                 pass
@@ -1016,6 +1026,7 @@ class CurrentSensorWidget(QWidget):
                     self.vsensor_data.append(v_sensor)
                     self.current_data.append(current)
                     self.time_data.append(relative_time_s)
+                    self._live_raw_window.append(raw_value)
 
                     time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
                     display_text = (f"时间: {time_str} | ADC: {raw_value} | "
