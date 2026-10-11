@@ -254,6 +254,11 @@ class AppConfig(QConfig):
     # 应用字体族名（设置页「应用字体」）：默认内嵌 MiSans；
     # 空字符串 = 系统默认字体。任意已安装字体名均可写入（如「楷体」）
     fontFamily = ConfigItem("General", "FontFamily", EMBEDDED_FONT_FAMILY)
+    # 浏览器仪表盘（flaskserver 插件）字体：默认内嵌 HarmonyOS Sans SC。
+    # 与桌面端 fontFamily 分开存——网页端面向局域网访客（可能用手机），
+    # 其字体偏好与操作者本机的桌面设置是两回事。空字符串 = 系统默认。
+    webFontFamily = ConfigItem("WebDashboard", "FontFamily",
+                               'HarmonyOS Sans SC')
     # 图表引擎：pyqtgraph（默认，高性能交互）/ matplotlib（静态美观）
     chartEngine = OptionsConfigItem(
         "Chart", "Engine", "pyqtgraph",

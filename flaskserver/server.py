@@ -9,10 +9,44 @@ flaskserver.server — Flask app、路由、token 校验、静态托管
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, send_file
 
 _WEB_DIR = Path(__file__).parent / 'web'
+#: 内嵌字体目录：与主程序共用 assets/fonts/（本文件在 flaskserver/ 下，上溯两级为仓库根）
+_FONT_DIR = Path(__file__).resolve().parent.parent / 'assets' / 'fonts'
 _READ_TIMEOUT_S = 8.0
+
+#: 浏览器仪表盘内嵌字体：字体族名 → 文件基准名（不含扩展名）。
+#: 文件基准名带 _Regular 后缀，不能由族名推导，故显式映射。
+WEB_FONT_FACE = 'HarmonyOS Sans SC'
+WEB_FONT_BASE = 'HarmonyOS_Sans_SC_Regular'
+
+#: 网页字体可选范围（host 端字体族名 → 下拉显示名）。
+#: 只有访客浏览器能靠名字找到的通用字体才放进来；内嵌字体始终第一项。
+WEB_FONT_CHOICES = (
+    ('', '系统默认'),
+    ('Microsoft YaHei', '微软雅黑'),
+    ('SimSun', '宋体'),
+    ('SimHei', '黑体'),
+    ('KaiTi', '楷体'),
+    ('FangSong', '仿宋'),
+    ('Segoe UI', 'Segoe UI'),
+    ('Arial', 'Arial'),
+    ('Georgia', 'Georgia'),
+    ('Consolas', 'Consolas'),
+)
+
+
+def _font_file_for(base_name):
+    """返回可用的字体文件路径：优先 woff2（体积约为 TTF 一半），退回 ttf。
+
+    返回 (path, mime) 或 (None, None)。
+    """
+    for suffix, mime in (('.woff2', 'font/woff2'), ('.ttf', 'font/ttf')):
+        p = _FONT_DIR / (base_name + suffix)
+        if p.is_file():
+            return p, mime
+    return None, None
 
 
 # ============================================================
@@ -25,7 +59,14 @@ def _error(code, error, message):
     return resp
 
 
-def build_app(service, token='', allow_lan=False, enable_cors=False):
+def _json_body():
+    """读取请求体 JSON 对象；非法/非对象一律返回空 dict（调用方按缺字段处理）。"""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def build_app(service, token='', allow_lan=False, enable_cors=False,
+              app_cfg=None):
     """构建 Flask app。
 
     Args:
@@ -33,6 +74,7 @@ def build_app(service, token='', allow_lan=False, enable_cors=False):
         token: 访问密钥；空字符串表示写操作也免校验（不推荐）
         allow_lan: 局域网模式 —— 读操作也强制 token
         enable_cors: 是否允许跨域
+        app_cfg: core.app_cfg（网页字体等外观设置读写用）；None 时只读回退默认
     """
     app = Flask(__name__, static_folder=str(_WEB_DIR), static_url_path='')
 
@@ -152,10 +194,6 @@ def build_app(service, token='', allow_lan=False, enable_cors=False):
     # --------------------------------------------------------
     # 控制端点（始终需要 token）
     # --------------------------------------------------------
-    def _json_body():
-        data = request.get_json(silent=True)
-        return data if isinstance(data, dict) else {}
-
     @app.route('/api/modules/<key>/collect', methods=['POST'])
     def collect(key):
         r = _check_token(write=True)
@@ -240,6 +278,108 @@ def build_app(service, token='', allow_lan=False, enable_cors=False):
         app._token = new_token
         return jsonify({'ok': True, 'token': new_token,
                         'message': '旧密钥立即失效'})
+
+    # --------------------------------------------------------
+    # 网页字体与外观设置
+    #
+    # 字体选择存服务端（app_cfg.webFontFamily）而非 localStorage：
+    # 局域网下手机/别的电脑打开仪表盘即自动用上同一字体，换浏览器也一致，
+    # 且与桌面端「应用字体」互不干扰。
+    # --------------------------------------------------------
+    def _web_font_family():
+        """当前仪表盘字体名；'' 表示系统默认。配置缺失时回退内嵌字体。"""
+        if app_cfg is None:
+            return WEB_FONT_FACE
+        try:
+            return str(app_cfg.webFontFamily.value or '')
+        except Exception:
+            return WEB_FONT_FACE
+
+    @app.route('/font.css')
+    def font_css():
+        """内嵌字体 @font-face：浏览器只认 woff2/ttf，TTF 压成 woff2 省一半流量。
+
+        返回 CSS 而不是字体本身，是为了让 index.html 只写一行 <link>：
+        具体文件名与格式由服务端决定，缺文件时自动降级。
+        """
+        face = WEB_FONT_FACE
+        path, mime = _font_file_for(WEB_FONT_BASE)
+        if path is None:
+            # 缺字体文件：返回空 CSS，浏览器用系统字体，页面照常工作
+            return Response('/* 内嵌字体缺失，回退系统字体 */\n',
+                            mimetype='text/css')
+        fmt = 'woff2' if path.suffix == '.woff2' else 'truetype'
+        css = (
+            "@font-face{\n"
+            "  font-family:'%s';\n"
+            "  src:url('/font-file?v=%s') format('%s');\n"
+            "  font-weight:400;\n"
+            "  font-display:swap;\n"
+            "}\n" % (face, path.stat().st_mtime_ns, fmt)
+        )
+        resp = Response(css, mimetype='text/css')
+        resp.headers['Cache-Control'] = 'no-cache'
+        return resp
+
+    @app.route('/font-file')
+    def font_file():
+        """内嵌字体文件本体（带长缓存：文件名带 mtime 版本号，可放心缓存）。"""
+        path, mime = _font_file_for(WEB_FONT_BASE)
+        if path is None:
+            return _error(404, 'no_font', '未找到内嵌字体文件')
+        resp = send_file(path, mimetype=mime, conditional=True)
+        resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        return resp
+
+    @app.route('/api/settings/web')
+    def web_settings():
+        r = _check_token(write=False)
+        if r is not None:
+            return r
+        installed = []
+        if app_cfg is not None:
+            try:
+                from core import available_font_families
+                installed = available_font_families()
+            except Exception:
+                installed = []
+        font_ok = _font_file_for(WEB_FONT_BASE)[0] is not None
+        # 选项：内嵌字体恒在前；其余仅列出本机确实装了的，避免选了没效果
+        choices = []
+        if font_ok:
+            choices.append({'value': WEB_FONT_FACE,
+                            'label': WEB_FONT_FACE + '（内嵌）'})
+        for value, label in WEB_FONT_CHOICES:
+            if value == '':
+                choices.append({'value': '', 'label': label})
+            elif not installed or value in installed:
+                choices.append({'value': value, 'label': label})
+        return jsonify({'ok': True, 'font': _web_font_family(),
+                        'font_embedded': font_ok, 'font_name': WEB_FONT_FACE,
+                        'choices': choices})
+
+    @app.route('/api/settings/web', methods=['POST'])
+    def web_settings_set():
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if app_cfg is None:
+            return _error(503, 'not_supported', '当前运行方式不支持修改网页设置')
+        body = _json_body()
+        font = body.get('font')
+        if not isinstance(font, str):
+            return _error(400, 'bad_request', 'font 必须是字符串')
+        font = font.strip()
+        allowed = {c[0] for c in WEB_FONT_CHOICES} | {WEB_FONT_FACE}
+        if font not in allowed:
+            return _error(400, 'bad_value',
+                          '不支持的字体：%s' % (font or '(空)'))
+        try:
+            app_cfg.webFontFamily.value = font
+            app_cfg.save()
+        except Exception as e:
+            return _error(500, 'save_failed', '保存失败：%s' % e)
+        return jsonify({'ok': True, 'font': font, 'message': '字体已切换'})
 
     # --------------------------------------------------------
     # 仪表盘静态页（/ 返回 index.html）

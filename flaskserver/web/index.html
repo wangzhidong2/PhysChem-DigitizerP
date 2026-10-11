@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>PhysChem 实验仪表盘</title>
+<!-- 内嵌字体：HarmonyOS Sans SC（WOFF2，由服务端 /font.css 按实际文件生成
+     @font-face；字体文件缺失时返回空 CSS，自动回退系统字体） -->
+<link rel="stylesheet" href="font.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -65,6 +68,13 @@
         <button id="token-submit" class="btn-primary" type="button">提交</button>
       </div>
       <div id="token-hint" class="panel-hint">写操作（开始/停止采集等）需要访问密钥</div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-section-title">外观</div>
+      <div class="font-row">
+        <select id="font-select" title="仪表盘字体"></select>
+      </div>
+      <div id="font-hint" class="panel-hint">字体为服务端内嵌（HarmonyOS Sans SC），手机等未装该字体的设备也能正常显示</div>
     </div>
     <div class="panel-section">
       <div class="panel-section-title">服务</div>

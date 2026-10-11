@@ -64,6 +64,10 @@ datas = sensor_datas + [
      os.path.join('assets', 'fonts')),
     (os.path.join('assets', 'fonts', 'HarmonyOS_Sans_SC_LICENSE.txt'),
      os.path.join('assets', 'fonts')),
+    # 浏览器仪表盘内嵌字体：flaskserver 经 /font.css + /font-file 提供。
+    # 只带 woff2（4 MB）——TTF 7.9 MB 是桌面端 Qt 用的，网页端用不上，不再进包体
+    (os.path.join('assets', 'fonts', 'HarmonyOS_Sans_SC_Regular.woff2'),
+     os.path.join('assets', 'fonts')),
 ]
 # docs/images 其余 png 为 README 截图，运行时用不到，不打包以控包体
 # FluentWidgets 的 FluentIcon 资源（SVG/QSS）

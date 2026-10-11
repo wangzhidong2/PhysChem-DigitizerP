@@ -27,6 +27,8 @@ const healthText = $('health-text');
 const authDot = $('auth-dot');
 const authText = $('auth-text');
 const serviceInfoEl = $('service-info');
+const fontSelectEl = $('font-select');
+const fontHintEl = $('font-hint');
 const toastEl = $('toast');
 
 /* ---------- 状态 ---------- */
@@ -192,6 +194,86 @@ async function api(path, opts) {
   }
   authState = 'ok';
   return resp.json();
+}
+
+/* ---------- 仪表盘字体 ----------
+   字体偏好存服务端（/api/settings/web），故局域网内手机/别的电脑
+   打开即一致，换浏览器也一致；localStorage 只做「下次先按上次的渲染」
+   的缓存，避免等接口返回时先用浏览器默认字体闪一下。
+   内嵌 HarmonyOS Sans SC 由服务端 /font.css 提供 @font-face。 */
+const FONT_CACHE_KEY = 'pcd_font';
+
+/** 把字体族名拼成完整回退栈（缺字由后续字体补齐，避免出现方块字） */
+function fontStack(family) {
+  const fallbacks = ['Microsoft YaHei', 'Segoe UI', 'sans-serif'];
+  const parts = [];
+  if (family) parts.push(`"${family}"`);
+  fallbacks.forEach((f) => {
+    if (f !== family) parts.push(f.includes(' ') ? `"${f}"` : f);
+  });
+  return parts.join(', ');
+}
+
+/** 应用字体到页面：写 CSS 变量，body 及所有 font-family:inherit 的元素随即生效 */
+function applyFont(family) {
+  document.documentElement.style.setProperty('--app-font', fontStack(family));
+  try { localStorage.setItem(FONT_CACHE_KEY, family || ''); } catch (e) { /* 忽略 */ }
+}
+
+/* 先用缓存字体渲染，避免字体闪变 */
+try { applyFont(localStorage.getItem(FONT_CACHE_KEY) || ''); } catch (e) { /* 忽略 */ }
+
+/** 拉取服务端字体设置并填充下拉框；失败时静默保留当前字体 */
+async function refreshWebSettings() {
+  let d;
+  try {
+    d = await api('/api/settings/web');
+  } catch (e) {
+    if (fontSelectEl) fontSelectEl.disabled = true;
+    return;
+  }
+  const choices = d.choices || [];
+  if (fontSelectEl) {
+    fontSelectEl.innerHTML = '';
+    choices.forEach((c) => {
+      const opt = el('option', null, c.label);
+      opt.value = c.value;
+      fontSelectEl.appendChild(opt);
+    });
+    fontSelectEl.value = d.font || '';
+    // 服务端有值但不在选项里（例如字体被卸载）：补一项，避免下拉显示错位
+    if (fontSelectEl.value !== (d.font || '')) {
+      const opt = el('option', null, (d.font || '') + '（不可用）');
+      opt.value = d.font || '';
+      fontSelectEl.appendChild(opt);
+      fontSelectEl.value = d.font || '';
+    }
+    fontSelectEl.disabled = false;
+  }
+  applyFont(d.font || '');
+  if (fontHintEl) {
+    fontHintEl.textContent = d.font_embedded
+      ? `内嵌字体 ${d.font_name} 由服务端提供，手机等未安装该字体的设备也能正常显示`
+      : '内嵌字体文件缺失，已回退系统字体（检查 assets/fonts/ 是否随程序分发）';
+  }
+}
+
+/** 用户切换字体：写服务端并即时应用（写操作需访问密钥） */
+async function onFontChange() {
+  if (!fontSelectEl) return;
+  const family = fontSelectEl.value;
+  applyFont(family);              // 先本地生效，界面立即响应
+  try {
+    await api('/api/settings/web', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ font: family }),
+    });
+    toast('字体已切换：' + (family || '系统默认'));
+  } catch (e) {
+    toast('字体未能保存到服务端：' + e.message);
+    refreshWebSettings();         // 回读服务端真实值，避免下拉与实际不一致
+  }
 }
 
 /* ---------- 服务状态与模块列表 ---------- */
@@ -928,6 +1010,7 @@ function startPolling() {
   if (pollingStarted) return;
   pollingStarted = true;
   refreshOverview();
+  refreshWebSettings();          // 字体设置：进桌面后拉一次并填充下拉框
   setInterval(refreshOverview, POLL_OVERVIEW_MS);
   setInterval(() => {
     if (document.hidden) return;
@@ -948,6 +1031,8 @@ function bindEvents() {
   tokenInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submitToken(); }
   });
+  // 外观：字体下拉框（切换即写服务端）
+  if (fontSelectEl) fontSelectEl.addEventListener('change', onFontChange);
   // 登录页
   loginSubmitBtn.addEventListener('click', doLogin);
   loginInput.addEventListener('keydown', (e) => {

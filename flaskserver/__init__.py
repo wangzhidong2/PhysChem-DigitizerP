@@ -109,7 +109,8 @@ class FlaskServerPlugin:
             try:
                 self._app = server_mod.build_app(
                     self._service, token=token,
-                    allow_lan=allow_lan, enable_cors=enable_cors)
+                    allow_lan=allow_lan, enable_cors=enable_cors,
+                    app_cfg=self._app_cfg)
                 # /api/token/regenerate 回调：重生密钥并持久化
                 self._app._token_regen = self.regenerate_token
                 from werkzeug.serving import make_server

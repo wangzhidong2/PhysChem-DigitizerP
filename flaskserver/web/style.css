@@ -85,6 +85,13 @@
 /* ---------- 基础 ---------- */
 * { box-sizing: border-box; }
 
+/* 应用字体：由 app.js 按服务端设置写到 <html> 的 style 上
+   （值形如 'HarmonyOS Sans SC', "Microsoft YaHei", sans-serif）。
+   这里给出默认栈，脚本未加载完时也不会用浏览器衬线字体闪一下。 */
+:root {
+  --app-font: "HarmonyOS Sans SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+
 html, body {
   height: 100vh;
   width: 100vw;
@@ -94,7 +101,7 @@ html, body {
 }
 
 body {
-  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif;
+  font-family: var(--app-font);
   color: var(--text-color);
   background: var(--wallpaper-bg);
   user-select: none;
@@ -757,6 +764,26 @@ body {
 }
 
 .token-row input:focus { border-color: var(--accent-color); }
+
+/* ---------- 外观：字体选择 ---------- */
+.font-row { display: flex; gap: 6px; }
+
+.font-row select {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-color);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+}
+
+.font-row select:focus { border-color: var(--accent-color); }
+.font-row select:disabled { opacity: 0.55; cursor: default; }
 
 .btn-primary {
   padding: 7px 16px;
