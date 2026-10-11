@@ -85,7 +85,21 @@ def build_app(service, token='', allow_lan=False, enable_cors=False):
             'flask': True,
             'modules_n': len(service.keys()),
             'lan_access': allow_lan,
+            'auth_enabled': bool(app._token),
         })
+
+    @app.route('/api/auth/check')
+    def auth_check():
+        """登录探测：始终按写级别校验（token 非空时必须带对），无副作用。
+
+        - 鉴权关闭 → 200 且 auth_enabled=false（前端免登录直接进）
+        - 密钥正确 → 200 且 auth_enabled=true
+        - 密钥缺失/错误 → 401（前端据此显示登录页）
+        """
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        return jsonify({'ok': True, 'auth_enabled': bool(app._token)})
 
     @app.route('/api/modules')
     def modules():

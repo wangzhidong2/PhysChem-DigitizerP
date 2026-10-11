@@ -3,27 +3,93 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>PhysChem 实验仪表盘</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <h1>PhysChem 实验仪表盘</h1>
-  <span id="health" class="health">连接中…</span>
-  <input id="token" type="password" placeholder="访问密钥（写操作用）" title="写操作需要的访问密钥，保存在本地浏览器">
-</header>
 
-<main>
-  <aside id="module-list"></aside>
-  <section id="detail">
-    <div id="detail-header">
-      <h2 id="detail-name">选择一个模块</h2>
-      <div id="controls"></div>
-    </div>
-    <canvas id="chart"></canvas>
-    <pre id="params" class="params"></pre>
-  </section>
+<!-- 壁纸层（渐变 + 光效，纯装饰） -->
+<div id="wallpaper" aria-hidden="true"></div>
+
+<!-- 桌面：左侧模块图标，右侧窗口层 -->
+<main id="desktop">
+  <div id="desktop-icons" aria-label="模块图标"></div>
+  <div id="windows"></div>
 </main>
+
+<!-- 任务栏 -->
+<footer id="taskbar">
+  <button id="start-btn" class="taskbar-btn" type="button"
+                  aria-haspopup="true" aria-expanded="false" title="模块列表与访问密钥">
+            <span class="start-logo" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </span>
+            <span class="start-text">PhysChem</span>
+          </button>
+  <div id="taskbar-apps" aria-label="已打开的窗口"></div>
+  <div id="system-tray">
+    <button id="health" class="tray-btn" type="button" title="服务状态">
+      <span id="health-dot" class="dot"></span><span id="health-text">连接中…</span>
+    </button>
+    <button id="auth-btn" class="tray-btn" type="button" title="设置访问密钥">
+      <span id="auth-dot" class="dot"></span><span id="auth-text">密钥未设置</span>
+    </button>
+    <div id="clock" class="tray-clock" title="当前时间">
+      <span id="clock-time">--:--</span>
+      <span id="clock-date"></span>
+    </div>
+  </div>
+</footer>
+
+<!-- 开始菜单 / 设置面板（模块列表 + 访问密钥提交） -->
+<section id="panel" class="hidden" aria-label="模块列表与设置">
+  <header class="panel-header">
+    <div class="panel-title">模块与设置</div>
+    <button id="panel-close" class="panel-close" type="button" title="关闭">✕</button>
+  </header>
+  <div class="panel-body">
+    <div class="panel-section">
+      <div class="panel-section-title">模块</div>
+      <div id="panel-modules" class="panel-modules"></div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-section-title">访问密钥</div>
+      <div class="token-row">
+        <input id="token" type="password" placeholder="输入访问密钥"
+               autocomplete="off" spellcheck="false">
+        <button id="token-submit" class="btn-primary" type="button">提交</button>
+      </div>
+      <div id="token-hint" class="panel-hint">写操作（开始/停止采集等）需要访问密钥</div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-section-title">服务</div>
+      <div id="service-info" class="panel-hint">—</div>
+    </div>
+  </div>
+</section>
+
+<!-- 登录页（鉴权开启时拦截，参考路由器管理登录） -->
+<section id="login" class="hidden" aria-label="访问密钥登录">
+  <div class="login-card">
+    <div class="login-logo" aria-hidden="true">PC</div>
+    <div class="login-title">PhysChem 实验仪表盘</div>
+    <div class="login-sub">本机已开启访问鉴权，请输入密钥登录</div>
+    <div class="token-row login-row">
+      <input id="login-token" type="password" placeholder="访问密钥"
+             autocomplete="off" spellcheck="false">
+      <button id="login-submit" class="btn-primary" type="button">登 录</button>
+    </div>
+    <div id="login-hint" class="login-hint">密钥可在上位机「数据接口」设置页查看或重新生成</div>
+  </div>
+</section>
+
+<!-- 轻提示 -->
+<div id="toast" class="toast hidden"></div>
 
 <script src="echarts.min.js"></script>
 <script src="app.js"></script>
