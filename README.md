@@ -346,18 +346,19 @@ python main.py
 界面默认使用**内嵌的 MiSans 字体**（assets/fonts/MiSans-Regular.ttf，小米出品，免费商用）。字体会随程序一起分发并在启动时注册进 Qt，所以**换电脑、换系统都不依赖本机装过该字体**，显示效果始终一致。
 
 想换字体：进入 **设置 → 外观 → 应用字体 → 「选择…」**，会打开一个仿 Word 的字体选择器——列出系统里**已安装的全部字体**（Qt 直接给出中文名，如微软雅黑／宋体／楷体／隶书），每条用**该字体自身的字形**渲染，支持搜索与实时预览。选中即生效，无需重启，并写入 `app_config.json` 的 `General.FontFamily` 下次沿用。
-
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/f5188488-b8ca-4ac2-a398-33310a63c837/image.png 'image.png')
 > - 除 MiSans 外还内嵌了 **HarmonyOS Sans SC**（华为，含许可证），在字体选择器里带「（内嵌）」标记，属于"任何机器上都有"的稳妥选择。
 >   ⚠️ 注意必须用 **SC** 版本：`HarmonyOS_Sans/` 目录下的 `HarmonyOS_Sans_Regular.ttf` 是纯拉丁面（仅 874 个码位、不含任何汉字），拿它当中文字体会整片回退到系统字体。
 > - **数据记录区与原始数据读数固定使用等宽字体**（Cascadia Code），不随此项切换——等宽才能保证数字对齐。
 > - 图表坐标轴文字会跟随新字体重绘。
 
 ### 6.10.数据接口与浏览器仪表盘（flaskserver）
-
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/f90dec07-d72d-49e6-b33b-defa0a472f4f/image.png 'image.png')
 把实验数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。这是**可选插件**：删掉整个 `flaskserver/` 目录，主程序行为完全不变（主页卡片消失、不占端口）。
-
+![QQ20261011-143516.png](https://raw.gitcode.com/user-images/assets/9825261/3a9ce727-1eb7-4438-865e-2ff738cd9eee/QQ20261011-143516.png 'QQ20261011-143516.png')
 **开启**：主页 →「数据接口」卡片 →「打开…」→ 打开「数据接口」开关（默认监听 `http://127.0.0.1:8765`）；浏览器访问该地址即为实时仪表盘，首次开启自动生成访问密钥。
-
+![QQ_1791700566694.png](https://raw.gitcode.com/user-images/assets/9825261/5bd0a52b-06a8-4678-98f3-70124e0ad7dc/QQ_1791700566694.png 'QQ_1791700566694.png')
+![QQ_1791700657467.png](https://raw.gitcode.com/user-images/assets/9825261/11b6548a-4571-489c-afa3-8a1a1d7778d3/QQ_1791700657467.png 'QQ_1791700657467.png')
 | 能力 | 说明 |
 |------|------|
 | **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器／蓝牙，与主程序复用同一套逻辑） |
@@ -366,7 +367,7 @@ python main.py
 | **MCP 代理** | `flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
 
 仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
-
+![QQ_1791700688908.png](https://raw.gitcode.com/user-images/assets/9825261/9100f408-3023-44ee-916e-d3c1fb48a167/QQ_1791700688908.png 'QQ_1791700688908.png')
 ⚠️ 「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机／其他电脑可访问）。**同一网络内的任何人都能查看并控制实验，请仅在可信网络中开启。**
 
 ```bash
