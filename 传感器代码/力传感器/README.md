@@ -1,5 +1,5 @@
 # 力 / 质量传感器
-
+## 概述
 HX711 24 位 ADC + 应变片式称重传感器，配 ESP32-S3 采集。上位机 `force_sensor.py`（主类 `ForceSensorWidget`，侧边栏图标 `F`）支持去皮、两点标定、单位切换（g / kg / N）。
 
 <p align="center">
@@ -34,22 +34,23 @@ A-           →    通道A负极（白）
 B+ / B-      →    未使用
 ```
 
-不同厂家的称重传感器线序可能不同，以传感器标注为准。接线松动会导致读数跳动。
+1. 不同厂家的称重传感器线序可能不同，以传感器标注或者商家说明书为准。
+2. 接线松动会导致读数跳动。推荐HX711到应变片采取锡焊
 
 <p align="center">
   <img src="../../docs/images/接线指南一.png" alt="接线指南一" width="600"/>
 </p>
-<p align="center">图2: ESP32-S3 与 HX711 模块接线示意图</p>
+<p align="center">图2: 5kg，小10kg 与 HX711 模块接线示意图</p>
 
 <p align="center">
   <img src="../../docs/images/接线指南二.png" alt="接线指南二" width="600"/>
 </p>
-<p align="center">图3: HX711 模块与称重传感器接线示意图</p>
+<p align="center">图3: 大10kg及以上称重传感器接线示意图</p>
 
 <p align="center">
   <img src="../../docs/images/组装注意事项.png" alt="组装注意事项" width="600"/>
 </p>
-<p align="center">图4: 组装注意事项</p>
+<p align="center">图4: 秤盘组装注意事项</p>
 
 ## 2.BOM
 

@@ -1,6 +1,7 @@
 # 电压传感器
-
-三种 ADC 方案任选：ESP32 内置 ADC（12 位）、HX711（24 位）、ADS1115（16 位 I2C）。上位机 `voltage_sensor.py`（主类 `VoltageSensorWidget`，侧边栏图标 `V`）支持 ADC 位数、分压比、放大倍数、去皮与单位切换（kV / V / mV）。
+## 概述
+1. 三种 ADC 方案：ESP32 内置 ADC（12 位）、HX711（24 位）、ADS1115（16 位 I2C）。
+2. 上位机 `voltage_sensor.py`（主类 `VoltageSensorWidget`，侧边栏图标 `V`）支持 ADC 位数、分压比、放大倍数、去皮与单位切换（kV / V / mV）。
 
 ## 1.方案对比
 
@@ -8,7 +9,7 @@
 |------|-----------|-------|---------|
 | 分辨率 | 12 位（默认） | 24 位有符号 | 16 位有符号 |
 | 接口 | GPIO 直读 | HX711 协议（DOUT/SCK） | I2C |
-| 量程 | 0~3.3V | ±20mV（A）/ ±80mV（B） | ±6.144V ~ ±0.256V（6档 PGA） |
+| 量程 | 0~3.3V | ±20mV（A）/ ±80mV（B） | ±6.144V ~ ±0.256V（6档 PGA），固件自己改 |
 
 
 ## 2.接线
@@ -26,8 +27,9 @@ GND         ←     GND（共地）
 - 输出 0~4095 无符号值，只能测正电压
 - 要测负电压，得在输入端加 VCC/2 偏置电路把信号抬到 0V 以上，再扣掉偏置
 
-> 被测电压超过 3.3V 必须加分压电路，否则可能损坏 ADC！！！
+> 1.被测电压超过 3.3V 必须加分压电路，否则可能损坏 ADC！！！
 
+>2.ESP32内置ADC在0.3V以下，3V以上有一段明显的非线性区间，误差较大，准确区间 [0.5,2.9]
 ### 2.2.方式二：HX711 24 位
 
 ```
@@ -42,7 +44,7 @@ GND         →     GND
 - 固件 `HX711_Voltage.ino`：`HX711_DOUT_PIN 4` / `HX711_SCK_PIN 5`，采样间隔 100ms
 - 固件固定用通道 B（增益 32，量程 ±80mV），启动信息里会打印 `- Channel: B (Gain 32, +-80mV)`
 - AVDD 默认按 5V 换算（HX711 模块 VCC 常接 5V）
-
+>但是HX711量程太小，只建议毫伏测量，要不然。。。你去做物理必修三的电表改装题吧，顺道练习物理电路
 ### 2.3.方式三：ADS1115 16 位（I2C）
 
 ```
@@ -75,15 +77,15 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 | `ADS_PIN_AIN0` ~ `ADS_PIN_AIN3` | 单端（相对 GND，只能测 0 ~ +FSR） |
 | `ADS_PIN_DIFF_01` / `ADS_PIN_DIFF_23` | 差分（可测负值） |
 
-同一时间只启用一个通道，切换通道要改固件重新烧录，不支持运行时切换。上位机的"通道"下拉框只是显示标识，实际通道由固件决定。
+同一时间只启用一个通道，切换通道要改固件重新烧录，不支持运行时切换。（不过后面我万一做了呢）上位机的"通道"下拉框只是显示标识，实际通道由固件决定。
 
 > ⚠️ **默认值不一致的坑**：固件默认 `PGA_RANGE = GAIN_TWOTHIRDS`（±6.144V），上位机 ADS1115 模式的 PGA 下拉默认是 **±2.048V**。用默认固件时，必须把上位机下拉手动改成「±6.144V」，否则量程按 ±2.048V 换算，读数会差 3 倍。
-
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/00024298-8843-4caf-bfce-406ee4044bd4/image.png 'image.png')
 ## 3.BOM
 
 | 方案 | 组件 | 数量 |
 |------|------|------|
-| ESP32 内置 | ESP32-S3、杜邦线、USB 线 | 按照实际而定 |
+| ESP32 内置 | ESP32-S3、杜邦线、USB-C 线 | 按照实际而定 |
 | HX711 | 另加 HX711 模块 | 1 |
 | ADS1115 | 另加 ADS1115 模块 | 1 |
 
@@ -102,12 +104,12 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 | `HX711_Voltage.ino` | 有符号 −8388608~+8388607 | GPIO4(DOUT) / GPIO5(SCK) |
 | `ADS1115_Voltage.ino` | 有符号 −32768~+32767 | GPIO21(SDA) / GPIO22(SCL) |
 
-这三种固件不要同时烧在一块板上混用。需要同时测电压和电流，用 `电学综合/` 的一体固件。
+
 
 ## 5.换算原理
 
 上位机分两步把 ADC 值换算成"实际被测电压"。
-
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/7dc6654c-e8c5-411f-98f3-989e4b9b623a/image.png 'image.png')
 ### 5.1.第一步：ADC 值 → ADC 端电压
 
 三种模式各有公式，全部按有符号处理（0 对应 0V，负值对应负电压）：
@@ -123,7 +125,7 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 - ADS1115 的 FSR 就是 PGA 量程（如 ±6.144V），分辨率 187.5µV
 
 ### 5.2.第二步：还原分压与放大
-
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/ab13cc8e-7279-4fb1-ba9e-78fc920b8477/image.png 'image.png')
 ```
 实际电压 = V_adc × 分压比 ÷ 放大倍数
 （启用去皮时）实际电压 −= 去皮偏移
@@ -145,6 +147,7 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 ### 6.1.连接方式
 
 下拉框有三项：**有线串口 / BLE蓝牙 / 模拟器**。
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/3df75e04-829d-4556-83d3-f6ccf81e2529/image.png 'image.png')
 
 本目录三个固件都只走 USB 串口，不含 BLE 广播。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/6f539316-dff6-4f5a-826c-fe68efe03652/image.png 'image.png')
@@ -192,9 +195,10 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 ### 6.6.实时数据与统计
 
 「实时数据」卡显示当前 ADC 原始值与换算后的电压；下方统计栏有数据点、平均、最大、最小、标准差 σ（随当前单位换算）。「清除数据」把曲线、记录和统计一起清掉。
-
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/5a6e1685-9dbf-4c79-8ac7-b53404d9adc0/image.png 'image.png')
 ### 6.7.保存数据
-
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/49c3f526-3169-454b-a567-ec16dae7aa91/image.png 'image.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/c0f8a2c2-e3e3-4463-89f1-cdfd13ee8b0c/image.png 'image.png')
 点「保存数据」导出 CSV，文件名形如 `voltage_sensor_data_YYYYmmdd_HHMMSS.csv`，存在运行目录（`main.py` 所在目录）。表头随当前单位变化：
 
 ```
