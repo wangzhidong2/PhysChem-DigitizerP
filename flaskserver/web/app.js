@@ -326,6 +326,22 @@ function createWindow(key) {
     stats.appendChild(box);
   });
   content.appendChild(stats);
+  // 连接管理行：模式下拉 + 串口下拉 + 刷新端口 + 应用（后端无 connection 时隐藏）
+  const conn = el('div', 'win-conn hidden');
+  const connMode = document.createElement('select');
+  connMode.title = '连接方式';
+  const connPort = document.createElement('select');
+  connPort.title = '串口设备';
+  const connRefresh = el('button', 'conn-mini', '刷新端口');
+  connRefresh.type = 'button';
+  const connApply = el('button', 'conn-apply', '应用');
+  connApply.type = 'button';
+  conn.appendChild(el('span', 'conn-label', '连接'));
+  conn.appendChild(connMode);
+  conn.appendChild(connPort);
+  conn.appendChild(connRefresh);
+  conn.appendChild(connApply);
+  content.appendChild(conn);
   const toolbar = el('div', 'win-toolbar');
   content.appendChild(toolbar);
   const chartEl = el('div', 'win-chart');
@@ -338,8 +354,25 @@ function createWindow(key) {
   const w = {
     key, el: node, chart: null, busy: false, busyCmd: false,
     state: { minimized: false, maximized: false },
-    els: { title, state: title.querySelector('.win-state'), stats: statsMap, toolbar, chart: chartEl, params },
+    els: {
+      title, state: title.querySelector('.win-state'), stats: statsMap, toolbar, chart: chartEl, params,
+      conn: {
+        row: conn, mode: connMode, port: connPort, refresh: connRefresh, apply: connApply,
+      },
+    },
   };
+
+  // 连接管理交互
+  connMode.addEventListener('change', () => {
+    // 本地预览：串口模式才显示端口下拉与刷新端口（应用后才真正生效）。
+    // 标记 dirty 后，轮询回读不再覆盖用户未应用的选择，避免预览被打断。
+    const isSerial = connMode.value.includes('串口');
+    connPort.classList.toggle('hidden', !isSerial);
+    connRefresh.classList.toggle('hidden', !isSerial);
+    w.els.conn.dirty = true;
+  });
+  connApply.addEventListener('click', () => applyConnection(w));
+  connRefresh.addEventListener('click', () => sendCommand(w, 'refresh_ports', {}, connRefresh));
 
   // 交互
   btnMin.addEventListener('click', () => minimizeWindow(w));
@@ -558,6 +591,7 @@ async function refreshWindow(w) {
     w.els.stats.points.textContent = String(snap.total_points || 0);
     w.els.stats.ylabel.textContent = yLabel || '—';
     renderControls(w, snap.actions || []);
+    syncConn(w, snap.connection);
     w.els.params.textContent = typeof snap.params === 'string'
       ? snap.params
       : JSON.stringify(snap.params || {}, null, 1);
@@ -620,6 +654,95 @@ async function sendAction(w, action, btn) {
     await refreshWindow(w);
   } catch (e) {
     toast('命令失败：' + e.message);
+  } finally {
+    w.busyCmd = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ---------- 连接管理（串口 / 模拟器切换，数据来自快照 connection 字段） ---------- */
+function syncConn(w, conn) {
+  const c = w.els.conn;
+  if (!conn || !conn.modes || !conn.modes.length) {
+    c.row.classList.add('hidden');
+    c.dirty = false;
+    return;
+  }
+  c.row.classList.remove('hidden');
+  // 列表重建时保留当前选择，避免轮询把用户正在编辑的值冲掉
+  const prevMode = c.mode.value;
+  const modeKey = conn.modes.map((m) => m.text + (m.enabled === false ? '!' : '')).join('|');
+  if (c.mode.dataset.modes !== modeKey) {
+    c.mode.dataset.modes = modeKey;
+    c.mode.innerHTML = '';
+    conn.modes.forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m.text;
+      o.textContent = m.text;
+      if (m.enabled === false) o.disabled = true;
+      c.mode.appendChild(o);
+    });
+    if (prevMode && conn.modes.some((m) => m.text === prevMode)) c.mode.value = prevMode;
+  }
+  const prevPort = c.port.value;
+  const portKey = (conn.ports || []).join('|');
+  if (c.port.dataset.ports !== portKey) {
+    c.port.dataset.ports = portKey;
+    c.port.innerHTML = '';
+    if (!(conn.ports || []).length) {
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = '（无可用串口）';
+      c.port.appendChild(o);
+    } else {
+      conn.ports.forEach((p) => {
+        const o = document.createElement('option');
+        o.value = p;
+        o.textContent = p;
+        c.port.appendChild(o);
+      });
+    }
+    if (prevPort && (conn.ports || []).includes(prevPort)) c.port.value = prevPort;
+  }
+  // 用户有未应用的修改：不动值与显隐，等「应用」成功后回读真实状态
+  if (c.dirty) return;
+  if (document.activeElement !== c.mode && conn.mode) c.mode.value = conn.mode;
+  const isSerial = !!conn.mode && conn.mode.includes('串口');
+  c.port.classList.toggle('hidden', !isSerial);
+  c.refresh.classList.toggle('hidden', !isSerial);
+  if (isSerial && document.activeElement !== c.port && conn.port
+      && (conn.ports || []).includes(conn.port)) {
+    c.port.value = conn.port;
+  }
+}
+
+async function applyConnection(w) {
+  const c = w.els.conn;
+  const mode = c.mode.value;
+  if (!mode) return;
+  await sendCommand(w, 'set_connection', {
+    mode,
+    port: mode.includes('串口') ? c.port.value : '',
+    connect: true,   // 切换后立即连接：模拟器即连即用；串口用所选端口
+  }, c.apply);
+  c.dirty = false;   // 应用完成（含回读），恢复由轮询接管
+}
+
+async function sendCommand(w, action, params, btn) {
+  if (w.busyCmd) return;
+  w.busyCmd = true;
+  if (btn) btn.disabled = true;
+  try {
+    const d = await api(`/api/modules/${encodeURIComponent(w.key)}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, params }),
+    });
+    toast(d.message || '已执行：' + (ACTION_LABEL[action] || action));
+    await refreshWindow(w);
+  } catch (e) {
+    toast('命令失败：' + e.message);
+    await refreshWindow(w);   // 失败也回读，让下拉回到真实状态
   } finally {
     w.busyCmd = false;
     if (btn) btn.disabled = false;

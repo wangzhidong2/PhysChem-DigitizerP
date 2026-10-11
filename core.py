@@ -6246,6 +6246,7 @@ DATA_SERVICE_GENERIC_ACTIONS = {
     'stop': 'stop_collection',
     'clear': 'clear_data',
     'toggle': 'toggle_collection',
+    'refresh_ports': 'refresh_ports',
 }
 
 
@@ -6329,6 +6330,7 @@ class DataService(QObject):
         snap['points'] = pts
         snap['total_points'] = len(pts)
         snap['actions'] = self.actions(key)
+        snap['connection'] = self.connection_info(key)
         return snap
 
     def series(self, key, limit=2000):
@@ -6376,6 +6378,98 @@ class DataService(QObject):
             log.error("DataService.actions(%s) 失败: %s", key, e)
         return sorted(acts)
 
+    # ---- 连接管理（串口 / 模拟器，网页端与主程序共用控件） ----
+    def connection_info(self, key):
+        """读取模块连接方式信息。
+
+        依赖各传感器模块统一命名的控件：mode_combo（连接方式下拉）、
+        port_combo（串口下拉）、refresh_ports()。全部内置模块均具备；
+        未具备或未注册时返回 None（前端据此隐藏连接管理区）。
+        """
+        widget = self._modules.get(key)
+        if widget is None:
+            return None
+        try:
+            mc = getattr(widget, 'mode_combo', None)
+            if mc is None:
+                return None
+            modes = []
+            for i in range(mc.count()):
+                enabled = True
+                try:
+                    enabled = mc.model().item(i).isEnabled()
+                except Exception:
+                    pass  # 个别样式模型读不到 enabled，按可用处理
+                modes.append({'text': mc.itemText(i), 'enabled': enabled})
+            pc = getattr(widget, 'port_combo', None)
+            ports = [pc.itemText(i) for i in range(pc.count())] if pc is not None else []
+            return {
+                'modes': modes,
+                'mode': mc.currentText(),
+                'ports': ports,
+                'port': pc.currentText() if pc is not None else '',
+            }
+        except Exception as e:
+            log.error("DataService.connection_info(%s) 失败: %s", key, e)
+            return None
+
+    def _apply_connection(self, widget, params):
+        """GUI 线程执行：切换连接方式（可选端口），按需立即连接。
+
+        params:
+            mode: str   必填，如 '模拟器' / '串口'（可模糊匹配「有线串口」）/ 'BLE蓝牙'
+            port: str   串口模式下可选；不在列表时自动 refresh_ports() 后重试
+            connect: bool  可选，true 时立即 disconnect_all() + connect_device()
+        """
+        mc = getattr(widget, 'mode_combo', None)
+        if mc is None or mc.count() == 0:
+            return {'ok': False, 'error': 'unsupported',
+                    'message': '该模块不支持连接方式切换'}
+        mode = str(params.get('mode', '') or '').strip()
+        target, target_text = -1, ''
+        for i in range(mc.count()):
+            t = mc.itemText(i)
+            hit = (t == mode
+                   or (mode in ('串口', 'serial') and '串口' in t)
+                   or (mode in ('模拟器', 'simulator') and '模拟器' in t)
+                   or (mode in ('蓝牙', 'ble') and ('BLE' in t.upper() or '蓝牙' in t)))
+            if not hit:
+                continue
+            try:
+                if not mc.model().item(i).isEnabled():
+                    continue  # 跳过禁用项（如未装 bleak 的 BLE）
+            except Exception:
+                pass
+            target, target_text = i, t
+            break
+        if target < 0:
+            names = '/'.join(mc.itemText(i) for i in range(mc.count()))
+            return {'ok': False, 'error': 'bad_mode',
+                    'message': '未知连接方式: %s（可选: %s）' % (mode, names)}
+        pc = getattr(widget, 'port_combo', None)
+        is_port_mode = ('模拟器' not in target_text
+                        and 'BLE' not in target_text.upper() and '蓝牙' not in target_text)
+        if pc is not None and is_port_mode:
+            port = str(params.get('port', '') or '').strip()
+            if port:
+                if pc.findText(port) < 0 and callable(getattr(widget, 'refresh_ports', None)):
+                    widget.refresh_ports()  # 列表缺端口时先刷新（均在 GUI 线程）
+                if pc.findText(port) >= 0:
+                    pc.setCurrentText(port)  # 不触发重连信号，稍后统一 connect
+            elif not pc.currentText():
+                return {'ok': False, 'error': 'no_port',
+                        'message': '串口模式下需要 port 参数'}
+        if mc.currentIndex() != target:
+            mc.setCurrentIndex(target)  # 触发模块自己的 on_mode_changed 面板切换
+        if params.get('connect'):
+            dis = getattr(widget, 'disconnect_all', None)
+            if callable(dis):
+                dis()
+            conn = getattr(widget, 'connect_device', None)
+            if callable(conn):
+                conn()
+        return {'ok': True, 'message': '已切换为 %s' % target_text, 'mode': target_text}
+
     # ---- 控制（命令在 GUI 线程执行） ----
     def submit_command(self, key, action, params=None, timeout=8.0):
         """投递控制命令，阻塞等待 GUI 线程执行结果。
@@ -6418,6 +6512,8 @@ class DataService(QObject):
                 res = handler(action, params)
                 if res is not None:
                     return res
+            if action == 'set_connection':
+                return self._apply_connection(widget, params)
             method_name = DATA_SERVICE_GENERIC_ACTIONS.get(action)
             if method_name is None:
                 return {'ok': False, 'error': 'unsupported_action',
