@@ -43,17 +43,6 @@ const ICON_ALIAS = [
   [/ph/i, 'pH'], [/位移/, 'cm'], [/速度/, 'v'],
   [/电压/, 'V'], [/电流/, 'A'], [/力/, '力'], [/温度/, '℃'],
 ];
-const PALETTE = [
-  'linear-gradient(135deg, #4d9fff, #187aff)',
-  'linear-gradient(135deg, #ff9a6b, #ff5f6d)',
-  'linear-gradient(135deg, #43e97b, #12a354)',
-  'linear-gradient(135deg, #a18cd1, #7b5fd1)',
-  'linear-gradient(135deg, #f6d365, #ff9500)',
-  'linear-gradient(135deg, #00c6ff, #0072ff)',
-  'linear-gradient(135deg, #f78ca0, #e81123)',
-  'linear-gradient(135deg, #30cfd0, #0b8185)',
-];
-
 function iconText(name, key) {
   const s = String(name || key || '?');
   for (const [re, txt] of ICON_ALIAS) {
@@ -62,12 +51,6 @@ function iconText(name, key) {
   const m = /^[A-Za-z0-9]{1,3}/.exec(s);
   if (m && /[A-Za-z]/.test(m[0])) return m[0];
   return s.slice(0, 1);
-}
-
-function colorFor(key) {
-  let h = 0;
-  for (const ch of String(key)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return PALETTE[h % PALETTE.length];
 }
 
 function fmt(v) {
@@ -269,7 +252,6 @@ function syncIcons() {
       node = el('div', 'desktop-icon');
       node.dataset.key = m.key;
       const img = el('div', 'icon-img');
-      img.style.background = colorFor(m.key);
       img.appendChild(el('span', null, iconText(m.name, m.key)));
       img.appendChild(el('span', 'icon-dot'));
       node.appendChild(img);
@@ -317,7 +299,6 @@ function createWindow(key) {
   // 标题栏
   const bar = el('div', 'window-titlebar');
   const icon = el('div', 'window-icon');
-  icon.style.background = colorFor(key);
   icon.textContent = iconText(m.name, key);
   bar.appendChild(icon);
   const title = el('div', 'window-title');
@@ -521,7 +502,6 @@ function syncPanelList() {
       node.type = 'button';
       node.dataset.key = m.key;
       const icon = el('span', 'pm-icon');
-      icon.style.background = colorFor(m.key);
       icon.textContent = iconText(m.name, m.key);
       node.appendChild(icon);
       node.appendChild(el('span', 'pm-name', m.name));
