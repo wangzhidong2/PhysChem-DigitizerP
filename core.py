@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2026 wangzhidong2
+# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # -*- coding: utf-8 -*-
@@ -34,10 +34,11 @@ from collections import deque
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
     QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
-    QApplication, QScrollArea,
+    QApplication, QScrollArea, QListWidget, QListWidgetItem,
+    QStyledItemDelegate, QStyle,
 )
-from PySide6.QtCore import (Qt, Signal, QThread, QObject, QPoint, QTimer, QEvent,
-                            QAbstractNativeEventFilter)
+from PySide6.QtCore import (Qt, Signal, QThread, QObject, QPoint, QSize, QTimer,
+                            QEvent, QAbstractNativeEventFilter)
 from PySide6.QtGui import (
     QFont, QColor, QPainter, QPen, QBrush, QPainterPath,
     QFontMetrics, QTextOption,
@@ -131,6 +132,28 @@ CONFIG_FILENAME = 'sensor_config.json'
 # 本应用统一使用 Fluent Design 标准蓝 #0078d4（与项目强调色一致）。
 DEFAULT_THEME_COLOR = '#0078d4'
 
+# ---- 应用字体 ----
+# 内嵌字体：独立 .ttf 随程序分发，启动时经 QFontDatabase.addApplicationFont()
+# 注册进 Qt，无需编译进 Python 源码（见 load_embedded_font）。
+# 两者均为免费商用字体，许可证随文件放在 assets/fonts/ 下：
+#   - MiSans（小米）：默认字体
+#   - HarmonyOS Sans SC（华为）：注意必须用 **SC** 版本，
+#     HarmonyOS_Sans/ 目录下的 HarmonyOS_Sans_Regular.ttf 是纯拉丁面
+#     （cmap 仅 874 个码位，0 个汉字），装了中文会整片回退到系统字体
+EMBEDDED_FONT_DIR = ('assets', 'fonts')
+#: 内嵌字体清单 (字体族名, 文件名)；第一个为 config 默认值
+EMBEDDED_FONTS = (
+    ('MiSans', 'MiSans-Regular.ttf'),
+    ('HarmonyOS Sans SC', 'HarmonyOS_Sans_SC_Regular.ttf'),
+)
+#: 默认内嵌字体族名（首次启动写入 app_config.json 的值）
+EMBEDDED_FONT_FAMILY = EMBEDDED_FONTS[0][0]
+#: 兼容旧代码：默认内嵌字体文件名
+EMBEDDED_FONT_FILE = EMBEDDED_FONTS[0][1]
+#: 等宽字体：数据记录 / 原始数据 / 数值读数专用，不随应用字体切换
+MONO_FONT_FAMILY = 'Cascadia Code'
+_MONO_FALLBACKS = ('Cascadia Mono', 'Consolas', 'Courier New')
+
 # app_config.json 默认值（首次启动与「恢复默认设置」共用）
 _APP_CONFIG_DEFAULT = {
     "Chart": {"Engine": "pyqtgraph"},
@@ -141,6 +164,7 @@ _APP_CONFIG_DEFAULT = {
         "LogEnabled": True,
         "LogLevel": "info",
         "LogMaxEntries": 5000,
+        "FontFamily": EMBEDDED_FONT_FAMILY,
     },
     "Window": {
         "Geometry": {},
@@ -227,6 +251,9 @@ class AppConfig(QConfig):
         "General", "ThemeColorMode", "custom",
         OptionsValidator(["system", "custom"]),
     )
+    # 应用字体族名（设置页「应用字体」）：默认内嵌 MiSans；
+    # 空字符串 = 系统默认字体。任意已安装字体名均可写入（如「楷体」）
+    fontFamily = ConfigItem("General", "FontFamily", EMBEDDED_FONT_FAMILY)
     # 图表引擎：pyqtgraph（默认，高性能交互）/ matplotlib（静态美观）
     chartEngine = OptionsConfigItem(
         "Chart", "Engine", "pyqtgraph",
@@ -280,6 +307,239 @@ class AppConfig(QConfig):
 
 app_cfg = AppConfig()
 
+
+# ============================================================
+# 应用字体：内嵌 MiSans（独立字体文件）+ 设置页可切换系统字体
+#
+# MiSans 以 assets/fonts/MiSans-Regular.ttf 独立文件随程序分发，
+# 启动时用 QFontDatabase.addApplicationFont() 注册进 Qt——不需要
+# 把字体编进 Python 源码（pyrcc 已被 PySide6 移除），也不占用额外
+# 常驻内存：Qt 直接持有文件句柄，按需读取字形。
+#
+# 想换字体不必重新打包：设置页「应用字体」下拉框可填任意系统已装
+# 字体名（如「楷体」「Microsoft YaHei」），写入 app_config.json 的
+# General.FontFamily，重启或即时生效。
+# ============================================================
+#: addApplicationFont 的返回值（-1 表示失败）；进程内只需注册一次
+_embedded_font_ids = None
+
+
+def get_embedded_font_path(filename=None):
+    """某个内嵌字体文件的绝对路径；文件缺失时返回 None。
+
+    filename 缺省取清单里的第一个（默认字体）。同时兼容源码运行与
+    PyInstaller 打包（onedir 下 sys._MEIPASS 指向 _internal/，与 datas
+    收集目录一致）。传感器模块可能把仓库根目录插到 sys.path 前面，
+    故除 __file__ 同级外再按 sys.path 兜底搜索。
+    """
+    filename = filename or EMBEDDED_FONT_FILE
+    root = os.path.dirname(os.path.abspath(__file__))
+    candidates = []
+    if getattr(sys, '_MEIPASS', None):
+        candidates.append(os.path.join(sys._MEIPASS, *EMBEDDED_FONT_DIR, filename))
+    candidates.append(os.path.join(root, *EMBEDDED_FONT_DIR, filename))
+    for base in sys.path:
+        if not base:
+            continue
+        candidates.append(os.path.join(base, *EMBEDDED_FONT_DIR, filename))
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def load_embedded_font():
+    """把清单里的内嵌字体全部注册进 Qt，返回成功注册的数量。
+
+    需在 QApplication 创建之后调用。重复调用只注册一次；单个字体失败
+    仅记日志并跳过（缺字体不致命，Qt 会回退到系统字体）。
+    """
+    global _embedded_font_ids
+    if _embedded_font_ids is not None:
+        return len(_embedded_font_ids)
+    from PySide6.QtGui import QFontDatabase
+    ok = []
+    for family, filename in EMBEDDED_FONTS:
+        path = get_embedded_font_path(filename)
+        if path is None:
+            log.warning("未找到内嵌字体 %s（%s），该字体不可用",
+                        family, os.path.join(*EMBEDDED_FONT_DIR, filename))
+            continue
+        try:
+            fid = QFontDatabase.addApplicationFont(path)
+            if fid == -1:
+                log.warning("内嵌字体注册失败：%s", path)
+                continue
+            registered = QFontDatabase.applicationFontFamilies(fid)
+            ok.append(family)
+            log.info("✓ 已加载内嵌字体 %s（%s）→ Qt 族名 %s",
+                     family, filename, registered or ['?'])
+        except Exception as e:
+            log.warning("内嵌字体 %s 加载异常: %s", family, e)
+    _embedded_font_ids = ok
+    return len(ok)
+
+
+def embedded_font_families():
+    """内嵌字体中已成功注册的族名列表（用于选择器置顶展示）。"""
+    load_embedded_font()
+    installed = available_font_families()
+    return [f for f, _ in EMBEDDED_FONTS if f in installed]
+
+
+def available_font_families():
+    """当前系统已安装的字体族名集合。
+
+    注意：Qt6 在中文系统上返回的就是**本地化名称**（微软雅黑 / 宋体 /
+    楷体 / 隶书），无需再去读注册表或字体 name 表做映射。
+    必须用类方法 QFontDatabase.families()——实例化后调用会得到空集合。
+    """
+    try:
+        from PySide6.QtGui import QFontDatabase
+        return set(QFontDatabase.families())
+    except Exception:
+        return set()
+
+
+def list_font_families():
+    """已安装字体族列表（含内嵌 MiSans），排序：常用中文名在前，再按名称。
+
+    排序键说明：以 ASCII 字母开头的西文字体排在后面，中文名字体 +
+    内嵌 MiSans 排前面——与 Word 字体下拉的观感一致，常用的不用翻。
+    """
+    families = available_font_families()
+
+    def _key(name):
+        first = name[0] if name else ''
+        is_ascii = first.isascii() and first.isalpha()
+        return (1 if is_ascii else 0, name.lower())
+    return sorted(families, key=_key)
+
+
+def resolve_app_font_family(config_value=None):
+    """把配置值解析为实际可用的字体族名。
+
+    - 值为空 → ''（交给 Qt 用系统默认字体）
+    - 字体已注册/已安装 → 原样返回
+    - 字体不存在（换机器后未装）→ 回退内嵌 MiSans
+    """
+    value = (app_cfg.fontFamily.value if config_value is None
+             else config_value) or ''
+    value = str(value).strip()
+    if not value:
+        return ''
+    families = available_font_families()
+    if value in families:
+        return value
+    if EMBEDDED_FONT_FAMILY in families:
+        log.warning("字体「%s」不可用，回退 %s", value, EMBEDDED_FONT_FAMILY)
+        return EMBEDDED_FONT_FAMILY
+    return ''
+
+
+def mono_font_family():
+    """等宽字体族名：优先 Cascadia Code，其次常见等宽字体，最后回退默认。"""
+    families = available_font_families()
+    if MONO_FONT_FAMILY in families:
+        return MONO_FONT_FAMILY
+    for name in _MONO_FALLBACKS:
+        if name in families:
+            return name
+    return ''
+
+
+def _apply_mpl_font():
+    """让 matplotlib 中文标签跟随应用字体（引擎 = matplotlib 时生效）。"""
+    if plt is None:
+        return
+    try:
+        name = resolve_app_font_family() or EMBEDDED_FONT_FAMILY
+        plt.rcParams['font.sans-serif'] = [name, 'Microsoft YaHei', 'SimHei']
+        plt.rcParams['axes.unicode_minus'] = False
+    except Exception:
+        pass
+
+
+def apply_app_font(family=None, refresh_widgets=False):
+    """应用字体到 FluentWidgets 与自定义控件。
+
+    Args:
+        family: 目标字体族名；None 时读 app_cfg.fontFamily。
+                '' 表示系统默认字体。
+        refresh_widgets: True 时把已显式设置过字体的控件一并改写
+                （保留各自字号、字重与等宽字体）。仅在设置页切换字体时
+                需要——启动阶段控件尚未创建，走默认继承即可。
+
+    Returns:
+        str: 实际生效的字体族名（'' 表示系统默认）
+    """
+    resolved = resolve_app_font_family(family)
+    from qfluentwidgets import setFontFamilies
+    # 字体族列表：目标字体在前，其余作回退，避免个别字符缺字显示为方块。
+    # 用户显式选「系统默认」时不掺入 MiSans——否则等于没切回系统字体。
+    if resolved:
+        candidates = (resolved, EMBEDDED_FONT_FAMILY, 'Microsoft YaHei', 'Segoe UI')
+    else:
+        candidates = ('Microsoft YaHei', 'Segoe UI')
+    families = [f for f in candidates if f]
+    seen, ordered = set(), []
+    for f in families:
+        if f not in seen:
+            seen.add(f)
+            ordered.append(f)
+    try:
+        setFontFamilies(ordered, save=False)
+    except Exception as e:
+        log.warning("设置字体族失败: %s", e)
+    # QSS 里的 font-family 由 LibraryStyleSheet 模板渲染，改完字体族必须
+    # 重刷已注册控件的样式表，否则界面不会立刻变色（库不会自动重刷）
+    try:
+        from qfluentwidgets.common.style_sheet import updateStyleSheet
+        updateStyleSheet(lazy=True)
+    except Exception as e:
+        log.warning("重刷字体样式失败: %s", e)
+    # 应用级默认字体：新建控件直接继承
+    try:
+        from PySide6.QtGui import QFont
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            font = QFont(app.font())
+            font.setFamilies(ordered)
+            app.setFont(font)
+    except Exception as e:
+        log.warning("设置应用字体失败: %s", e)
+    if refresh_widgets:
+        _retarget_declared_fonts(ordered)
+    _apply_mpl_font()
+    log.info("应用字体已切换为：%s", resolved or "系统默认")
+    return resolved
+
+
+def _retarget_declared_fonts(families):
+    """把已显式 setFont 过的控件改到新字体族，保留字号与字重。
+
+    等宽字体（数据记录 / 原始数据读数）不参与切换——它们是刻意的
+    等宽排版，跟着变会破坏数字对齐。
+    """
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication, QWidget
+    app = QApplication.instance()
+    if app is None:
+        return
+    mono = mono_font_family()
+    for widget in app.allWidgets():
+        if not isinstance(widget, QWidget):
+            continue
+        font = widget.font()
+        current = font.family() if hasattr(font, 'family') else ''
+        if not current or current in (mono, MONO_FONT_FAMILY):
+            continue
+        new_font = QFont(font)
+        new_font.setFamilies(families)
+        widget.setFont(new_font)
+
+
 # 首次启动（app_config.json 不存在）：先写入默认配置再加载，
 # 保证默认主题色为蓝色（qfluentwidgets 库默认是青色 #009faa，不符合项目主题）
 _app_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_config.json')
@@ -297,6 +557,12 @@ else:
     _app_config_create_error = None
 
 qconfig.load(_app_config_path, app_cfg)
+
+
+# ============================================================
+# 运行日志（标准库 logging，零依赖，线程安全）
+#
+# 由设置页「运行日志」开关控制（默认开启，app_config.json 的 General.*）：
 
 
 # ============================================================
@@ -827,6 +1093,189 @@ def fluent_message_box(parent, title, text):
     box.cancelButton.hide()
     box.buttonLayout.insertStretch(0, 1)
     box.exec()
+
+
+# ============================================================
+# 字体选择器（仿 Word 字体下拉）
+#
+# 列出**系统已安装的全部字体**（Qt6 在中文系统上直接返回本地化名称，
+# 如「微软雅黑」「宋体」「楷体」「隶书」，无需查注册表映射），用字体
+# 自身的字形渲染每个条目，右侧实时预览选中效果。
+# 列表用 QListWidget + 自绘 delegate：全量字体只创建轻量条目对象，
+# 不逐个实例化控件，200+ 字体下依然流畅。
+# ============================================================
+def _has_cjk(text):
+    """是否含中日韩表意文字（用于把中文字体排到列表前面）。"""
+    return any('\u4e00' <= ch <= '\u9fff' for ch in text or '')
+
+
+class _FontItemDelegate(QStyledItemDelegate):
+    """字体列表条目：用该字体自身的字形画字体名。"""
+
+    def paint(self, painter, option, index):
+        family = index.data(Qt.ItemDataRole.UserRole) or ''
+        painter.save()
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+            painter.setPen(option.palette.highlightedText().color())
+        else:
+            painter.setPen(option.palette.text().color())
+        # 条目文本可能带「（内嵌）」标记（用于搜索/辨识），但渲染时必须
+        # 只用纯字体族名——用带标记的串去构造 QFont 会得到默认字体
+        font = QFont(family) if family else QFont()
+        font.setPixelSize(16)
+        painter.setFont(font)
+        rect = option.rect.adjusted(10, 0, -10, 0)
+        label = index.data(Qt.ItemDataRole.DisplayRole) or family
+        text = painter.fontMetrics().elidedText(
+            label, Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter, text)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        """固定行高，不调用基类实现。
+
+        基类 QStyledItemDelegate.sizeHint 会为每个条目构造字体并测量文本，
+        200+ 字体时首次打开对话框要额外几百毫秒。这里返回常量即可——
+        绘制时已按 rect 垂直居中并做省略号处理，不需要精确测量。
+        """
+        return QSize(0, 34)
+
+
+class FontPickerDialog(Dialog):
+    """字体选择对话框（搜索框 + 字体自身字形列表 + 实时预览）。
+
+    用法：
+        dlg = FontPickerDialog(current_family, parent)
+        if dlg.exec():
+            family = dlg.selected_family()   # '' 表示系统默认字体
+    """
+
+    #: 预览文案（中英数混排，便于同时判断中文与西文字形）
+    PREVIEW_TEXT = ("永远相信美好的事情即将发生\n"
+                    "The quick brown fox jumps over the lazy dog\n"
+                    "0123456789  ！？，。、；：（）【】")
+
+    def __init__(self, current='', parent=None):
+        # content 传空串：Dialog 会额外插入一个显示 content 的标签，
+        # 非空时会与顶部 windowTitleLabel 重复显示同一句话
+        super().__init__("选择字体", "", parent)
+        self._current = current or ''
+        self._all = list_font_families()
+
+        # ---- 搜索框 ----
+        self.search_edit = LineEdit(self)
+        self.search_edit.setPlaceholderText("搜索字体名（如「楷」「黑」「Arial」）…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.textChanged.connect(self._apply_filter)
+
+        # ---- 字体列表（自绘条目，字体名用其自身字形） ----
+        self.list_widget = QListWidget(self)
+        self.list_widget.setItemDelegate(_FontItemDelegate(self.list_widget))
+        # 行高固定：让 Qt 只问一次 sizeHint，而不是每个条目问一遍
+        self.list_widget.setUniformItemSizes(True)
+        self.list_widget.setMinimumWidth(300)
+        self.list_widget.currentItemChanged.connect(self._on_current_changed)
+        self.list_widget.itemDoubleClicked.connect(lambda _i: self.accept())
+
+        # 「系统默认」置顶：置空字体族，交给 Qt 决定
+        default_item = QListWidgetItem("系统默认")
+        default_item.setData(Qt.ItemDataRole.UserRole, '')
+        self.list_widget.addItem(default_item)
+        # 内嵌字体紧随其后（带「内嵌」标记）：它们随程序分发，任何机器都有，
+        # 是最稳的选择，不该埋在 200 多个系统字体里让人翻找
+        for family in embedded_font_families():
+            item = QListWidgetItem(f"{family}（内嵌）")
+            item.setData(Qt.ItemDataRole.UserRole, family)
+            self.list_widget.addItem(item)
+        for family in self._all:
+            item = QListWidgetItem(family)
+            item.setData(Qt.ItemDataRole.UserRole, family)
+            self.list_widget.addItem(item)
+
+        # ---- 预览区 ----
+        self.preview_label = QLabel(self.PREVIEW_TEXT)
+        self.preview_label.setWordWrap(True)
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignTop |
+                                       Qt.AlignmentFlag.AlignLeft)
+        self.preview_label.setMinimumWidth(460)
+        self.preview_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.preview_label.setMargin(12)
+        self.preview_label.setStyleSheet(
+            f"border: 1px solid {_theme_colors()['card_border']};"
+            f" border-radius: 6px; padding: 12px;"
+            f" background: {_theme_colors()['card_bg']};")
+
+        right = QVBoxLayout()
+        right.setSpacing(8)
+        self._pick_hint = CaptionLabel("")
+        right.addWidget(self._pick_hint)
+        right.addWidget(self.preview_label, 1)
+
+        left = QVBoxLayout()
+        left.setSpacing(8)
+        left.addWidget(self.search_edit)
+        left.addWidget(self.list_widget, 1)
+
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        body.addLayout(left, 1)
+        body.addLayout(right, 1)
+        self.textLayout.addLayout(body)
+
+        self.yesButton.setText("使用该字体")
+        self.cancelButton.setText("取消")
+
+        self._select_family(self._current)
+        # Dialog.__init__ 末尾有 setFixedSize(self.size())（当时布局还没算完，
+        # 只有 240×192），之后 setFixedWidth/setMinimumHeight 一律无效。
+        # 必须等内容填好后再显式锁一次尺寸，列表才有足够高度显示字体。
+        self.setFixedSize(880, 620)
+        self.list_widget.scrollToItem(self.list_widget.currentItem())
+
+    # ---------------- 内部 ----------------
+    def _select_family(self, family):
+        """在列表中定位并选中指定字体（未找到则选中「系统默认」）。"""
+        for i in range(self.list_widget.count()):
+            if self.list_widget.item(i).data(Qt.ItemDataRole.UserRole) == family:
+                self.list_widget.setCurrentRow(i)
+                return
+        if family:
+            # 配置里的字体本机已卸载：仍如实显示，允许用户重新挑一个
+            item = QListWidgetItem(f"{family}（未安装）")
+            item.setData(Qt.ItemDataRole.UserRole, family)
+            self.list_widget.insertItem(0, item)
+            self.list_widget.setCurrentRow(0)
+            return
+        self.list_widget.setCurrentRow(0)
+
+    def _apply_filter(self, text):
+        """按关键字过滤列表（大小写不敏感）。"""
+        key = (text or '').strip().lower()
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            family = item.data(Qt.ItemDataRole.UserRole) or ''
+            item.setHidden(bool(key) and key not in family.lower())
+
+    def _on_current_changed(self, current, _previous):
+        if current is None:
+            return
+        family = current.data(Qt.ItemDataRole.UserRole) or ''
+        font = QFont()
+        if family:
+            font.setFamilies([family])
+        font.setPixelSize(17)
+        self.preview_label.setFont(font)
+        self._pick_hint.setText(
+            f"当前选择：{family}" if family else "当前选择：系统默认字体")
+
+    def selected_family(self):
+        """返回选中的字体族名；'' 表示系统默认。"""
+        item = self.list_widget.currentItem()
+        if item is None:
+            return ''
+        return item.data(Qt.ItemDataRole.UserRole) or ''
 
 
 # ============================================================

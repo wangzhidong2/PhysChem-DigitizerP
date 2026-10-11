@@ -56,6 +56,14 @@ datas = sensor_datas + [
     # 加载失败仅回退 FluentIcon，但正常分发应带全
     (os.path.join('docs', 'images', 'gitee.svg'), os.path.join('docs', 'images')),
     (os.path.join('docs', 'images', 'gitcode.svg'), os.path.join('docs', 'images')),
+    # 内嵌字体：core.load_embedded_font() 按 __file__ 相对 assets/fonts/ 注册，
+    # 漏带则回退系统字体（界面不会崩，但默认字体失效）。许可证随字体一并分发。
+    (os.path.join('assets', 'fonts', 'MiSans-Regular.ttf'),
+     os.path.join('assets', 'fonts')),
+    (os.path.join('assets', 'fonts', 'HarmonyOS_Sans_SC_Regular.ttf'),
+     os.path.join('assets', 'fonts')),
+    (os.path.join('assets', 'fonts', 'HarmonyOS_Sans_SC_LICENSE.txt'),
+     os.path.join('assets', 'fonts')),
 ]
 # docs/images 其余 png 为 README 截图，运行时用不到，不打包以控包体
 # FluentWidgets 的 FluentIcon 资源（SVG/QSS）

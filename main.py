@@ -79,6 +79,9 @@ from core import (
     get_logger, get_log_file_path, setup_logging,
     set_log_enabled, set_log_level, set_log_max_entries,
     DataService,
+    # 应用字体：内嵌 MiSans 注册 / 解析 / 应用 / 系统字体选择器
+    EMBEDDED_FONT_FAMILY, load_embedded_font, apply_app_font,
+    resolve_app_font_family, available_font_families, FontPickerDialog,
 )
 
 log = get_logger("main")
@@ -1387,6 +1390,7 @@ class SettingsWidget(QWidget):
         self._theme_card = self._build_theme_card(group_appearance)
         group_appearance.addSettingCard(self._theme_card)
         group_appearance.addSettingCard(self._build_theme_color_card())
+        group_appearance.addSettingCard(self._build_font_card())
         layout.addWidget(group_appearance)
 
         # ===== 图表分组 =====
@@ -1475,6 +1479,92 @@ class SettingsWidget(QWidget):
         card.hBoxLayout.addSpacing(16)
         self._theme_combo = combo
         return card
+
+    def _build_font_card(self):
+        """应用字体卡片：默认内嵌 MiSans，点「选择…」打开系统字体选择器。
+
+        选择器列出系统已安装的**全部字体**（Qt6 在中文系统上直接给出
+        本地化名称：微软雅黑 / 宋体 / 楷体 / 隶书…），用字体自身字形
+        渲染条目并实时预览——与 Word 的字体下拉同思路，不局限几个预设。
+
+        MiSans 以 assets/fonts/MiSans-Regular.ttf 独立文件随程序分发，
+        启动时注册进 Qt，因此不依赖本机是否装过该字体。
+        结果写入 app_config.json 的 General.FontFamily，下次启动沿用。
+
+        等宽字体（数据记录 / 原始数据读数）不随此项变化——见 core.MONO_FONT_FAMILY。
+        """
+        card = SettingCard(FIF.FONT, "应用字体",
+                           "点「选择…」从系统已装字体中挑选（仿 Word 字体列表）",
+                           None)
+        # 当前字体名用其自身字形显示，一眼看出效果
+        preview = BodyLabel("")
+        preview.setMinimumWidth(190)
+        card.hBoxLayout.addWidget(preview)
+        pick_btn = PushButton("选择…", card)
+        pick_btn.setFixedHeight(30)
+        pick_btn.clicked.connect(self._on_pick_font)
+        card.hBoxLayout.addWidget(pick_btn)
+        card.hBoxLayout.addSpacing(16)
+        self._font_preview = preview
+        self._refresh_font_preview()
+        return card
+
+    def _on_pick_font(self):
+        """打开仿 Word 的系统字体选择器，确认后应用并落盘。"""
+        dlg = FontPickerDialog(str(app_cfg.fontFamily.value or ''),
+                               parent=self.window())
+        if not dlg.exec():
+            dlg.deleteLater()
+            return
+        family = dlg.selected_family()
+        dlg.deleteLater()
+        self._on_font_family_changed(family)
+
+    def _on_font_family_changed(self, family):
+        """应用并持久化字体选择。
+
+        存的是用户原始输入（未做可用性回退），换到装该字体的机器上
+        仍能生效；本机缺失时 core 会回退内嵌 MiSans 并记警告。
+        """
+        family = '' if family is None else str(family).strip()
+        if family == str(app_cfg.fontFamily.value or ''):
+            self._refresh_font_preview()
+            return
+        qconfig.set(app_cfg.fontFamily, family)     # 落盘
+        # 就地重刷已创建的控件（保留各自字号/字重，等宽字体不动）
+        apply_app_font(family, refresh_widgets=True)
+        self._refresh_font_preview()
+        self._scroll.setStyleSheet(scroll_area_style())
+        self._content.setStyleSheet(page_bg_style())
+        # 图表里的轴标签是引擎自己画的，需按新字体重绘
+        window = self.window()
+        if hasattr(window, 'refresh_chart_fonts'):
+            try:
+                window.refresh_chart_fonts()
+            except Exception as e:
+                log.warning("刷新图表字体失败: %s", e)
+        families = available_font_families()
+        if family and family not in families:
+            InfoBar.warning(
+                title="字体不可用", content=f"未找到「{family}」，已回退内嵌 MiSans",
+                duration=3000, position=InfoBarPosition.TOP, parent=self)
+        else:
+            InfoBar.success(
+                title="字体已切换", content=family or "系统默认",
+                duration=2000, position=InfoBarPosition.TOP, parent=self)
+
+    def _refresh_font_preview(self):
+        """用当前字体自身的字形显示字体名（未设置则显示「系统默认」）。"""
+        preview = getattr(self, '_font_preview', None)
+        if preview is None:
+            return
+        configured = str(app_cfg.fontFamily.value or '')
+        resolved = resolve_app_font_family()
+        preview.setText(configured or "系统默认")
+        font = QFont(preview.font())
+        if resolved:
+            font.setFamilies([resolved])
+        preview.setFont(font)
 
     def _build_theme_color_card(self):
         """主题色卡片：跟随系统主题色 / 自定义主题色（默认蓝色）。
@@ -2463,6 +2553,25 @@ class MainWindow(FluentWindow):
                     log.warning("[%s] 图表引擎切换失败: %s", name, e)
         log.info("✓ 图表引擎已切换为 %s（%d 个图表面板）", engine, count)
 
+    def refresh_chart_fonts(self):
+        """按新字体重绘所有图表面板（切换应用字体后调用）。
+
+        matplotlib 的文字由 rcParams 决定（plot 时读取），pyqtgraph 的
+        轴标签同理——两者都要重放一次最近事务才会用上新字体。
+        """
+        count = 0
+        for name, widget in self.modules.items():
+            if name in ("主页", "设置"):
+                continue
+            for panel in widget.findChildren(ChartPanel):
+                try:
+                    if panel._last is not None:
+                        panel._commit(panel._last)   # 重放最近一次事务
+                    count += 1
+                except Exception as e:
+                    log.warning("[%s] 图表字体重绘失败: %s", name, e)
+        log.info("✓ 已按新字体重绘 %d 个图表面板", count)
+
     def apply_modern_style(self):
         self.current_theme = "light"
         self.apply_theme("light")
@@ -2730,6 +2839,14 @@ def main():
     for size in (16, 24, 32, 48, 64, 128, 256):
         app_icon.addFile(icon_path, QSize(size, size))
     app.setWindowIcon(app_icon)
+    # 内嵌字体：把 assets/fonts/MiSans-Regular.ttf 注册进 Qt（需在 QApplication
+    # 之后），再按 app_config.json 的 General.FontFamily 应用。必须在建窗口前
+    # 完成——FluentWidgets 组件的字体族来自 qconfig.fontFamilies，晚了就得全量重刷
+    try:
+        load_embedded_font()
+        apply_app_font()
+    except Exception as e:
+        log.warning("应用字体初始化失败: %s", e)
     # 让 ComboBox 展开时箭头朝上（FluentWidgets 默认始终朝下）
     patch_combobox_arrow_flip()
     # 主题色：「跟随系统主题色」模式读取 Windows 强调色（不落盘）；
