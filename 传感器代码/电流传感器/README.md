@@ -1,6 +1,7 @@
 # 电流传感器
-
-ACS712 霍尔电流传感器（5A / 20A / 30A 三种量程），配 ESP32-S3 采集。上位机 `current_sensor.py`（主类 `CurrentSensorWidget`，侧边栏图标 `A`）支持量程切换、DC/AC 测量（AC 取滚动窗口 RMS）、零点校准与单位切换（A / mA）。
+## 概述
+1. ACS712 霍尔电流传感器（5A / 20A / 30A 三种量程），配 ESP32-S3 采集。
+2. 上位机 `current_sensor.py`（主类 `CurrentSensorWidget`，侧边栏图标 `A`）支持量程切换、DC/AC 测量（AC 取滚动窗口 RMS）、零点校准与单位切换（A / mA）。
 
 ## 1.原理
 
@@ -86,7 +87,7 @@ OUT  ─── R1 (10kΩ) ─┬──→  GPIO1
 固件采样固定 100ms（10Hz），上位机"采样频率"只能降频。需要更高速率（比如捕捉 50Hz 交流波形）就改固件 `SAMPLE_INTERVAL` 后重新烧录。
 
 ## 5.换算原理
-
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/b4f0f98e-6df3-4ebd-a5c9-f16dcfaa2f8b/image.png 'image.png')
 上位机分三步换算：
 
 ```
@@ -99,7 +100,7 @@ OUT  ─── R1 (10kΩ) ─┬──→  GPIO1
 - 灵敏度由量程决定：5A→0.185 V/A，20A→0.100 V/A，30A→0.066 V/A
 
 界面会显示一行「可测范围: x A ~ y A」，它由 ADC 满量程、分压比与零点共同决定，可能小于 ACS712 的标称量程（比如 12 位 ADC + 1.5 分压时，5A 档大概只能覆盖 ±1.7A 左右）。想发挥满量程，得降低分压比或换更高位数的 ADC。
-
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/361359cf-6044-4e3f-bcdb-f4bc1e9a99ce/image.png 'image.png')
 ## 6.校准
 
 ### 6.1.零点校准（推荐每次接线后做一次）
@@ -164,6 +165,7 @@ OUT  ─── R1 (10kΩ) ─┬──→  GPIO1
 ### 7.6.实时数据与统计
 
 「实时数据」卡显示当前 ADC 原始值与换算后的电流。下方统计栏 DC 模式给数据点、平均、最大、最小、标准差 σ，AC 模式给数据点、RMS、峰值、窗口点数。界面另有一行显示当前量程、灵敏度与零点电压。「清除数据」把曲线、记录和统计一起清掉。
+![image.png](https://raw.gitcode.com/user-images/assets/9940564/55adbaea-e749-45ef-8f75-abdf634a260b/image.png 'image.png')
 
 ### 7.7.保存数据
 
