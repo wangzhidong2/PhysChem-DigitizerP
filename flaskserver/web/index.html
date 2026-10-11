@@ -15,20 +15,22 @@
 <!-- 桌面：左侧模块图标，右侧窗口层 -->
 <main id="desktop">
   <div id="desktop-icons" aria-label="模块图标"></div>
-  <div id="desktop-hint">
-    <div class="hint-title">PhysChem 实验仪表盘</div>
-    <div class="hint-sub">点击左侧图标打开模块窗口，实时查看曲线与控制采集</div>
-  </div>
   <div id="windows"></div>
 </main>
 
 <!-- 任务栏 -->
 <footer id="taskbar">
   <button id="start-btn" class="taskbar-btn" type="button"
-          aria-haspopup="true" aria-expanded="false" title="模块列表与访问密钥">
-    <span class="start-logo">PC</span>
-    <span class="start-text">PhysChem</span>
-  </button>
+                  aria-haspopup="true" aria-expanded="false" title="模块列表与访问密钥">
+            <span class="start-logo" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </span>
+            <span class="start-text">PhysChem</span>
+          </button>
   <div id="taskbar-apps" aria-label="已打开的窗口"></div>
   <div id="system-tray">
     <button id="health" class="tray-btn" type="button" title="服务状态">

@@ -12,9 +12,9 @@
   --window-radius: 8px;
   --accent-color: #187aff;
   --accent-hover: #0066dd;
-  /* 壁纸：中性灰阶，不加彩 */
-  --wallpaper-bg: linear-gradient(165deg, #eef0f3 0%, #e4e7ec 55%, #d9dde3 100%);
-  --wallpaper-glow: radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.55), transparent 55%);
+  /* 壁纸：纯白底（暗色为深灰），不加彩 */
+  --wallpaper-bg: #ffffff;
+  --wallpaper-glow: none;
   --window-bg: rgba(255, 255, 255, 0.55);
   --window-border: #e5e5e5;
   --window-titlebar-bg: rgba(255, 255, 255, 0.3);
@@ -35,7 +35,6 @@
   /* Logo：石墨底白字 */
   --logo-bg: #343a44;
   --logo-fg: #f5f6f8;
-  --hint-color: rgba(38, 42, 48, 0.78);
   --overlay-bg: rgba(18, 20, 24, 0.35);
   --widget-bg: rgba(255, 255, 255, 0.8);
   --widget-border: rgba(0, 0, 0, 0.1);
@@ -71,7 +70,6 @@
     --icon-dot-ring: rgba(19, 21, 25, 0.9);
     --logo-bg: #d7dae0;
     --logo-fg: #17191d;
-    --hint-color: rgba(224, 227, 232, 0.75);
     --overlay-bg: rgba(8, 9, 11, 0.45);
     --widget-bg: rgba(32, 32, 36, 0.8);
     --widget-border: rgba(255, 255, 255, 0.1);
@@ -214,23 +212,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* 空桌面提示 */
-#desktop-hint {
-  position: absolute;
-  left: 50%;
-  top: 42%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  color: var(--hint-color);
-  z-index: 1;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
-
-#desktop-hint.hidden { display: none !important; }
-#desktop-hint .hint-title { font-size: 26px; font-weight: 600; letter-spacing: 1px; }
-#desktop-hint .hint-sub { font-size: 13px; margin-top: 10px; opacity: 0.85; }
 
 /* ---------- 窗口层 ---------- */
 #windows {
@@ -489,13 +470,13 @@ body {
   border-radius: 7px;
   background: var(--logo-bg);
   color: var(--logo-fg);
-  font-size: 10px;
-  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
+
+.start-logo svg { display: block; }
 
 #taskbar-apps {
   flex: 1;
@@ -878,7 +859,6 @@ body {
 @media (max-width: 720px) {
   .desktop-icon { width: 78px; }
   .desktop-icon .icon-img { width: 38px; height: 38px; font-size: 14px; border-radius: 10px; }
-  #desktop-hint .hint-title { font-size: 20px; }
   #taskbar .start-text { display: none; }
   #health-text, #auth-text { display: none; }
   .win-stats { grid-template-columns: repeat(2, 1fr); }

@@ -27,7 +27,6 @@ const healthText = $('health-text');
 const authDot = $('auth-dot');
 const authText = $('auth-text');
 const serviceInfoEl = $('service-info');
-const hintEl = $('desktop-hint');
 const toastEl = $('toast');
 
 /* ---------- 状态 ---------- */
@@ -223,10 +222,8 @@ async function refreshModules() {
     syncIcons();
     syncPanelList();
     syncWindowStates();
-    hintEl.querySelector('.hint-sub').textContent =
-      '点击左侧图标打开模块窗口，实时查看曲线与控制采集';
   } catch (e) {
-    hintEl.querySelector('.hint-sub').textContent = '模块列表读取失败：' + e.message;
+    toast('模块列表读取失败：' + e.message);
     setPanelModulesHint('读取失败：' + e.message);
   }
 }
@@ -365,7 +362,6 @@ function openModule(key) {
   }
   focusWindow(w);
   updateTaskbar();
-  updateHint();
   closePanel();
   refreshWindow(w);
 }
@@ -378,7 +374,6 @@ function closeWindow(w) {
   w.el.remove();
   windows.delete(w.key);
   updateTaskbar();
-  updateHint();
 }
 
 function minimizeWindow(w) {
@@ -397,10 +392,6 @@ function focusWindow(w) {
   windows.forEach((o) => o.el.classList.toggle('active', o === w));
   w.el.style.zIndex = ++zCounter;
   updateTaskbar();
-}
-
-function updateHint() {
-  hintEl.classList.toggle('hidden', windows.size > 0);
 }
 
 /* 拖动：标题栏按下后跟随指针，限制在桌面范围内 */
@@ -880,7 +871,6 @@ async function startup() {
   bindEvents();
   updateAuthUI();
   tokenInput.value = getToken();
-  updateHint();
   let auth;
   try {
     auth = await probeAuth();
