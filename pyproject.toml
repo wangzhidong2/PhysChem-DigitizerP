@@ -50,6 +50,7 @@ dependencies = [
     "matplotlib>=3.5.0",                    # 绘图引擎（与 pyqtgraph 至少安装其一）
     "pyqtgraph>=0.13.0",                    # 绘图引擎（与 matplotlib 至少安装其一）
     "bleak>=0.21.0",                        # BLE 无线通信（可选依赖，缺失自动降级）
+    "flask>=3.0",                           # 数据接口插件 flaskserver/（可选依赖，缺失时主页卡片灰显）
 ]
 
 [project.urls]

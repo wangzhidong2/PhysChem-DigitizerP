@@ -104,6 +104,7 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 
 - PyInstaller **必须用 onedir**（不是 onefile）：onefile 每次解压到临时目录，启动慢，且 `sensor_config.json` / `app_config.json` 无法跨次持久化。
 - 传感器模块由 `importlib` 按 `__file__` 相对路径动态加载，PyInstaller 静态分析发现不了，**必须在 spec 的 `datas` 里作为数据文件收集**。
+- `flaskserver/` 数据接口插件依赖 **`flask`（可选依赖）**，已在 `requirements.txt` / `pyproject.toml` 中列出。插件顶层**绝不** `import flask`，用 `importlib.util.find_spec` 延迟探测；未装时主页「数据接口」卡片灰显、不监听端口，主程序行为完全不变。打包时该目录同样整目录收集，并对 `flask` 做 `hiddenimports` 兜底（见 `PhysChem-DigitizerP.spec`）。
 - 无自动化测试、无 CI/CD、无 lint / 类型检查配置。`test_serial.py` 只是手动诊断工具。
 
 ## 6. 约定

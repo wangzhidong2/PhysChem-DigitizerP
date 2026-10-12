@@ -74,6 +74,7 @@ source .venv/bin/activate
 | **matplotlib** | ≥3.5.0 | 数据可视化（默认绘图引擎，与 pyqtgraph 至少安装其一） |
 | **pyqtgraph** | ≥0.13.0 | 高性能交互式绘图（与 matplotlib 至少安装其一） |
 | **numpy** | ≥1.21.0 | 数值计算 |
+| **flask** | ≥3.0 | 数据接口插件 flaskserver/（可选依赖，未安装时主页「数据接口」卡片灰显，程序照常运行） |
 
 ```bash
 pip install PySide6 numpy
@@ -85,10 +86,12 @@ pip install matplotlib pyqtgraph
 pip install PySide6-Fluent-Widgets
 # 可选（BLE 无线通信）:
 pip install bleak
+# 可选（数据接口插件 flaskserver/，供 AI Agent / 浏览器仪表盘）:
+pip install flask
 ```
 或者
 ```bash
-pip install PySide6 PySide6-Fluent-Widgets numpy pyserial matplotlib pyqtgraph bleak
+pip install PySide6 PySide6-Fluent-Widgets numpy pyserial matplotlib pyqtgraph bleak flask
 ```
 或者，项目根目录已提供[requirements.txt](requirements.txt)，包含所有必需与可选依赖。
 在项目根目录（即 `main.py` 所在目录）打开终端，执行：
@@ -104,6 +107,7 @@ pip install pyserial
 pip install pyqtgraph
 pip install matplotlib
 pip install bleak
+pip install flask
 ```
 #### 3.2.4.用 uv 一键管理环境（推荐，可选）
 
