@@ -547,7 +547,7 @@ class HomePageWidget(QWidget):
         密钥 / 局域网 / 鉴权 / 打开仪表盘等完整内容。服务生命周期只由
         开关决定，与卡片展开状态解耦。
         """
-        card = FluentCard("数据接口", expanded=False, icon=FIF.IOT)
+        card = FluentCard("数据接口", expanded=True, icon=FIF.IOT)
         self._data_card = card  # 先持有引用，供构建过程中的 _make_addr_row 等使用
         self._restart_busy = False
 
