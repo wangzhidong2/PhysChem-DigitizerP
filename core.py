@@ -1166,7 +1166,7 @@ class FontPickerDialog(Dialog):
 
     #: 预览文案（中英数混排，便于同时判断中文与西文字形）
     PREVIEW_TEXT = ("永远相信美好的事情即将发生\n"
-                    "The quick brown fox jumps over the lazy dog\n"
+                    "Hello, thank you, are you OK\n"
                     "0123456789  ！？，。、；：（）【】")
 
     def __init__(self, current='', parent=None):

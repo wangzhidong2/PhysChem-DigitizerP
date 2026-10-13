@@ -72,7 +72,7 @@ class ZhSwitchSettingCard(SwitchSettingCard):
 # 公共模块（与各传感器模块共享）
 from core import (
     card_style, primary_btn_style, accent_btn_style,
-    patch_combobox_arrow_flip, CollapsibleCard,
+    patch_combobox_arrow_flip, CollapsibleCard, FluentCard,
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
     ChartPanel, chart_engine_available, resolve_chart_engine,
     clear_sensor_config, export_sensor_config, import_sensor_config, reset_all_config,
@@ -541,47 +541,108 @@ class HomePageWidget(QWidget):
         self._refresh_data_card()
 
     def _build_data_card(self):
-        """数据接口入口卡片：把实验数据开放给 AI Agent 与浏览器仪表盘。
+        """数据接口可折叠卡片（与设置页同款的 FluentCard 折叠交互）。
 
-        卡片上的按钮只负责打开「数据接口」对话框，不在卡片上直接启停。
+        折叠时：标题 + 运行状态 + 数据接口启停开关；展开后显示地址 /
+        密钥 / 局域网 / 鉴权 / 打开仪表盘等完整内容。服务生命周期只由
+        开关决定，与卡片展开状态解耦。
         """
-        card = CardWidget(self)
-        card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.setFixedHeight(76)
-        row = QHBoxLayout(card)
-        row.setContentsMargins(18, 10, 18, 10)
-        row.setSpacing(12)
+        card = FluentCard("数据接口", expanded=False, icon=FIF.IOT)
+        self._data_card = card  # 先持有引用，供构建过程中的 _make_addr_row 等使用
+        self._restart_busy = False
 
-        # 图标：FIF.IOT（设备互联的插口节点图形）。库内没有字面意义的
-        # 插座/插头图标，IOT 是 174 个 FluentIcon 里最接近的一个；
-        # 「允许局域网访问」那张设置卡仍用 FIF.WIFI，两处不再重复
-        icon = IconWidget(FIF.IOT, card)
-        icon.setFixedSize(28, 28)
-        row.addWidget(icon)
-
-        col = QVBoxLayout()
-        col.setSpacing(2)
-        self._data_title = BodyLabel("数据接口", card)
-        self._data_desc = CaptionLabel("把实验数据开放给 AI Agent 与浏览器仪表盘", card)
-        col.addWidget(self._data_title)
-        col.addWidget(self._data_desc)
-        row.addLayout(col, stretch=1)
-
+        # ---- header 右侧：状态点 + 状态文字 + 启停开关（折叠时可见） ----
         self._data_status_dot = QLabel(card)
         self._data_status_dot.setFixedSize(10, 10)
-        row.addWidget(self._data_status_dot)
-        self._data_status_text = CaptionLabel("未运行", card)
-        row.addWidget(self._data_status_text)
+        self._data_status_text = CaptionLabel("未运行")
+        self._sw_server = SwitchButton("数据接口")
+        self._sw_server.setOnText("数据接口")  # 勾选后标签仍显示名称（默认会变成 On）
+        self._sw_server.checkedChanged.connect(self._on_server_switch)
+        card.add_header_widget(self._data_status_dot)
+        card.add_header_widget(self._data_status_text)
+        card.add_header_widget(self._sw_server)
 
-        self._data_btn = PushButton("打开…", card)
-        self._data_btn.setFixedHeight(32)
-        self._data_btn.clicked.connect(self._open_data_dialog)
-        row.addWidget(self._data_btn)
-        card.mousePressEvent = lambda e: self._open_data_dialog()
+        # ---- 内容区（展开后显示） ----
+        card.add_widget(CaptionLabel(
+            "把实验数据开放给 AI Agent 与浏览器仪表盘"))
+
+        self._addr_rows = {}
+        self._addr_rows['local'] = self._make_addr_row(
+            "本机", self._local_url(), copy=True)
+        self._lan_row = self._make_addr_row(
+            "局域网", self._lan_url(), copy=True)
+        self._addr_rows['lan'] = self._lan_row
+        self._token_row = self._make_addr_row(
+            "访问密钥", '', copy=True, regen=True)  # 运行中才显示，文本由刷新回填
+
+        self._sw_lan = SwitchButton("局域网访问")
+        self._sw_lan.setOnText("局域网访问")
+        self._sw_lan.checkedChanged.connect(self._on_lan_switch)
+        card.add_widget(self._sw_lan)
+
+        self._sw_auth = SwitchButton("访问密钥鉴权")
+        self._sw_auth.setOnText("访问密钥鉴权")
+        self._sw_auth.setChecked(bool(app_cfg.serverAuth.value))
+        self._sw_auth.checkedChanged.connect(self._on_auth_switch)
+        card.add_widget(self._sw_auth)
+
+        # ---- 打开仪表盘（仅服务运行中可见） ----
+        open_row = QHBoxLayout()
+        self._open_label = BodyLabel("在浏览器打开")
+        open_row.addWidget(self._open_label)
+        open_row.addStretch()
+        self._open_btn = PrimaryPushButton("打开仪表盘")
+        self._open_btn.clicked.connect(self._open_browser)
+        open_row.addWidget(self._open_btn)
+        self._open_row = QWidget()
+        self._open_row.setLayout(open_row)
+        card.add_widget(self._open_row)
+
+        # ---- flask 未装提示（默认隐藏） ----
+        self._hint = CaptionLabel("")
+        self._hint.setVisible(False)
+        card.add_widget(self._hint)
+
+        # 行距放宽一点，地址/开关行不至于太挤；内容齐了重算一次卡片高度
+        card.body.setContentsMargins(20, 12, 20, 16)
+        card.body.setSpacing(12)
+        card._adjustViewSize()
         return card
 
+    def _make_addr_row(self, name, url, copy=False, regen=False):
+        """卡片内容区的一行「名称 + 只读地址 + 复制(+重生)」。
+
+        复制按钮在点击时读取输入框当前文本（地址会随端口/密钥动态刷新）。
+        """
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        cap = CaptionLabel(name)
+        cap.setFixedWidth(56)
+        h.addWidget(cap)
+        edit = LineEdit()
+        edit.setText(url)
+        edit.setReadOnly(True)
+        edit.setFont(QFont("Consolas", 10))
+        h.addWidget(edit, stretch=1)
+        if copy:
+            btn = PushButton("复制")
+            btn.setFixedHeight(30)
+            btn.clicked.connect(
+                lambda _=False, e=edit: self._copy_to_clipboard(e.text()))
+            h.addWidget(btn)
+        if regen:
+            rbtn = PushButton("重生")
+            rbtn.setFixedHeight(30)
+            rbtn.clicked.connect(self._regen_token)
+            h.addWidget(rbtn)
+            self._token_regen_btn = rbtn
+        row._edit = edit
+        self._data_card.add_widget(row)
+        return row
+
     def _refresh_data_card(self):
-        """按插件可用性与服务状态刷新数据接口卡片。"""
+        """按插件可用性与服务状态刷新数据接口卡片（含动态显示规则）。"""
         plugin = getattr(self, '_data_plugin', None)
         if self._data_card is None:
             return
@@ -589,24 +650,156 @@ class HomePageWidget(QWidget):
         if plugin is None:
             return
         ok, hint = plugin.available()
-        if not ok:
-            self._data_desc.setText(hint)
         running = plugin.is_running()
         color = "#2e7d32" if running else "#9e9e9e"
         self._data_status_dot.setStyleSheet(
             "background-color: %s; border-radius: 5px;" % color)
         self._data_status_text.setText(
-            ("运行中 · %s" % plugin.url) if running else "未运行")
+            ("运行中  %s" % plugin.url) if running else "未运行")
+        # 开关状态回填（不发信号）
+        self._sw_server.blockSignals(True); self._sw_server.setChecked(running); self._sw_server.blockSignals(False)
+        self._sw_server.setEnabled(ok)
+        lan_on = bool(app_cfg.serverLanAccess.value)
+        self._sw_lan.blockSignals(True); self._sw_lan.setChecked(lan_on); self._sw_lan.blockSignals(False)
+        self._sw_lan.setEnabled(ok)
+        # 局域网地址行：仅局域网开关 = 开 且有 IP
+        self._lan_row.setVisible(lan_on and bool(self._lan_url()))
+        self._lan_row._edit.setText(self._lan_url())
+        # 密钥行：仅服务运行中且鉴权开启；鉴权关闭时整行隐藏
+        auth_on = bool(app_cfg.serverAuth.value)
+        self._token_row.setVisible(running and auth_on)
+        self._token_row._edit.setText(self._data_plugin.token or '')
+        # 「在浏览器打开」整行：仅服务运行中
+        self._open_row.setVisible(running)
+        # flask 未装提示
+        self._hint.setText(hint)
+        self._hint.setVisible(not ok)
+        # 行显隐变了，重算卡片高度（否则展开高度停在旧行数，内容被截断）
+        try:
+            self._data_card._adjustViewSize()
+        except Exception:
+            pass
 
-    def _open_data_dialog(self):
-        """打开「数据接口」对话框（插件缺失时不响应）。"""
-        plugin = getattr(self, '_data_plugin', None)
-        if plugin is None:
+    # ---- 数据接口卡片：地址/URL 帮手 ----
+    def _copy_to_clipboard(self, text: str):
+        """把文本拷到系统剪贴板。"""
+        clip = QGuiApplication.clipboard()
+        if clip and text:
+            clip.setText(text)
+
+    def _local_url(self):
+        return 'http://127.0.0.1:%s' % app_cfg.serverPort.value
+
+    def _lan_url(self):
+        ip = lan_ip()
+        if not ip:
+            return ''
+        return 'http://%s:%s' % (ip, app_cfg.serverPort.value)
+
+    # ---- 数据接口卡片：控件行为 ----
+    def _on_server_switch(self, checked):
+        """开 → 启动服务；关 → 停止。flask 未装时置灰不会进到这里。"""
+        if self._restart_busy:
             return
-        dlg = DataAPIDialog(plugin, self.window())
-        dlg.exec()
-        dlg.deleteLater()
+        if checked:
+            ok, msg = self._data_plugin.start(
+                port=app_cfg.serverPort.value,
+                allow_lan=app_cfg.serverLanAccess.value,
+                enable_cors=app_cfg.serverCors.value)
+            if not ok:
+                InfoBar.error(title="启动失败", content=msg, duration=3000,
+                              position=InfoBarPosition.TOP, parent=self.window())
+                self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)  # 回弹
+        else:
+            self._data_plugin.stop()
         self._refresh_data_card()
+
+    def _on_lan_switch(self, checked):
+        """切局域网：先风险确认，确认后写配置并重启服务以重新绑定网卡。"""
+        if self._restart_busy:
+            return
+        ip = lan_ip()
+        if checked and not ip:
+            InfoBar.warning(title="无法开启", content="未检测到局域网网卡",
+                            duration=3000, position=InfoBarPosition.TOP,
+                            parent=self.window())
+            self._sw_lan.blockSignals(True); self._sw_lan.setChecked(False); self._sw_lan.blockSignals(False)
+            return
+        if checked:
+            box = MessageBox(
+                "开启局域网访问？",
+                "同一网络内的任何人都能访问并控制本机实验。\n请仅在可信网络中开启。",
+                self.window())
+            if not box.exec():
+                self._sw_lan.blockSignals(True); self._sw_lan.setChecked(False); self._sw_lan.blockSignals(False)
+                return
+        app_cfg.serverLanAccess.value = bool(checked)
+        # 重启服务以重新绑定网卡；期间禁用两个开关防连点
+        self._restart_busy = True
+        self._sw_server.setEnabled(False)
+        self._sw_lan.setEnabled(False)
+        if self._data_plugin.is_running():
+            self._data_plugin.stop()
+            ok, msg = self._data_plugin.start(
+                port=app_cfg.serverPort.value,
+                allow_lan=bool(checked),
+                enable_cors=app_cfg.serverCors.value)
+            if not ok:
+                InfoBar.error(title="重启失败", content=msg, duration=3000,
+                              position=InfoBarPosition.TOP, parent=self.window())
+                self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)
+        self._restart_busy = False
+        self._sw_server.setEnabled(True)
+        self._sw_lan.setEnabled(True)
+        self._refresh_data_card()
+
+    def _on_auth_switch(self, checked):
+        """切鉴权开关：写配置并重启服务使其生效（重启期间禁用开关防连点）。"""
+        if self._restart_busy:
+            return
+        app_cfg.serverAuth.value = bool(checked)
+        self._restart_busy = True
+        for sw in (self._sw_server, self._sw_lan, self._sw_auth):
+            sw.setEnabled(False)
+        if self._data_plugin.is_running():
+            self._data_plugin.stop()
+            ok, msg = self._data_plugin.start(
+                port=app_cfg.serverPort.value,
+                allow_lan=app_cfg.serverLanAccess.value,
+                enable_cors=app_cfg.serverCors.value)
+            if not ok:
+                InfoBar.error(title="重启失败", content=msg, duration=3000,
+                              position=InfoBarPosition.TOP, parent=self.window())
+                self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)
+        self._restart_busy = False
+        for sw in (self._sw_server, self._sw_lan, self._sw_auth):
+            sw.setEnabled(True)
+        self._refresh_data_card()
+
+    def _regen_token(self):
+        """重生成访问密钥（仅运行中可用），旧密钥立即失效。"""
+        if not self._data_plugin.is_running():
+            return
+        token = self._data_plugin.regenerate_token()
+        self._data_plugin.stop()
+        self._data_plugin.start(port=app_cfg.serverPort.value,
+                                allow_lan=app_cfg.serverLanAccess.value,
+                                enable_cors=app_cfg.serverCors.value,
+                                token=token)
+        self._refresh_data_card()
+        InfoBar.success(title="密钥已重生", content="旧密钥立即失效",
+                        duration=2000, position=InfoBarPosition.TOP,
+                        parent=self.window())
+
+    def _open_browser(self):
+        url = self._data_plugin.url or self._local_url()
+        # 鉴权开启时自动带上密钥：浏览器端 app.js 会读取 ?token= 免手输
+        if app_cfg.serverAuth.value:
+            token = self._data_plugin.token or ''
+            if token:
+                sep = '&' if '?' in url else '?'
+                url = f"{url}{sep}token={token}"
+        QDesktopServices.openUrl(QUrl(url))
 
     def _load_platform_icon(self, svg_name, fallback=FIF.CODE):
         """加载本地 SVG 平台 logo，失败回退 FluentIcon。"""
@@ -1115,248 +1308,6 @@ class ProjectInfoDialog(MessageBoxBase):
             }}
         """.format(sep=c['separator'], bg=c['content_bg'],
                    handle=c['text_hint'], handle_hover=c['text_secondary']))
-
-
-# ============================================================
-# 「数据接口」对话框（主页入口卡片打开）
-# ============================================================
-class DataAPIDialog(MessageBoxBase):
-    """数据接口对话框：地址展示 / 密钥 / 启停开关 / 局域网开关 / 打开仪表盘。
-
-    基于 MessageBoxBase（与 CalibrationMessageBox 同套路）。关闭对话框
-    只关窗口不停服务——服务状态由开关决定，与对话框生命周期解耦。
-    """
-
-    def __init__(self, plugin, parent=None):
-        super().__init__(parent)
-        self._plugin = plugin
-        self._restart_busy = False
-        self.yesButton.hide()
-        self.cancelButton.setText("关闭")
-
-        title = SubtitleLabel("数据接口")
-        self.viewLayout.addWidget(title)
-
-        # ---- 地址区 ----
-        self._addr_rows = {}
-        self._lan_row = self._make_addr_row(
-            "局域网", self._lan_url(), copy=True)
-        self._addr_rows['local'] = self._make_addr_row(
-            "本机", self._local_url(), copy=True)
-        self._addr_rows['lan'] = self._lan_row
-        self._token_row = self._make_addr_row(
-            "访问密钥", self._plugin.token, copy=True, regen=True)
-
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.HLine)
-        self.viewLayout.addWidget(sep1)
-
-        # ---- 开关区 ----
-        self._sw_server = SwitchButton("数据接口")
-        self._sw_server.setOnText("数据接口")  # 勾选后标签仍显示名称（默认会变成 On）
-        self._sw_server.checkedChanged.connect(self._on_server_switch)
-        self.viewLayout.addWidget(self._sw_server)
-
-        self._sw_lan = SwitchButton("局域网访问")
-        self._sw_lan.setOnText("局域网访问")
-        self._sw_lan.checkedChanged.connect(self._on_lan_switch)
-        self.viewLayout.addWidget(self._sw_lan)
-
-        self._sw_auth = SwitchButton("访问密钥鉴权")
-        self._sw_auth.setOnText("访问密钥鉴权")
-        self._sw_auth.setChecked(bool(app_cfg.serverAuth.value))
-        self._sw_auth.checkedChanged.connect(self._on_auth_switch)
-        self.viewLayout.addWidget(self._sw_auth)
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.HLine)
-        self.viewLayout.addWidget(sep2)
-
-        # ---- 打开仪表盘 ----
-        open_row = QHBoxLayout()
-        self._open_label = BodyLabel("在浏览器打开")
-        open_row.addWidget(self._open_label)
-        open_row.addStretch()
-        self._open_btn = PrimaryPushButton("打开仪表盘")
-        self._open_btn.clicked.connect(self._open_browser)
-        open_row.addWidget(self._open_btn)
-        self._open_row = QWidget()
-        self._open_row.setLayout(open_row)
-        self.viewLayout.addWidget(self._open_row)
-
-        ok, hint = plugin.available()
-        if not ok:
-            self._sw_server.setEnabled(False)
-            self._sw_lan.setEnabled(False)
-            self._hint = CaptionLabel(hint)
-            self.viewLayout.addWidget(self._hint)
-        self._refresh()
-
-    # ---- 地址/URL 帮手 ----
-    def _copy_to_clipboard(self, text: str):
-        """把文本拷到系统剪贴板（弹窗内自持，不依赖主窗口方法）。"""
-        clip = QGuiApplication.clipboard()
-        if clip and text:
-            clip.setText(text)
-
-    def _local_url(self):
-        return 'http://127.0.0.1:%s' % app_cfg.serverPort.value
-
-    def _lan_url(self):
-        ip = lan_ip()
-        if not ip:
-            return ''
-        return 'http://%s:%s' % (ip, app_cfg.serverPort.value)
-
-    def _make_addr_row(self, name, url, copy=False, regen=False):
-        """一行「名称 + 只读地址 + 复制(+重生)」。url 为空则整行隐藏。"""
-        row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(0, 0, 0, 0)
-        cap = CaptionLabel(name)
-        cap.setFixedWidth(56)
-        h.addWidget(cap)
-        edit = LineEdit()
-        edit.setText(url)
-        edit.setReadOnly(True)
-        edit.setFont(QFont("Consolas", 10))
-        h.addWidget(edit, stretch=1)
-        if copy:
-            btn = PushButton("复制")
-            btn.setFixedHeight(30)
-            btn.clicked.connect(
-                lambda _=False, t=url or edit.text(): self._copy_to_clipboard(t))
-            h.addWidget(btn)
-        if regen:
-            rbtn = PushButton("重生")
-            rbtn.setFixedHeight(30)
-            rbtn.clicked.connect(self._regen_token)
-            h.addWidget(rbtn)
-            self._token_regen_btn = rbtn
-        row._edit = edit
-        self.viewLayout.addWidget(row)
-        return row
-
-    # ---- 控件行为 ----
-    def _on_server_switch(self, checked):
-        """开 → 启动服务；关 → 停止。flask 未装时置灰不会进到这里。"""
-        if self._restart_busy:
-            return
-        if checked:
-            ok, msg = self._plugin.start(
-                port=app_cfg.serverPort.value,
-                allow_lan=app_cfg.serverLanAccess.value,
-                enable_cors=app_cfg.serverCors.value)
-            if not ok:
-                InfoBar.error(title="启动失败", content=msg, duration=3000,
-                              position=InfoBarPosition.TOP, parent=self)
-                self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)  # 回弹
-        else:
-            self._plugin.stop()
-        self._refresh()
-
-    def _on_lan_switch(self, checked):
-        """切局域网：先风险确认，确认后写配置并重启服务以重新绑定网卡。"""
-        if self._restart_busy:
-            return
-        ip = lan_ip()
-        if checked and not ip:
-            InfoBar.warning(title="无法开启", content="未检测到局域网网卡",
-                            duration=3000, position=InfoBarPosition.TOP,
-                            parent=self)
-            self._sw_lan.blockSignals(True); self._sw_lan.setChecked(False); self._sw_lan.blockSignals(False)
-            return
-        if checked:
-            box = MessageBox(
-                "开启局域网访问？",
-                "同一网络内的任何人都能访问并控制本机实验。\n请仅在可信网络中开启。",
-                self)
-            if not box.exec():
-                self._sw_lan.blockSignals(True); self._sw_lan.setChecked(False); self._sw_lan.blockSignals(False)
-                return
-        app_cfg.serverLanAccess.value = bool(checked)
-        # 重启服务以重新绑定网卡；期间禁用两个开关防连点
-        self._restart_busy = True
-        self._sw_server.setEnabled(False)
-        self._sw_lan.setEnabled(False)
-        if self._plugin.is_running():
-            self._plugin.stop()
-            ok, msg = self._plugin.start(
-                port=app_cfg.serverPort.value,
-                allow_lan=bool(checked),
-                enable_cors=app_cfg.serverCors.value)
-            if not ok:
-                InfoBar.error(title="重启失败", content=msg, duration=3000,
-                              position=InfoBarPosition.TOP, parent=self)
-                self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)
-        self._restart_busy = False
-        self._sw_server.setEnabled(True)
-        self._sw_lan.setEnabled(True)
-        self._refresh()
-
-    def _on_auth_switch(self, checked):
-        """切鉴权开关：写配置并重启服务使其生效（重启期间禁用开关防连点）。"""
-        if self._restart_busy:
-            return
-        app_cfg.serverAuth.value = bool(checked)
-        self._restart_busy = True
-        for sw in (self._sw_server, self._sw_lan, self._sw_auth):
-            sw.setEnabled(False)
-        if self._plugin.is_running():
-            self._plugin.stop()
-            ok, msg = self._plugin.start(
-                port=app_cfg.serverPort.value,
-                allow_lan=app_cfg.serverLanAccess.value,
-                enable_cors=app_cfg.serverCors.value)
-            if not ok:
-                InfoBar.error(title="重启失败", content=msg, duration=3000,
-                              position=InfoBarPosition.TOP, parent=self)
-                self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)
-        self._restart_busy = False
-        for sw in (self._sw_server, self._sw_lan, self._sw_auth):
-            sw.setEnabled(True)
-        self._refresh()
-
-    def _regen_token(self):
-        """重生成访问密钥（仅运行中可用），旧密钥立即失效。"""
-        if not self._plugin.is_running():
-            return
-        token = self._plugin.regenerate_token()
-        self._plugin.stop()
-        self._plugin.start(port=app_cfg.serverPort.value,
-                           allow_lan=app_cfg.serverLanAccess.value,
-                           enable_cors=app_cfg.serverCors.value,
-                           token=token)
-        self._refresh()
-        InfoBar.success(title="密钥已重生", content="旧密钥立即失效",
-                        duration=2000, position=InfoBarPosition.TOP,
-                        parent=self)
-
-    def _open_browser(self):
-        url = self._plugin.url or self._local_url()
-        # 鉴权开启时自动带上密钥：浏览器端 app.js 会读取 ?token= 免手输
-        if app_cfg.serverAuth.value:
-            token = self._plugin.token or ''
-            if token:
-                sep = '&' if '?' in url else '?'
-                url = f"{url}{sep}token={token}"
-        QDesktopServices.openUrl(QUrl(url))
-
-    # ---- 动态显示规则（统一由 _refresh 驱动） ----
-    def _refresh(self):
-        running = self._plugin.is_running()
-        self._sw_server.blockSignals(True); self._sw_server.setChecked(running); self._sw_server.blockSignals(False)
-        lan_on = bool(app_cfg.serverLanAccess.value)
-        self._sw_lan.blockSignals(True); self._sw_lan.setChecked(lan_on); self._sw_lan.blockSignals(False)
-        self._sw_lan.setEnabled(self._plugin.available()[0])
-        # 局域网地址行：仅局域网开关 = 开 且有 IP
-        self._lan_row.setVisible(lan_on and bool(self._lan_url()))
-        self._lan_row._edit.setText(self._lan_url())
-        # 密钥行：仅服务运行中且鉴权开启；鉴权关闭时整行隐藏
-        auth_on = bool(app_cfg.serverAuth.value)
-        self._token_row.setVisible(running and auth_on)
-        self._token_row._edit.setText(self._plugin.token or '')
-        self._open_row.setVisible(running)
 
 
 # ============================================================
