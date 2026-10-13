@@ -335,6 +335,9 @@ body {
 .window-control:hover { background: var(--taskbar-hover-bg); }
 .window-control.close:hover { background: var(--err-color); color: #fff; }
 
+/* 最大化/还原按钮的 SVG 图标尺寸（行内切换后仍生效） */
+.window-control svg { width: 11px; height: 11px; display: block; margin: auto; }
+
 /* 窗口内容 */
 .window-content {
   flex: 1;

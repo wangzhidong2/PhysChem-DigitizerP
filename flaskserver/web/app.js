@@ -364,6 +364,13 @@ function defaultRect() {
   return { x, y, w: W, h: H };
 }
 
+/* 最大化 / 还原按钮图标（SVG 内嵌，避免系统字体缺「▢」等字形显示成方框） */
+const MAX_ICON = ('<svg viewBox="0 0 11 11" fill="none" stroke="currentColor">'
+  + '<rect x="0.5" y="0.5" width="10" height="10" stroke-width="1"/></svg>');
+const RESTORE_ICON = ('<svg viewBox="0 0 11 11" fill="none" stroke="currentColor">'
+  + '<rect x="0.5" y="2.5" width="8" height="8" stroke-width="1"/>'
+  + '<path d="M2.5 2.5 V0.5 H10.5 V8.5 H8.5" stroke-width="1"/></svg>');
+
 function createWindow(key) {
   const m = moduleMap.get(key) || { key, name: key };
   const r = defaultRect();
@@ -386,8 +393,9 @@ function createWindow(key) {
   bar.appendChild(title);
   const controls = el('div', 'window-controls');
   const btnMin = el('button', 'window-control min', '─');
-  const btnMax = el('button', 'window-control max', '▢');
+  const btnMax = el('button', 'window-control max');
   const btnClose = el('button', 'window-control close', '✕');
+  btnMax.innerHTML = MAX_ICON;
   btnMin.title = '最小化';
   btnMax.title = '最大化 / 还原';
   btnClose.title = '关闭';
@@ -438,6 +446,7 @@ function createWindow(key) {
     state: { minimized: false, maximized: false },
     els: {
       title, state: title.querySelector('.win-state'), stats: statsMap, toolbar, chart: chartEl, params,
+      max: btnMax,
       conn: {
         row: conn, mode: connMode, port: connPort, refresh: connRefresh, apply: connApply,
       },
@@ -500,6 +509,9 @@ function minimizeWindow(w) {
 function toggleMaximize(w) {
   w.state.maximized = !w.state.maximized;
   w.el.classList.toggle('maximized', w.state.maximized);
+  // 图标随状态切换：单框=最大化，双框=还原
+  const svg = w.els.max && w.els.max.querySelector('svg');
+  if (svg) svg.outerHTML = (w.state.maximized ? RESTORE_ICON : MAX_ICON);
   if (w.chart) setTimeout(() => w.chart && w.chart.resize(), 260);
 }
 
