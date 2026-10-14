@@ -10,9 +10,9 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
+## [操作手册用户版](./docs/操作手册.md)
 
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/8b40706c-3ba8-4e17-bb6f-1860efdb9a05/image.png 'image.png')
-[操作手册用户版](./docs/操作手册.md)
 
 >## 1.写在前面
 >雷军：“一个小时后，动手能力强的MIUI负责人洪锋便做好一台净化器——他仅在家中的电风扇里面挂了三层过滤网。”
