@@ -2,6 +2,7 @@
 # PhysChem-DigitizerP
 
 基于 Arduino/ESP32与Python开发的低成本理化实验数字化采集系统
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/8b40706c-3ba8-4e17-bb6f-1860efdb9a05/image.png 'image.png')
 
 [![AtomGitStars](https://www.gitcode.com/wangzhidong2/PhysChem-DigitizerP/star/new_badge.svg)](https://www.gitcode.com/wangzhidong2/PhysChem-DigitizerP/)
 
@@ -27,8 +28,7 @@
 - **现代化界面**：`PySide6 `+`Fluent-widgets`库图形界面，UI美观，尽可能的复刻`fluent design`；**字体可换**（内嵌 MiSans，也可从系统字体里任选，见 6.9）
 - **数据接口**：可选插件把数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**，手机也能看（见 6.10）
 
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/1f6418ee-c7c5-48d0-948f-c704f9c59442/image.png 'image.png')
-
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/5e684b3a-bff0-4c48-8284-f5a23525a62a/image.png 'image.png')
 ## 3.快速上手上位机
 ### 3.1.使用预打包文件（无需配置环境）
 #### 3.1.1.在 releases 页面下载打包好的程序
@@ -334,6 +334,7 @@ python main.py
 ### 6.8.运行日志（排障用）
 
 运行日志**始终在控制台显示**（启动信息、模块加载、配置读写、连接/采集/校准等提示照常输出）；**设置 → 个性化 → 运行日志**开关（**默认开启**）决定是否同时写入项目目录下的 `logs.json`（JSON Lines 格式，每行一个 JSON 对象，跨次运行追加）。
+
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/3211fb3d-8d7c-41de-9d1e-531a1c0d4999/image.png 'image.png')
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/4d512b66-a5de-4b75-b9e0-03ed314908d9/image.png 'image.png')
 
@@ -359,9 +360,8 @@ python main.py
 ### 6.10.数据接口与浏览器仪表盘（flaskserver）
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/f90dec07-d72d-49e6-b33b-defa0a472f4f/image.png 'image.png')
 把实验数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。这是**可选插件**：删掉整个 `flaskserver/` 目录，主程序行为完全不变（主页卡片消失、不占端口）。
-![QQ20261011-143516.png](https://raw.gitcode.com/user-images/assets/9825261/3a9ce727-1eb7-4438-865e-2ff738cd9eee/QQ20261011-143516.png 'QQ20261011-143516.png')
 **开启**：主页 →「数据接口」卡片 →「打开…」→ 打开「数据接口」开关（默认监听 `http://127.0.0.1:8765`）；浏览器访问该地址即为实时仪表盘，首次开启自动生成访问密钥。
-![QQ_1791700566694.png](https://raw.gitcode.com/user-images/assets/9825261/5bd0a52b-06a8-4678-98f3-70124e0ad7dc/QQ_1791700566694.png 'QQ_1791700566694.png')
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/55356cfd-de46-44d8-bc32-f472ef38535a/image.png 'image.png')
 ![QQ_1791700657467.png](https://raw.gitcode.com/user-images/assets/9825261/11b6548a-4571-489c-afa3-8a1a1d7778d3/QQ_1791700657467.png 'QQ_1791700657467.png')
 | 能力 | 说明 |
 |------|------|
@@ -371,8 +371,8 @@ python main.py
 | **MCP 代理** | `flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
 
 仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
-![QQ_1791700688908.png](https://raw.gitcode.com/user-images/assets/9825261/9100f408-3023-44ee-916e-d3c1fb48a167/QQ_1791700688908.png 'QQ_1791700688908.png')
-⚠️ 「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机／其他电脑可访问）。**同一网络内的任何人都能查看并控制实验，请仅在可信网络中开启。**
+
+⚠️ 「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机／其他电脑可访问）。**同一网络内的任何人都能查看并控制实验，甚至可能通过漏洞提权，请仅在可信网络中开启。**
 
 ```bash
 pip install flask          # 插件依赖（可选；未装时主页「数据接口」卡片灰显，程序照常运行）
@@ -436,16 +436,14 @@ python test_serial.py
 
 ## 10.软件界面
 
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/f9f05bf8-eff3-44c9-a936-0506706a98b7/image.png 'image.png')
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/b33d6c6d-4ca0-4fda-916b-e172bcdd46a5/image.png 'image.png')
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/bb43d395-bfac-457f-b4f4-c64c6dfdf07b/image.png 'image.png')
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/e889a4f2-e905-4b78-ad44-3b16f0306423/image.png 'image.png')
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/688d7b86-ef42-4db4-a0b7-e4548eb0715e/image.png 'image.png')
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/f5efa7dd-d849-4b55-9987-3f4d5a8cc738/image.png 'image.png')
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/2079c7dc-a898-4b7e-befe-b9b0215b053b/image.png 'image.png')
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/fa47701f-39b1-4a8a-846f-303207164ae2/image.png 'image.png')
-
-
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/e7d3888f-da91-4db5-aee3-5100408917c3/image.png 'image.png')  主页
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/7313933f-bb07-4691-9939-af60d01c1896/image.png 'image.png')  ph
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/cd961db4-69ad-4a86-91b8-7c1bf6d550c6/image.png 'image.png') 力
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/cc8116e5-2a32-4b76-aacf-31abf2cd98ee/image.png 'image.png') 电压
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/97d87d7d-ab8a-44ba-960a-87556c20454a/image.png 'image.png') 电流
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/6298a83d-4c05-43bc-9ec9-ec97bf0c0469/image.png 'image.png') 距离
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/c18e0bc1-a84f-43b3-baf0-523489428314/image.png 'image.png') 速度
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/3b7ce065-f78b-4fa0-8c01-cf3352e6de0c/image.png 'image.png') 设置
 ## 许可证
 
 本项目采用 `GNU General Public License v3.0 `- 详见 [LICENSE](LICENSE) 文件
