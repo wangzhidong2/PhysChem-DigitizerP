@@ -1,15 +1,20 @@
-![Screenshot_20260901_222222.jpg](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/blob/main/docs/images/icon.svg)
 # PhysChem-DigitizerP
 
-基于 Arduino/ESP32与Python开发的低成本理化实验数字化采集系统
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/8b40706c-3ba8-4e17-bb6f-1860efdb9a05/image.png 'image.png')
+## 基于 Arduino/ESP32与Python开发的低成本理化实验数字化采集系统
+![Screenshot_20260901_222222.jpg](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/blob/main/docs/images/icon.svg)
 
+## **项目logo**
 [![AtomGitStars](https://www.gitcode.com/wangzhidong2/PhysChem-DigitizerP/star/new_badge.svg)](https://www.gitcode.com/wangzhidong2/PhysChem-DigitizerP/)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
+
+
+
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/8b40706c-3ba8-4e17-bb6f-1860efdb9a05/image.png 'image.png')
+
 
 >## 1.写在前面
 >雷军：“一个小时后，动手能力强的MIUI负责人洪锋便做好一台净化器——他仅在家中的电风扇里面挂了三层过滤网。”
