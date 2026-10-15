@@ -1,7 +1,7 @@
 // Copyright (c) 2026 wangzhidong2
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 注意：本文件是 voltage/ESP32_Voltage_Sensor.ino 的副本，
+// 注意：本文件是 voltage/ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino 的副本，
 // 「双板分测」模式下的电压板固件（只测电压）。修改请同步更新原文件。
 
 // ============================================================

@@ -233,41 +233,44 @@ PhysChem-DigitizerP/
 │       └── echarts.min.js      # 图表库（本地内置，不联网）
 ├── docs/
 │   └── images/                 # 文档图片
-└── sensors/                    # 下位机 .ino + 上位机 .py 同目录
+└── sensors/                    # 下位机固件 + 上位机 .py 同一传感器目录
     ├── README.md               # 各传感器固件与模块总览
     ├── ultrasonic/
     │   ├── README.md           # 使用说明（接线/校准/原理/FAQ）
-    │   ├── HC-SR04esp32.ino    # ESP32 固件
-    │   ├── HC-SR04esp8266.ino  # ESP8266 固件
-    │   ├── csbwithbt.ino       # ESP32-S3 + BLE 固件
     │   ├── ultrasonic_displacement.py  # 位移测量上位机模块
-    │   └── ultrasonic_velocity.py      # 速度测量上位机模块
+    │   ├── ultrasonic_velocity.py      # 速度测量上位机模块
+    │   ├── HC-SR04esp32/HC-SR04esp32.ino        # ESP32 固件
+    │   ├── HC-SR04esp8266/HC-SR04esp8266.ino    # ESP8266 固件
+    │   └── csbwithbt/csbwithbt.ino              # ESP32-S3 + BLE 固件
     ├── ph/
     │   ├── README.md           # 使用说明（接线/多模式校准/电极保养/FAQ）
-    │   ├── ph esp32.ino        # ESP32-S3 固件
     │   ├── schematic.pdf       # PH 传感器原理图
-    │   └── ph_sensor.py        # pH 上位机模块
+    │   ├── ph_sensor.py        # pH 上位机模块
+    │   └── ph_esp32/ph_esp32.ino                # ESP32-S3 固件
     ├── force/
     │   ├── README.md           # 使用说明（接线/去皮校准/串口命令/FAQ）
-    │   ├── force.ino           # ESP32-S3 HX711 固件
     │   ├── force_sensor.py     # 力/质量上位机模块
+    │   ├── force/force.ino     # ESP32-S3 HX711 固件
     │   └── vendor-docs/        # HX711 商家资料（原「资料（HX711称重模块商家提供的）」）
     ├── voltage/
     │   ├── README.md           # 使用说明（接线/分压扩展/ADC配置/FAQ）
-    │   ├── ESP32_Voltage_Sensor.ino  # ESP32-S3 内置 ADC 固件
-    │   ├── HX711_Voltage.ino         # HX711 24 位 ADC 固件
-    │   ├── ADS1115_Voltage.ino       # ADS1115 16 位 ADC 固件
-    │   └── voltage_sensor.py         # 电压上位机模块（支持 HX711 / ADS1115 模式）
+    │   ├── voltage_sensor.py   # 电压上位机模块（支持 HX711 / ADS1115 模式）
+    │   ├── ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino  # ESP32-S3 内置 ADC 固件
+    │   ├── HX711_Voltage/HX711_Voltage.ino                # HX711 24 位 ADC 固件
+    │   └── ADS1115_Voltage/ADS1115_Voltage.ino            # ADS1115 16 位 ADC 固件
     ├── current/                # ACS712 电流（5A/20A/30A，AC/DC，零点校准/去皮）
     │   ├── README.md           # 使用说明（接线/量程/零点校准/FAQ）
-    │   ├── ESP32_ADC_Raw_Data.ino   # ESP32-S3 固件
-    │   └── current_sensor.py        # 电流上位机模块（5A/20A/30A 量程，AC/DC）
+    │   ├── current_sensor.py   # 电流上位机模块（5A/20A/30A 量程，AC/DC）
+    │   └── ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino      # ESP32-S3 固件
     └── electronics/            # 欧姆定律 + 电功率（上位机模块开发中）
-        ├── README.md               # 使用说明（接线/校准/双板接线）
-        ├── VI_ESP32_ADC.ino        # 电压(内置ADC)+ACS712电流 一体固件
-        ├── VI_ADS1115.ino          # 电压(ADS1115 16位)+ACS712电流 一体固件
-        ├── VI_HX711.ino            # 电压(HX711 24位)+ACS712电流 一体固件
-        └── V_*.ino / I_ACS712.ino  # 双板分测单通道副本（电压/电流各一板）
+        ├── README.md           # 使用说明（接线/校准/双板接线）
+        ├── VI_ESP32_ADC/VI_ESP32_ADC.ino   # 电压(内置ADC)+ACS712电流 一体固件
+        ├── VI_ADS1115/VI_ADS1115.ino       # 电压(ADS1115 16位)+ACS712电流 一体固件
+        ├── VI_HX711/VI_HX711.ino           # 电压(HX711 24位)+ACS712电流 一体固件
+        ├── V_ESP32_ADC/V_ESP32_ADC.ino     # 双板分测：电压板（内置 ADC）
+        ├── V_ADS1115/V_ADS1115.ino         # 双板分测：电压板（ADS1115 16 位）
+        ├── V_HX711/V_HX711.ino             # 双板分测：电压板（HX711 24 位）
+        └── I_ACS712/I_ACS712.ino           # 双板分测：电流板（ACS712）
 ```
 
 > 模块加载机制、识别区格式与添加新模块的完整教程请参考 [AGENTS.md](AGENTS.md)。

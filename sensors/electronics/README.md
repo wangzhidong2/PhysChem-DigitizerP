@@ -33,10 +33,10 @@
 
 | 固件 | 来源 | 用途 |
 |------|------|------|
-| `V_ESP32_ADC.ino` | `voltage/ESP32_Voltage_Sensor.ino` | 电压板（内置 ADC，GPIO1） |
-| `V_ADS1115.ino` | `voltage/ADS1115_Voltage.ino` | 电压板（ADS1115 16 位） |
-| `V_HX711.ino` | `voltage/HX711_Voltage.ino` | 电压板（HX711 24 位） |
-| `I_ACS712.ino` | `current/ESP32_ADC_Raw_Data.ino` | 电流板（ACS712 → GPIO1） |
+| `V_ESP32_ADC.ino` | `voltage/ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino` | 电压板（内置 ADC，GPIO1） |
+| `V_ADS1115.ino` | `voltage/ADS1115_Voltage/ADS1115_Voltage.ino` | 电压板（ADS1115 16 位） |
+| `V_HX711.ino` | `voltage/HX711_Voltage/HX711_Voltage.ino` | 电压板（HX711 24 位） |
+| `I_ACS712.ino` | `current/ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino` | 电流板（ACS712 → GPIO1） |
 
 > ⚠️ 它们是副本：改动请同步回原件（或改原件后重新复制），避免两处内容不一致。
 

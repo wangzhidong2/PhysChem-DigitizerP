@@ -67,7 +67,7 @@ OUT  ─── R1 (10kΩ) ─┬──→  GPIO1
 
 ## 4.固件与数据格式
 
-固件：`ESP32_ADC_Raw_Data.ino`（ESP32-S3）
+固件：`ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino`（ESP32-S3）
 
 | 项 | 值 |
 |----|-----|
@@ -128,7 +128,7 @@ OUT  ─── R1 (10kΩ) ─┬──→  GPIO1
 
 下拉框有三项：**有线串口 / BLE蓝牙 / 模拟器**。
 
-本目录的 `ESP32_ADC_Raw_Data.ino` 只走 USB 串口，不含 BLE 广播。要无线连接得自己加 NUS（Nordic UART Service，`6E400001-B5A3-F393-E0A9-E50E24DCCA9E`）骨架，`ultrasonic/csbwithbt.ino` 可以拿来参考。没装 `bleak` 时该项灰显并标注「（未安装bleak）」；没装 pyserial 时自动切到模拟器模式。
+本目录的 `ESP32_ADC_Raw_Data.ino` 只走 USB 串口，不含 BLE 广播。要无线连接得自己加 NUS（Nordic UART Service，`6E400001-B5A3-F393-E0A9-E50E24DCCA9E`）骨架，`ultrasonic/csbwithbt/csbwithbt.ino` 可以拿来参考。没装 `bleak` 时该项灰显并标注「（未安装bleak）」；没装 pyserial 时自动切到模拟器模式。
 
 ### 7.2.参数配置
 

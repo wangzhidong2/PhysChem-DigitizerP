@@ -8,33 +8,38 @@
 sensors/
 ├── README.md                                # 本文件
 ├── ultrasonic/                              # HC-SR04 超声波
-│   ├── HC-SR04esp32.ino                     # ESP32 固件
-│   ├── HC-SR04esp8266.ino                   # ESP8266 固件
-│   ├── csbwithbt.ino                        # ESP32-S3 + BLE 固件
 │   ├── ultrasonic_displacement.py           # 位移测量
-│   └── ultrasonic_velocity.py               # 速度测量
+│   ├── ultrasonic_velocity.py               # 速度测量
+│   ├── HC-SR04esp32/HC-SR04esp32.ino        # ESP32 固件
+│   ├── HC-SR04esp8266/HC-SR04esp8266.ino    # ESP8266 固件
+│   └── csbwithbt/csbwithbt.ino              # ESP32-S3 + BLE 固件
 ├── ph/
-│   ├── ph esp32.ino                         # ESP32-S3 固件
-│   └── ph_sensor.py
+│   ├── ph_sensor.py
+│   └── ph_esp32/ph_esp32.ino                # ESP32-S3 固件
 ├── force/
-│   ├── force.ino                            # ESP32-S3 固件
 │   ├── force_sensor.py
+│   ├── force/force.ino                      # ESP32-S3 固件
 │   └── vendor-docs/                         # HX711 商家资料
 ├── voltage/
-│   ├── ESP32_Voltage_Sensor.ino             # 内置 ADC
-│   ├── HX711_Voltage.ino                    # HX711 24 位
-│   ├── ADS1115_Voltage.ino                  # ADS1115 16 位
-│   └── voltage_sensor.py
+│   ├── voltage_sensor.py
+│   ├── ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino  # 内置 ADC
+│   ├── HX711_Voltage/HX711_Voltage.ino                # HX711 24 位
+│   └── ADS1115_Voltage/ADS1115_Voltage.ino            # ADS1115 16 位
 ├── current/
-│   ├── ESP32_ADC_Raw_Data.ino               # ESP32-S3 固件
-│   └── current_sensor.py
+│   ├── current_sensor.py
+│   └── ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino      # ESP32-S3 固件
 └── electronics/                             # 欧姆定律 + 电功率（上位机模块开发中）
-    ├── VI_ESP32_ADC.ino                      # 电压(内置ADC)+ACS712 一体固件
-    ├── VI_ADS1115.ino                        # 电压(ADS1115 16位)+ACS712 一体固件
-    ├── VI_HX711.ino                          # 电压(HX711 24位)+ACS712 一体固件
-    ├── V_*.ino / I_ACS712.ino                # 双板分测单通道副本
-    └── README.md                             # 接线/校准说明
+    ├── README.md                             # 接线/校准说明
+    ├── VI_ESP32_ADC/VI_ESP32_ADC.ino         # 电压(内置ADC)+ACS712 一体固件
+    ├── VI_ADS1115/VI_ADS1115.ino             # 电压(ADS1115 16位)+ACS712 一体固件
+    ├── VI_HX711/VI_HX711.ino                 # 电压(HX711 24位)+ACS712 一体固件
+    ├── V_ESP32_ADC/V_ESP32_ADC.ino           # 双板分测：电压板（内置 ADC）
+    ├── V_ADS1115/V_ADS1115.ino               # 双板分测：电压板（ADS1115）
+    ├── V_HX711/V_HX711.ino                   # 双板分测：电压板（HX711）
+    └── I_ACS712/I_ACS712.ino                 # 双板分测：电流板（ACS712）
 ```
+
+> 每个固件都放在**与其同名的 sketch 子目录**里（如 `force/force/force.ino`）——这是 Arduino IDE 的硬性要求，因此这些固件**可以直接在 IDE 里打开编译**，不必再新建 sketch 粘贴。新增固件请沿用此约定。
 
 ## 2.支持的传感器
 

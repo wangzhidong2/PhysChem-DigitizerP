@@ -228,12 +228,12 @@ loop() 每 500ms:                    ▼
 
 | 固件 | 基于的串口版 | 设备 ID | 端口 | 备注 |
 |---|---|---|---|---|
-| `sensors/ultrasonic/HC-SR04esp32_wifi/HC-SR04esp32_wifi.ino` | `HC-SR04esp32.ino` | `ultrasonic` | 8800 | 位移 + 速度两个模块共用；时间戳保持**微秒** |
-| `sensors/ph/ph_esp32_wifi/ph_esp32_wifi.ino` | `ph esp32.ino` | `ph_sensor` | 8801 | 顺手修掉原文件名含空格的问题 |
-| `sensors/force/force_wifi/force_wifi.ino` | `force.ino` | `force_sensor` | 8802 | **含 TARE/CALIBRATE 下行命令**（样板固件） |
-| `sensors/voltage/ESP32_Voltage_WiFi/ESP32_Voltage_WiFi.ino` | `ESP32_Voltage_Sensor.ino` | `voltage_sensor` | 8803 | 仅 ESP32 内置 ADC 版；ADS1115/HX711 变体后续按需 |
-| `sensors/current/ESP32_ADC_Raw_WiFi/ESP32_ADC_Raw_WiFi.ino` | `ESP32_ADC_Raw_Data.ino` | `current_sensor` | 8804 | |
-| `sensors/electronics/VI_ESP32_ADC_WiFi/VI_ESP32_ADC_WiFi.ino` | `VI_ESP32_ADC.ino` | `vi_esp32_adc` | 8805 | samples 为 `[t, v_adc, i_adc]` 三元组 |
+| `sensors/ultrasonic/HC-SR04esp32_wifi/HC-SR04esp32_wifi.ino` | `HC-SR04esp32/HC-SR04esp32.ino` | `ultrasonic` | 8800 | 位移 + 速度两个模块共用；时间戳保持**微秒** |
+| `sensors/ph/ph_esp32_wifi/ph_esp32_wifi.ino` | `ph_esp32/ph_esp32.ino` | `ph_sensor` | 8801 | |
+| `sensors/force/force_wifi/force_wifi.ino` | `force/force.ino` | `force_sensor` | 8802 | **含 TARE/CALIBRATE 下行命令**（样板固件） |
+| `sensors/voltage/ESP32_Voltage_WiFi/ESP32_Voltage_WiFi.ino` | `ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino` | `voltage_sensor` | 8803 | 仅 ESP32 内置 ADC 版；ADS1115/HX711 变体后续按需 |
+| `sensors/current/ESP32_ADC_Raw_WiFi/ESP32_ADC_Raw_WiFi.ino` | `ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino` | `current_sensor` | 8804 | |
+| `sensors/electronics/VI_ESP32_ADC_WiFi/VI_ESP32_ADC_WiFi.ino` | `VI_ESP32_ADC/VI_ESP32_ADC.ino` | `vi_esp32_adc` | 8805 | samples 为 `[t, v_adc, i_adc]` 三元组 |
 
 > 超声波位移 / 速度是两个上位机模块、一份固件：二者共用端口 8800 与设备 ID `ultrasonic`，**同一时间只允许一个超声波模块处于「局域网已连接」状态**（与串口行为一致：同一设备同一时刻也只能被一个模块占用）。
 

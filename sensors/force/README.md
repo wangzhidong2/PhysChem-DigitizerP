@@ -64,7 +64,7 @@ B+ / B-      →    未使用
 
 ## 3.固件、数据格式与命令
 
-固件：`force.ino`（ESP32-S3）
+固件：`force/force.ino`（ESP32-S3）
 
 | 项 | 值 |
 |----|-----|
@@ -160,7 +160,7 @@ g → N  :  ÷ 1000 × 9.8
 
 下拉框有三项：**有线串口 / BLE蓝牙 / 模拟器**。
 
-BLE 走的是 Nordic UART Service（`6E400001-B5A3-F393-E0A9-E50E24DCCA9E`），本目录的 `force.ino` 只有 USB 串口，不含 BLE 广播。想无线连接得自己把串口输出套进 NUS 骨架里，`ultrasonic/csbwithbt.ino` 可以拿来参考。没装 `bleak` 时「BLE蓝牙」项灰显并标注「（未安装bleak）」；没装 pyserial 时模块自动切到模拟器模式。
+BLE 走的是 Nordic UART Service（`6E400001-B5A3-F393-E0A9-E50E24DCCA9E`），本目录的 `force.ino` 只有 USB 串口，不含 BLE 广播。想无线连接得自己把串口输出套进 NUS 骨架里，`ultrasonic/csbwithbt/csbwithbt.ino` 可以拿来参考。没装 `bleak` 时「BLE蓝牙」项灰显并标注「（未安装bleak）」；没装 pyserial 时模块自动切到模拟器模式。
 
 ### 5.2.采样频率
 

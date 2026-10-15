@@ -20,7 +20,7 @@
 
 ### 2.1 建目录丢文件
 
-在 `sensors/` 下新建目录，放入下位机 `.ino` 与上位机 `.py`（`.py` 用英文蛇形命名，如 `temperature_sensor.py`）。
+在 `sensors/` 下新建目录，放入上位机 `.py`（英文蛇形命名，如 `temperature_sensor.py`）与固件——**固件必须放在与其同名的 sketch 子目录**（`temperature_sensor/temperature_sensor.ino`），Arduino IDE 才能直接打开编译。
 
 ### 2.2 在 `.py` 文件头写识别区
 
@@ -121,13 +121,11 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 
 代码目录已全部改为英文（`sensors/` 及其各传感器子目录），`git` 不再转义路径，`git status` 直接可读。仅商家原始资料（`sensors/force/vendor-docs/` 内的 PDF / DOC）保留中文文件名——不参与构建，无需处理。
 
-**Arduino Sketch 的目录名与 `.ino` 文件名必须完全一致**（Arduino IDE 的硬性要求）：
+**每个固件都放在与其同名的 sketch 子目录里**（Arduino IDE 硬性要求：sketch 目录名 = `.ino` 文件名）：
 
-- 已符合：`sensors/force/force.ino`（目录名 = 文件名），可直接在 Arduino IDE 打开编译。
-- 仍不符合：其余 `.ino` 均与所在目录不同名（如 `sensors/ultrasonic/HC-SR04esp32.ino`、`sensors/voltage/ESP32_Voltage_Sensor.ino`），**必须在 Arduino IDE 里新建同名 sketch 粘贴烧录**。
-- 含空格的 `.ino` 文件名（现有 `sensors/ph/ph esp32.ino`）在部分系统 / 构建链上会出问题，建议后续改成 `ph.ino` 放进同名目录。
-
-新增固件时避免此坑：把 `.ino` 放在与其同名的目录下（如 `sensors/temperature/temperature.ino`）。
+- 现状**全部符合**，可直接在 Arduino IDE 打开编译，不必再粘贴烧录。例如 `sensors/force/force/force.ino`、`sensors/ultrasonic/HC-SR04esp32/HC-SR04esp32.ino`、`sensors/electronics/VI_ADS1115/VI_ADS1115.ino`。
+- 原含空格的 `ph esp32.ino` 已改为 `sensors/ph/ph_esp32/ph_esp32.ino`，空格问题一并消除。
+- **新增固件必须沿用** `sensors/<device>/<SketchName>/<SketchName>.ino`，否则 Arduino IDE 打不开、只能用「粘贴烧录」。
 
 ### 退出确认框
 
