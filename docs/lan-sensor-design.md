@@ -64,20 +64,20 @@
                                 │ HTTP POST (2 req/s)       │ UDP 广播 (仅发现时)
                                 ▼                           ▼
         ┌─── Python 上位机 ──────────────────────────────────────────────┐
-        │  LANSensorThread (core.py, 每模块一个 :8800-8805)               │
+        │  LANSensorThread (core.py, 每模块一个端口 :8800-8805)         │
         │    ThreadingHTTPServer ◀─ POST /api/data                       │
         │    解析 JSON → emit("START"/"t,v") ──▶ 模块 data_received（同串口）│
         │    响应体捎带下行命令 {"cmds":["TARE"]}                          │
         │                                                                │
         │  LanDiscoveryService (core.py, UDP :8899 全局一个)              │
-        │    应答设备的发现广播 → 回 {host, port}                          │
+        │    应答设备的发现广播 → 回 {host, ports[]}                      │
         └────────────────────────────────────────────────────────────────┘
 ```
 
 要点：
 
-- **上行**：500ms 批量（10Hz 时 5 条/请求、2 请求/秒），兼顾实时性与连接开销。
-- **下行**：不单独开端口。上位机把待发命令排队，**随下一次 POST 的响应体**捎带回固件（≤500ms 延迟，零额外请求）。
+- **上行**：500ms 批量（10Hz 时 5 条/请求、2 请求/秒；超声波固件 ~50Hz 时约 25 条/批），兼顾实时性与连接开销。
+- **下行**：不单独开端口。上位机把待发命令排队，**随下一次 POST 的响应体**捎带回固件（≤500ms 延迟，零额外请求）。注意：现有六个模块的去皮/校准都在**上位机侧软件完成**（力传感器 `tare_now()` 即软件去皮，串口模式只是顺带发 `TARE\n` 同步固件内部状态），因此下行通道是**可选增强**而非功能前提——第一版即使砍掉它，采集/去皮/校准也全部可用。
 - **发现**：UDP 广播只用于「设备找不到服务器」时的自动发现；日常上报纯 HTTP。
 
 ---
@@ -95,7 +95,7 @@
 
 ### 4.2 服务器地址：自动发现优先，手动兜底
 
-- **上位机侧**：在软件里把模块连接方式切到「局域网」→ 模块内起接收服务，状态栏显示 `等待设备连接（192.168.x.x:8802）`。
+- **上位机侧**：在软件里把模块连接方式切到「局域网」→ 模块内起接收服务，状态栏显示 `等待设备连接（192.168.x.x:8803）`。
 - **设备侧（免填）**：EEPROM 里没有服务器地址时，固件上电自动 UDP 广播 3 次（每 2 秒一次）；上位机 `LanDiscoveryService` 应答本机 IP 与该模块端口 → 固件拿到地址直接开始上报（**只存内存，不写 EEPROM**，配网页显示"自动发现的地址"，用户点保存才固化）。
 - **手动**：配网页「服务器设置」里任何时候都可以手填 IP + 端口（支持域名），保存即生效。换电脑、IP 变了、想固定下来，都走这里。
 
@@ -122,7 +122,9 @@
 
 PhysChemNet net("force_sensor");   // 设备 ID（= 上位机模块的 device key）
 
-void onCommand(String cmd) {       // 下行命令回调（响应体捎带到达）
+// 下行命令回调（可选增强：去皮/校准在上位机软件侧完成，
+// 此通道仅用于让固件内部 offset 等状态与上位机保持同步）
+void onCommand(String cmd) {
   if (cmd == "TARE") { tare(10); net.reply("TARE_DONE," + String(offset)); }
 }
 
@@ -220,22 +222,24 @@ loop() 每 500ms:                    ▼
   └─ 设备重启后首批 → reset=true（上位机据此重发 START）
 ```
 
-- **`seq` 批次号**：上位机可检测跳号（丢批告警用，第一版仅记录不处理）。
-- **POST 阻塞的影响**：正常局域网内一次 POST < 100ms；服务器不可达时最多阻塞 1.5s——期间 `loop()` 停转、采样暂停。缓冲保证数据不丢（200 条 ≈ 10Hz 下 20 秒容量），恢复后续传。取舍见 §11。
-- **命令回执 `replies`**：`net.reply(text)` 把文本放进下一批请求体，上位机收到后按行 `emit`（如 `TARE_DONE,offset`），复用现有串口回执的解析路径。
+- **`seq` 批次号**：每批 +1 的单调计数；设备重启后归零，因此上位机做跳号检测时**必须忽略 `reset=true` 的批次**（重启 = seq 归零 + reset，不是丢批）。第一版仅记录不处理。
+- **POST 阻塞的影响**：正常局域网内一次 POST < 100ms；服务器不可达时最多阻塞 1.5s——期间 `loop()` 停转、采样暂停。缓冲保证数据不丢（200 条 ≈ 10Hz 下 20 秒 / 超声波 ~50Hz 下约 4 秒容量），恢复后续传。取舍见 §11。
+- **命令回执 `replies`**：`net.reply(text)` 把文本放进下一批请求体，上位机收到后按行 `emit`（如 `TARE_DONE,offset`），复用现有串口回执的解析路径。**整个 cmds/replies 通道是可选增强**——去皮/校准在上位机侧软件完成，此通道仅用于让固件内部状态（如 HX711 offset）与上位机保持同步。
 
-### 5.6 WiFi 固件清单（6 个，目录名 = 文件名，避开 Arduino 的坑）
+### 5.6 WiFi 固件清单（第一版 5 个，目录名 = 文件名，满足 Arduino 硬性要求）
 
-| 固件 | 基于的串口版 | 设备 ID | 端口 | 备注 |
+**端口分配原则：每个上位机模块独占一个端口**（不是每个固件）。同一固件烧到多块板时，各板在配网页里填**不同端口号**即可分别服务不同模块——这是超声波位移/速度共用一份固件却互不干扰的前提（device ID 相同、端口不同）。
+
+| 固件 | 基于的串口版 | 设备 ID | 端口（配网页填写） | 备注 |
 |---|---|---|---|---|
-| `sensors/ultrasonic/HC-SR04esp32_wifi/HC-SR04esp32_wifi.ino` | `HC-SR04esp32/HC-SR04esp32.ino` | `ultrasonic` | 8800 | 位移 + 速度两个模块共用；时间戳保持**微秒** |
-| `sensors/ph/ph_esp32_wifi/ph_esp32_wifi.ino` | `ph_esp32/ph_esp32.ino` | `ph_sensor` | 8801 | |
-| `sensors/force/force_wifi/force_wifi.ino` | `force/force.ino` | `force_sensor` | 8802 | **含 TARE/CALIBRATE 下行命令**（样板固件） |
-| `sensors/voltage/ESP32_Voltage_WiFi/ESP32_Voltage_WiFi.ino` | `ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino` | `voltage_sensor` | 8803 | 仅 ESP32 内置 ADC 版；ADS1115/HX711 变体后续按需 |
-| `sensors/current/ESP32_ADC_Raw_WiFi/ESP32_ADC_Raw_WiFi.ino` | `ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino` | `current_sensor` | 8804 | |
-| `sensors/electronics/VI_ESP32_ADC_WiFi/VI_ESP32_ADC_WiFi.ino` | `VI_ESP32_ADC/VI_ESP32_ADC.ino` | `vi_esp32_adc` | 8805 | samples 为 `[t, v_adc, i_adc]` 三元组 |
+| `sensors/ultrasonic/HC-SR04esp32_wifi/HC-SR04esp32_wifi.ino` | `HC-SR04esp32/HC-SR04esp32.ino` | `ultrasonic` | 位移 8800 / 速度 8801 | 一份固件两个用途，时间戳保持**微秒** |
+| `sensors/ph/ph_esp32_wifi/ph_esp32_wifi.ino` | `ph_esp32/ph_esp32.ino` | `ph_sensor` | 8802 | |
+| `sensors/force/force_wifi/force_wifi.ino` | `force/force.ino` | `force_sensor` | 8803 | 样板固件（唯一可能用 cmds/replies 的模块） |
+| `sensors/voltage/ESP32_Voltage_WiFi/ESP32_Voltage_WiFi.ino` | `ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino` | `voltage_sensor` | 8804 | 仅 ESP32 内置 ADC 版；ADS1115/HX711 变体后续按需 |
+| `sensors/current/ESP32_ADC_Raw_WiFi/ESP32_ADC_Raw_WiFi.ino` | `ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino` | `current_sensor` | 8805 | |
+| （预留）电学综合 VI WiFi 固件 | `VI_ESP32_ADC/VI_ESP32_ADC.ino` | `electronics` | 欧姆定律 8806 / 电功率 8807 | **推迟到 ohm/power 上位机模块落地后**——当前 `sensors/electronics/` 没有上位机 `.py`，做了固件也没有接收端 |
 
-> 超声波位移 / 速度是两个上位机模块、一份固件：二者共用端口 8800 与设备 ID `ultrasonic`，**同一时间只允许一个超声波模块处于「局域网已连接」状态**（与串口行为一致：同一设备同一时刻也只能被一个模块占用）。
+> 超声波说明：位移与速度是两个上位机模块、一份固件。单板场景（最常见）只开其中一个模块，设备自动发现拿到的就是那个模块的端口；**双板场景**（同时做位移 + 速度实验）两块板烧同一固件，配网页分别填 8800 与 8801 即可分流，互不混流。
 
 ---
 
@@ -263,16 +267,21 @@ class LANSensorThread(QThread):
 | 15 秒无 POST | `data_received("ERROR:设备超时，等待重新连接…")` + 状态回「等待设备」；**线程不退出**，设备恢复上报后自动续上（比串口版友好：拔线重插不用重点「连接」） |
 | `stop()` | `shutdown()` 可靠释放端口（与 flaskserver 的 `make_server` 停机同理由，见 `flask-server-design.md` §8.4） |
 
-**线程模型**：HTTP handler 跑在 `ThreadingHTTPServer` 的工作线程里，`emit` 跨线程信号由 Qt 自动队列到 GUI 线程——安全且无需额外封送；handler 内**只**做 JSON 解析与 `emit`，不碰任何 Qt 控件（遵守 `flask-server-design.md` §8.1 铁律）。超时监测由 `run()` 主循环轮询 `last_recv` 时间戳。
+**线程模型**（两层线程，职责分明）：
+
+- **HTTP 服务线程**：`ThreadingHTTPServer` 在独立 **daemon 线程**里 `serve_forever()`（停机方式与 flaskserver 的 `make_server` 同理，见 `flask-server-design.md` §8.4）；每个 POST 由其工作线程处理，handler 内**只**做 JSON 解析与 `emit`，不碰任何 Qt 控件（遵守 `flask-server-design.md` §8.1 铁律）。
+- **QThread 心跳线程**：`LANSensorThread.run()` 不跑 HTTP，只做 `while self.running: sleep(0.5); 检查 last_recv 超时`——超时 `emit("ERROR:…")` 从这里发出。`emit` 跨线程信号由 Qt 自动队列到 GUI 线程，安全无需封送。
+- `stop()`（GUI 线程调用）= `httpd.shutdown()`（本身线程安全）+ `running=False`，两个线程先后自然退出；退出慢的场景沿用 `core.stop_thread()` 的保活机制（AGENTS.md 线程回收铁律）。
 
 ### 6.2 `core.LanDiscoveryService`（全局一个，main.py 启动）
 
-- UDP `0.0.0.0:8899`，daemon 线程，随主程序启停。
-- 维护注册表 `{device_id: port}`：`LANSensorThread.start` 时注册、`stop` 后注销。
-- 收到 `{"proto":"physchem-discover","device":"force_sensor"}`：
-  - 该 device 已注册 → 单播应答 `{"proto":"physchem-discover-reply","device":"force_sensor","host":"<lan_ip()>","port":8802}`
+- UDP `0.0.0.0:8899`，daemon 线程，随主程序启停；注册表读写加 `threading.Lock`。
+- 注册表是 **`{device_id: [port, ...]}`（列表！）**：一个 device_id 可能对应多个模块端口（`ultrasonic` → 位移 8800、速度 8801）。**模块**在开局域网连接时注册自己 `(device_id, port)`、断开时注销（不要挂在 `QThread.start()` 上，语义是"模块在监听"而非"线程在跑"）。
+- 收到 `{"proto":"physchem-discover","device":"ultrasonic"}`：
+  - 该 device 已注册 → 单播应答 `{"proto":"physchem-discover-reply","device":"ultrasonic","host":"<lan_ip()>","ports":[8800, 8801]}`——**端口列表**，设备默认取第一个，配网页显示全部候选；
   - 未注册 → **不应答**（设备侧 2 秒超时即放弃，提示用户先在上位机开局域网模式）。
 - 多网卡：应答的 `host` 取 `lan_ip()`（默认出口网卡），与仪表盘局域网地址的取法一致。
+- 多板同发现同一端口列表的边界：两块板都自动发现会都拿 `ports[0]`——双板场景**后上电的板须在配网页手动改端口**（见 §5.6 超声波说明），文档明示即可，不做协议级仲裁。
 
 ### 6.3 `core.lan_ip()` 挪家
 
@@ -280,22 +289,33 @@ class LANSensorThread(QThread):
 
 ### 6.4 模块接入（六个模块各 ~30 行）
 
+**接入点按模块现有方法名走，没有统一入口**（实测：pH/力/电压/电流有 `connect_device()`，超声波位移/速度只有 `connect_serial()` / `connect_simulator()`，断开方法也各异——pH/超声波是 `disconnect_serial`，其余是 `disconnect_all`）：
+
 | 改动点 | 内容 |
 |---|---|
-| `mode_combo` | 加第四项「局域网」（现有：模拟器 / 串口 / BLE） |
-| 模块常量 | `LAN_DEVICE_ID`、`LAN_PORT`（按 §5.6 端口表） |
-| `connect_device()` | 新分支：`LANSensorThread(LAN_DEVICE_ID, LAN_PORT)`，信号接法与 `SerialThread` 完全相同 |
-| 面板 UI | 局域网模式下显示 `本机 192.168.x.x:8802，等待设备连接…`（只读，让用户知道该往配网页里填什么） |
-| 力传感器 | 去皮 / 校准按钮在局域网模式下改调 `lan_thread.send_command("TARE")`（串口模式保持 `serial.write("TARE\n")`）；`TARE_DONE` 回执走现有解析 |
+| `mode_combo` | 加「局域网」项。注意超声波模块现只有 `["有线串口", "模拟器"]` 两项，BLE 是 pH/力/电压/电流 才有 |
+| 模块常量 | `LAN_DEVICE_ID`、`LAN_PORT`（按 §6.5 端口表） |
+| 连接分支 | 在模块现有连接分发处加 `connect_lan()`：创建 `LANSensorThread(LAN_DEVICE_ID, LAN_PORT)`，`data_received` 接到与 `SerialThread` **同一个** `on_data` 槽；并在 `LanDiscoveryService` 注册/注销（§6.2） |
+| 断开路径 | 在模块现有 `disconnect_all` / `disconnect_serial` 里用 `core.stop_thread(lan_thread)` 回收（AGENTS.md 线程回收铁律），并注销发现服务 |
+| 面板 UI | 局域网模式下显示 `本机 192.168.x.x:8803，等待设备连接…`（只读，让用户知道该往配网页里填什么） |
+| 去皮/校准 | **零改动**——上位机侧软件去皮天然工作（与模拟器/BLE 同路径）；力传感器可选加"经 cmds 通知固件同步"，非必需 |
 | 模式持久化 | 连接方式选择已随 `sensor_config.json` 保存，无需新增字段 |
-| `DataService._apply_connection` | 模式模糊匹配补 `'局域网' / 'lan'` 分支 → 网页仪表盘也能切到局域网模式 |
+| `DataService._apply_connection` | 见下方的坑 |
+
+**⚠️ `core._apply_connection` 现有实现的一个坑**（[core.py](../core.py) `is_port_mode` 判断）：当前逻辑是 `'模拟器' not in text and 'BLE' not in text and '蓝牙' not in text`——新增的「局域网」会被**误判为串口模式**而要求 `port` 参数。接入时必须同步把判断改为"正向列出需要串口的模式"（或加 `'局域网' not in text`），否则网页仪表盘切局域网模式必失败。
 
 ### 6.5 端口一览
 
 | 端口 | 用途 | 归属 |
 |---|---|---|
 | 8765 | flaskserver 数据接口（现有） | 插件 |
-| **8800–8805** | 六个模块的传感器接收服务 | `core.LANSensorThread`（按需启停） |
+| **8800** | 超声波位移接收 | `core.LANSensorThread`（模块开局域网时启停） |
+| **8801** | 超声波速度接收 | 同上（与位移共用固件，端口分流） |
+| **8802** | pH 接收 | 同上 |
+| **8803** | 力接收 | 同上 |
+| **8804** | 电压接收 | 同上 |
+| **8805** | 电流接收 | 同上 |
+| 8806 / 8807 | 欧姆定律 / 电功率（**预留**，上位机模块开发中） | — |
 | **8899** | UDP 设备发现应答 | `core.LanDiscoveryService`（常驻） |
 
 ---
@@ -319,11 +339,11 @@ Content-Type: application/json
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `device` | str | 设备 ID（§5.6 表）；上位机不匹配则忽略整个请求（仍回 200，防设备反复重试刷日志） |
-| `seq` | int | 批次号，每批 +1；跳号 = 丢批 |
+| `device` | str | 设备 ID（§5.6 表）。**端口即模块**：同一 device ID 可能服务多个模块（`ultrasonic` → 8800 位移 / 8801 速度），接收端只校验 device 名 + 端口；不匹配则忽略整个请求（仍回 200，防设备反复重试刷日志） |
+| `seq` | int | 批次号，每批 +1；设备重启归零（跳号检测须忽略 `reset=true` 的批次）；跳号 = 丢批 |
 | `reset` | bool | 设备重启 / 缓冲溢出丢数据后为 `true`，上位机据此重发 `START` |
-| `samples` | list | 每项 `[t, v]`（普通模块）或 `[t, v, i]`（VI 固件）；`t` 单位与串口版一致（超声波微秒，其余毫秒）；**还原为 `"t,v"` 文本逐条 emit，模块解析零改动** |
-| `replies` | list[str] | 可选；逐条 emit（如 `TARE_DONE,offset`） |
+| `samples` | list | 每项 `[t, v]`；`t` 单位与串口版一致（超声波微秒，其余毫秒）；**还原为 `"t,v"` 文本逐条 emit，模块解析零改动**（VI 固件为 `[t, v, i]` 三元组，随电学综合模块一起后续做） |
+| `replies` | list[str] | 可选；逐条 emit（如 `TARE_DONE,offset`）。整个 cmds/replies 通道为可选增强（§5.5） |
 
 **响应**：
 
@@ -338,11 +358,15 @@ Content-Type: application/json
 
 ```json
 // 设备 → 255.255.255.255:8899（广播，重复 3 次每次隔 2s）
-{"proto": "physchem-discover", "device": "force_sensor", "v": 1}
+{"proto": "physchem-discover", "device": "ultrasonic", "v": 1}
 
 // 上位机 → 设备（单播应答，仅当该 device 的局域网模式已开启）
-{"proto": "physchem-discover-reply", "device": "force_sensor", "host": "192.168.5.10", "port": 8802, "v": 1}
+{"proto": "physchem-discover-reply", "device": "ultrasonic",
+ "host": "192.168.5.10", "ports": [8800, 8801], "v": 1}
 ```
+
+- `ports` 是**列表**：该 device 当前正在监听的全部模块端口（超声波位移/速度都开时有两个）。
+- 设备默认取 `ports[0]` 开始上报，配网页显示全部候选供手动改（双板场景必需，见 §5.6）。
 
 ### 7.3 与现有文本协议的映射（上位机内部）
 
@@ -396,7 +420,7 @@ sensors/PhysChemNet/
 | 项 | 决定 | 理由 |
 |---|---|---|
 | 接收端鉴权 | **无**（局域网内任何设备都可 POST） | 与现有仪表盘局域网模式同一信任模型：课堂教学网。加共享密钥的成本是配网页多一个框 + 双端校验，列为后续可选增强 |
-| 接收端绑定 | `0.0.0.0:8800-8805`（局域网模式开启期间） | 必须，否则设备连不上；未开启模块不占端口 |
+| 接收端绑定 | `0.0.0.0:8800-8805`（预留 8806/8807；局域网模式开启期间） | 必须，否则设备连不上；未开启模块不占端口 |
 | 下行命令 | 同样无鉴权 | 同上；`cmds` 只影响该设备自身的去皮/校准 |
 | 配网页 | 无密码（热点密码即门槛） | 热点密码 `12345678` 是公开默认值——修改入口在配网页里（改的是 WiFi，热点名/密码本期固定，见 §12） |
 | 数据面 | 明文 HTTP | 同仪表盘；不做 HTTPS（§2） |
@@ -410,25 +434,29 @@ sensors/PhysChemNet/
 | # | 场景 | 行为 / 代价 |
 |---|---|---|
 | 1 | STA 连接 / 重连期间 | AP 信道跟随 STA，热点上的手机短暂掉线重连（ESP32 单射频，无法避免） |
-| 2 | 服务器关机 / 地址错 | POST 超时 1.5s 阻塞 loop → 采样暂停；缓冲保留（≤200 条 ≈ 20s），恢复后续传；超容量的旧数据丢弃并置 `reset` |
+| 2 | 服务器关机 / 地址错 | POST 超时 1.5s 阻塞 loop → 采样暂停；缓冲保留（200 条 ≈ 10Hz 20s / 超声波 ~50Hz 约 4s），恢复后续传；超容量的旧数据丢弃并置 `reset` |
 | 3 | 设备超时（>15s 无 POST） | 上位机 emit `ERROR:` 并回「等待设备」，线程存活；设备恢复后自动续传，**无需重新点连接** |
 | 4 | 上位机先关后开（IP 没变） | 设备 POST 失败 → 重试 → 上位机起来后自动接上 |
 | 5 | 上位机 IP 变了 | 设备一直失败 → 用户手机连热点改地址（§4.4）；或 EEPROM 为空时走自动发现 |
-| 6 | 两个超声波模块同时开局域网 | 后者端口绑定失败 → `ERROR:端口被占用`，UI 提示（与串口被占用同体验） |
+| 6 | 双板超声波（同固件同 ID） | 各自在配网页填**不同端口**（位移 8800 / 速度 8801）即可分流；都走自动发现会拿到同一个 `ports[0]`，**后上电的板须手动改**（见 §6.2） |
 | 7 | 局域网延迟 | 批量窗口 500ms + 局域网 RTT → 曲线落后真实 ≤ ~0.6s；对力学/化学教学实验可接受 |
 | 8 | 缓冲溢出（服务器长时间不可达） | 丢最旧 + `reset=true`；上位机重发 `START`，图表出现断点（与串口丢行同观感） |
 | 9 | 多网卡上位机 | `lan_ip()` 取默认出口网卡；用户填错网段的 IP 属配置问题，配网页可见上报失败状态便于排查 |
+| 10 | 设备重启后 `seq` 归零 | 跳号检测忽略 `reset=true` 批次（§7.1），不误报丢批 |
 
 ---
 
-## 12. 待决问题
+## 12. 已定决策（原待决问题，审阅后拍板）
 
-1. **热点 SSID / 密码**：暂定 `PhysChem-<device_id>` / `12345678`（PDsmartUPS 同款）。是否允许在配网页修改热点自身凭据？（改错会失联，第一版建议只读展示）
-2. **`replies` 回执机制**：力传感器的 `TARE_DONE` 需要它；其他模块首版用不到。是否保留在协议里（建议保留，成本一行）？
-3. **超声波 device ID**：位移/速度共用 `ultrasonic` 还是烧录时选 `ultrasonic_displacement` / `ultrasonic_velocity`？建议前者（固件免配置，两模块都能收）。
-4. **UDP 发现端口 8899**：需实测确认学校 / 家用路由器不拦截 UDP 广播；被拦时自动发现失效，手动配网页兜底（功能不残缺）。
-5. **上报周期可配**：500ms 硬编码 vs EEPROM 预留字段里做成可配（1–5s）？建议第一版硬编码，字段已预留。
-6. **VI 固件的 samples 三元组**是否需要独立 `device` 粒度的校验（8805 端口只收 `vi_esp32_adc`）——是，与单值模块同规则，无需特殊处理，仅确认。
+| # | 问题 | 决策 | 理由 |
+|---|---|---|---|
+| 1 | 热点 SSID / 密码 | `PhysChem-<device_id>` / `12345678`，配网页**只读展示**，本期不可改 | 改错即失联，排障成本高于收益；PDsmartUPS 同款先例 |
+| 2 | `replies` 回执机制 | **保留**在协议里，但定位为可选增强（§5.5） | 去皮/校准本就是上位机软件完成（实测 `tare_now()`），通道只用于固件状态同步，砍掉不影响功能 |
+| 3 | 超声波 device ID | 固件统一 `ultrasonic`（免配置），**端口分流**：位移 8800 / 速度 8801 | 固件无需知道自己服务哪个模块；双板场景靠配网页端口号区分 |
+| 4 | UDP 发现端口 8899 | 保留 | 被路由器拦截时自动发现失效，配网页手填兜底，功能不残缺 |
+| 5 | 上报周期 | 500ms 硬编码第一版 | EEPROM 预留字段（§5.3 偏移 454–511）已留好，需要时再开放 |
+| 6 | VI WiFi 固件 | **推迟**，端口 8806/8807 预留 | `sensors/electronics/` 尚无上位机 `.py`（ohm/power 模块开发中），固件做出来没有接收端 |
+| 7 | 发现应答多端口 | `ports` 列表 + 设备取 `ports[0]`，配网页可改 | 支持位移/速度同开；双板后上电者手动改（§6.2） |
 
 ---
 
@@ -438,13 +466,14 @@ sensors/PhysChemNet/
 |---|---|---|
 | **P0** | 本文档 | 结构、协议、边界行为达成一致 |
 | **P1** | `PhysChemNet.h` 库骨架 | 手机的热点能看到、配网页能连 WiFi 并保存（重新上电仍连）；服务器地址可改可存 |
-| **P2** | `core.lan_ip()` 挪家 + `LANSensorThread` + `LanDiscoveryService` | 单元级：用 `curl` 模拟设备 POST，`data_received` 逐条收到 `START`/`t,v`；设备发现应答正确 |
-| **P3** | 力传感器端到端（`force_wifi.ino` + 模块接入） | 无线采集曲线正常；去皮按钮经 `cmds` 下行、`TARE_DONE` 回执显示；拔设备网线 → 15s 后 UI 报超时 → 恢复后自动续传 |
-| **P4** | 铺满其余 5 固件 + 5 模块 | 六个模块局域网模式全部可用；两超声波模块抢端口报错正确 |
-| **P5** | `DataService._apply_connection` 补局域网 | 网页仪表盘可切换模块到局域网模式 |
-| **P6** | 文档 | 根 `README.md`、六传感器 README、`AGENTS.md`、`PhysChemNet/README.md`、固件烧录说明 |
+| **P2** | `core.lan_ip()` 挪家 + `LANSensorThread` + `LanDiscoveryService` | 单元级：用 `curl` 模拟设备 POST，`data_received` 逐条收到 `START`/`t,v`；设备发现应答 `ports` 列表正确 |
+| **P3** | 力传感器端到端（`force_wifi.ino` + 模块接入） | 无线采集曲线正常；**软件去皮零改动直接工作**；拔设备网线 → 15s 后 UI 报超时 → 恢复后自动续传 |
+| **P3.5** | （可选）cmds/replies 下行通道 | 去皮按钮经 `cmds` 通知固件、`TARE_DONE` 回执显示、固件内部 offset 与上位机同步 |
+| **P4** | 铺满其余 4 固件 + 4 模块（超声波 ×1 固件两端口、pH、电压、电流） | 五个模块局域网模式全部可用；双板超声波 8800/8801 分流互不混流 |
+| **P5** | `DataService._apply_connection` 补局域网（含 `is_port_mode` 判断修正，见 §6.4 的坑） | 网页仪表盘可切换模块到局域网模式 |
+| **P6** | 文档 | 根 `README.md`、五传感器 README、`AGENTS.md`、`PhysChemNet/README.md`、固件烧录说明 |
 
-> **顺序说明**：P2 在纯 Python 侧即可验证（curl 当设备），不依赖任何固件进度；P1 与 P2 可并行。P3 选力传感器做样板，因为它是唯一有下行命令的模块——最难的用例先跑通，其余五个是纯上行复制。
+> **顺序说明**：P2 在纯 Python 侧即可验证（curl 当设备），不依赖任何固件进度；P1 与 P2 可并行。P3 选力传感器做样板；**去皮走软件路径本就零成本**，下行命令（P3.5）从阻塞项降级为可选增强，砍掉不挡发布。
 
 ---
 
@@ -454,18 +483,18 @@ sensors/PhysChemNet/
 |---|---|---|
 | 1 | 新设备上电（EEPROM 空） | 热点 `PhysChem-xxx` 出现；连入可打开 `192.168.4.1` 配网页 |
 | 2 | 配网页连 WiFi 并保存 | STA 连上路由器；**热点仍在线**；重启设备后自动连上（EEPROM 生效） |
-| 3 | 上位机开局域网模式 + 设备 EEPROM 无服务器地址 | 设备广播发现 → 自动拿到地址开始上报（内存态，配网页显示"自动发现"） |
+| 3 | 上位机开局域网模式 + 设备 EEPROM 无服务器地址 | 设备广播发现 → 自动拿到 `ports[0]` 开始上报（内存态，配网页显示"自动发现"） |
 | 4 | 配网页手动改服务器地址并保存 | 下一批 POST 发往新地址；无需重启设备 |
 | 5 | 正常采集 | 曲线实时（落后 ≤0.6s）；拔 USB 对比串口版数据一致 |
-| 6 | 局域网模式下点「去皮」 | ≤500ms 内设备执行；`TARE_DONE` 回执显示；曲线归零 |
+| 6 | 局域网模式下点「去皮」 | 软件去皮即时生效（与模拟器/BLE 同路径，0 延迟）；开启 P3.5 后另验 `cmds` 通道 ≤500ms 同步固件 |
 | 7 | 设备断电 20s 再上电 | 上位机先 `ERROR:超时` 回等待态，设备回来后自动续传并发 `START` |
 | 8 | 上位机退出再启动（IP 未变） | 设备自动重连，无需任何操作 |
-| 9 | 两个超声波模块同时开局域网 | 后开的收到 `ERROR:端口被占用` |
+| 9 | 双板超声波分别开位移 / 速度模块 | 配网页分别填 8800 / 8801，两模块曲线独立、互不混流 |
 | 10 | 服务器地址填错 | 配网页 `last_post_ok=false` 可见；设备持续重试不崩；缓冲溢出后 `reset` 续传 |
 | 11 | STA 断网 | 热点仍可访问（手机可进配网页排查）；网络恢复后自动重连上报 |
 | 12 | 未连接 WiFi 的固件 | 串口输出照常（`feed` 同步 Serial），有线调试不受影响 |
 | 13 | 退出程序（局域网模式开启中） | 端口释放、线程正常回收，无 `QThread` 析构崩溃 |
-| 14 | 网页仪表盘切某模块到局域网模式 | 模块真的进入等待设备状态（`_apply_connection` 生效） |
+| 14 | 网页仪表盘切某模块到局域网模式 | 模块真的进入等待设备状态（`_apply_connection` 生效，含 `is_port_mode` 修正） |
 
 ---
 
@@ -474,3 +503,4 @@ sensors/PhysChemNet/
 | 日期 | 变更 |
 |---|---|
 | 初稿 | 建立设计：架构（固件主动 HTTP POST + stdlib 接收）、PhysChemNet 共享库、AP+STA 双模常开、配网页与 EEPROM 布局、500ms 批量协议、响应体捎带下行命令、UDP 自动发现、端口分配、实施计划 |
+| 修订 1（对照代码审阅后） | ① **端口模型反转**：从"每固件一端口、超声波共用 8800"改为**每模块独占端口**（位移 8800 / 速度 8801 / pH 8802 / 力 8803 / 电压 8804 / 电流 8805，预留 8806/8807）——原方案双板同 ID 会**数据混流**，新方案固件不变、配网页端口号分流；② **下行命令降级**：实测力传感器去皮是上位机软件去皮（`tare_now()`），cmds/replies 从核心依赖改为可选增强（P3.5），P3 验收不再绑定 TARE 下行；③ **VI WiFi 固件推迟**：`sensors/electronics/` 无上位机 `.py`，固件无接收端；④ §6.4 按各模块真实方法名重写（超声波无 `connect_device`），并记录 `core._apply_connection` 的 `is_port_mode` 陷阱；⑤ §6.1 线程模型明确为"daemon 线程 serve_forever + QThread 心跳"两层；⑥ 发现应答 `port` → `ports` 列表；⑦ `seq` 跳号检测须忽略 `reset=true` 批次；⑧ §12 待决问题全部拍板为已定决策 |
