@@ -1,7 +1,10 @@
 # flaskserver 插件 — 开发文档
 
-> 状态：**设计稿**（尚未实现）
+##  状态：[已经实现,版本1.8](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/releases/1.8)
+
+
 > 目标读者：本项目的开发者（含 AI Agent）
+
 > 相关：`AGENTS.md`（项目总规约）、`README.md`（用户文档）
 
 ---
