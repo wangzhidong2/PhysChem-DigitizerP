@@ -1,6 +1,6 @@
 # PhysChem-DigitizerP —— uv / PEP 621 项目配置
 #
-# 本项目是「脚本式应用」（main.py + core.py + 传感器代码/ 动态加载模块），
+# 本项目是「脚本式应用」（main.py + core.py + sensors/ 动态加载模块），
 # 不是可安装的包：没有 build-system，用 `tool.uv.package = false` 声明为
 # "virtual 项目"。因此构建类命令会被跳过，但依赖管理、锁文件、venv、
 # 运行入口全部照常可用。

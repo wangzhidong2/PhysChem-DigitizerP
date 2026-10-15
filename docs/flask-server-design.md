@@ -77,7 +77,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 PhysChem-DigitizerP/
 ├── main.py                       ← 插件扫描/加载/注入；主页「数据接口」按钮
 ├── core.py                       ← 新增 DataService（数据与控制总线）+ 配置项
-├── 传感器代码/                     ← 六个模块各加 api_snapshot() / api_command()
+├── sensors/                      ← 六个模块各加 api_snapshot() / api_command()
 └── flaskserver/                  ← 插件目录（整个删掉 → 程序毫无影响）
     ├── __init__.py               ← 识别区 + available() + Plugin 类（生命周期）
     ├── server.py                 ← Flask app、路由、token 校验、静态托管、后台线程
@@ -196,7 +196,7 @@ def build_app(service, token, allow_lan, enable_cors):
 # ===================
 ```
 
-复用 `传感器代码/` 已有的"识别区 + 前 50 行"思路；`docs/`、`传感器代码/`、`.venv/` 因无识别区被自然跳过。
+复用 `sensors/` 已有的"识别区 + 前 50 行"思路；`docs/`、`sensors/`、`.venv/` 因无识别区被自然跳过。
 
 ### 6.2 加载方式（关键）
 
@@ -248,7 +248,7 @@ plugin.attach(context)            ← context 含 service / app_cfg / window
 | 3 | 存在 | ✅ | ✅ 正常 | 可用，默认「启动」 | 不监听 |
 | 4 | 存在 | ✅，已启动 | ✅ 正常 | 显示「停止」+ 地址 | 监听 |
 
-`requirements.txt` 中 flask 列为**可选**（单独注释区块）。`PhysChem-DigitizerP.spec` 需把 `flaskserver/` 按数据文件收集（与 `传感器代码/` 同理），并对 flask 做 `hiddenimports` 兜底。
+`requirements.txt` 中 flask 列为**可选**（单独注释区块）。`PhysChem-DigitizerP.spec` 需把 `flaskserver/` 按数据文件收集（与 `sensors/` 同理），并对 flask 做 `hiddenimports` 兜底。
 
 ---
 

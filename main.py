@@ -10,9 +10,9 @@ PhysChem-DigitizerP 主程序
 - 主页（HomePageWidget）
 - 侧边栏（SidebarWidget）+ 导航按钮（NavButton）
 - 设置（SettingsWidget）
-- 动态模块加载器：扫描 传感器代码/ 目录，importlib 加载各传感器模块
+- 动态模块加载器：扫描 sensors/ 目录，importlib 加载各传感器模块
 
-新增传感器模块时无需修改本文件，只需在 传感器代码/ 下新建子目录并放入
+新增传感器模块时无需修改本文件，只需在 sensors/ 下新建子目录并放入
 带识别区的 .py 文件即可被自动发现并注册。
 """
 
@@ -259,7 +259,7 @@ def scan_modules(modules_dir):
     """扫描模块目录，发现并加载所有传感器模块。
 
     Args:
-        modules_dir: 传感器代码目录的绝对路径
+        modules_dir: 传感器模块目录的绝对路径
 
     Returns:
         list of dict: 每项包含
@@ -276,7 +276,7 @@ def scan_modules(modules_dir):
         log.warning("模块目录不存在: %s", modules_dir)
         return discovered
 
-    # 遍历 传感器代码/ 下的每个子目录
+    # 遍历 sensors/ 下的每个子目录
     for sub in sorted(os.listdir(modules_dir)):
         sub_path = os.path.join(modules_dir, sub)
         if not os.path.isdir(sub_path):
@@ -2632,9 +2632,9 @@ class MainWindow(FluentWindow):
         # FluentWindow 自带 NavigationInterface + stackedWidget，无需手动布局
 
         # === 加载模块 ===
-        # 确定传感器代码目录（与 main.py 同级）
+        # 确定传感器模块目录（与 main.py 同级）
         app_dir = os.path.dirname(os.path.abspath(__file__))
-        modules_dir = os.path.join(app_dir, '传感器代码')
+        modules_dir = os.path.join(app_dir, 'sensors')
 
         discovered = scan_modules(modules_dir)
 

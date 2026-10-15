@@ -26,7 +26,7 @@
   sensor_config.json / app_config.json 无法跨次持久。
 - console=True 保留控制台窗口，传感器加载、串口收发日志实时可见。
 - 新增传感器模块后重新打包；打包产物内也可以直接往
-  _internal/传感器代码/<子目录>/ 丢 .py 实现免重打包热插拔。
+  _internal/sensors/<子目录>/ 丢 .py 实现免重打包热插拔。
 - pyserial 未安装时打包仍可成功，但产物只能跑「模拟器」模式；
   要支持真实串口请先 `pip install pyserial` 再打包。
 """
@@ -36,11 +36,11 @@ from PyInstaller.utils.hooks import collect_data_files
 
 # --- 只收集传感器模块源码，排除商家资料 / 缓存 / 测试文件 ---
 sensor_datas = []
-for dirpath, dirnames, filenames in os.walk('传感器代码'):
+for dirpath, dirnames, filenames in os.walk('sensors'):
     if '__pycache__' in dirpath:
         continue
-    # 排除「资料（xxx商家提供的）」等非代码目录，避免包体膨胀
-    if '资料' in dirpath:
+    # 排除 vendor-docs（商家资料，原「资料（HX711称重模块商家提供的）」）等非代码目录，避免包体膨胀
+    if 'vendor-docs' in dirpath:
         continue
     for fn in filenames:
         if fn.endswith('.py') and not fn.startswith('_') and not fn.startswith('test'):

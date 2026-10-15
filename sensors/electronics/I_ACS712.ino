@@ -1,7 +1,7 @@
 // Copyright (c) 2026 wangzhidong2
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 注意：本文件是 电流传感器/ESP32_ADC_Raw_Data.ino 的副本，
+// 注意：本文件是 current/ESP32_ADC_Raw_Data.ino 的副本，
 // 「双板分测」模式下的电流板固件（ACS712 → GPIO1）。修改请同步更新原文件。
 
 // ESP32-S3 ADC 原始数据采集程序

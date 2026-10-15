@@ -29,14 +29,14 @@
 
 ### 单通道固件（双板分测模式：电压板 + 电流板各一台）
 
-以下 4 个文件是 `电压传感器/`、`电流传感器/` 目录下固件的**副本**（内容一致，加了两行来源注释），放进来方便本目录自成一体：
+以下 4 个文件是 `voltage/`、`current/` 目录下固件的**副本**（内容一致，加了两行来源注释），放进来方便本目录自成一体：
 
 | 固件 | 来源 | 用途 |
 |------|------|------|
-| `V_ESP32_ADC.ino` | `电压传感器/ESP32_Voltage_Sensor.ino` | 电压板（内置 ADC，GPIO1） |
-| `V_ADS1115.ino` | `电压传感器/ADS1115_Voltage.ino` | 电压板（ADS1115 16 位） |
-| `V_HX711.ino` | `电压传感器/HX711_Voltage.ino` | 电压板（HX711 24 位） |
-| `I_ACS712.ino` | `电流传感器/ESP32_ADC_Raw_Data.ino` | 电流板（ACS712 → GPIO1） |
+| `V_ESP32_ADC.ino` | `voltage/ESP32_Voltage_Sensor.ino` | 电压板（内置 ADC，GPIO1） |
+| `V_ADS1115.ino` | `voltage/ADS1115_Voltage.ino` | 电压板（ADS1115 16 位） |
+| `V_HX711.ino` | `voltage/HX711_Voltage.ino` | 电压板（HX711 24 位） |
+| `I_ACS712.ino` | `current/ESP32_ADC_Raw_Data.ino` | 电流板（ACS712 → GPIO1） |
 
 > ⚠️ 它们是副本：改动请同步回原件（或改原件后重新复制），避免两处内容不一致。
 

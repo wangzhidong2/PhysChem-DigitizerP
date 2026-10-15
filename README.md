@@ -10,7 +10,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
-## [操作手册用户版](./docs/操作手册.md)
+## [操作手册用户版](./docs/user-manual.md)
 
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/8b40706c-3ba8-4e17-bb6f-1860efdb9a05/image.png 'image.png')
 
@@ -163,18 +163,18 @@ python ./main.py
 ##### 3.2.6.2.解压，双击 `main.py` 打开
 ### 3.3.功能模块
 
-项目采用**模块化架构**——主程序 `main.py` 启动时扫描 `传感器代码/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
+项目采用**模块化架构**——主程序 `main.py` 启动时扫描 `sensors/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
 
 | 模块 | 传感器 | 开发板 | 类别 |  说明文档 |
 |------|--------|--------|------|----------|
-| 超声波位移 | HC-SR04 | ESP32 / ESP8266 / ESP32-S3 | 物理 |[使用说明](传感器代码/超声波位移传感器/README.md) |
-| 超声波速度 | HC-SR04 | （共享上述固件） | 物理 | [使用说明](传感器代码/超声波位移传感器/README.md) |
-| pH 传感器 | SEN0161 | ESP32-S3 | 化学 | [使用说明](传感器代码/ph传感器/README.md) |
-| 力/质量传感器 | HX711 | ESP32-S3 | 物理 | [使用说明](传感器代码/力传感器/README.md) |
-| 电压传感器 | ESP32 ADC / HX711等AD转换模块 | ESP32-S3 | 物理 |  [使用说明](传感器代码/电压传感器/README.md) |
-| 电流传感器 | ACS712 | ESP32-S3 | 物理 |  [使用说明](传感器代码/电流传感器/README.md) |
-| 欧姆定律 | ESP32 ADC / ADS1115 / HX711 + ACS712（一体或双板） | ESP32-S3 | 物理 | [使用说明](传感器代码/电学综合/README.md) |
-| 电功率 | 同上 | ESP32-S3 | 物理 | [使用说明](传感器代码/电学综合/README.md) |
+| 超声波位移 | HC-SR04 | ESP32 / ESP8266 / ESP32-S3 | 物理 |[使用说明](sensors/ultrasonic/README.md) |
+| 超声波速度 | HC-SR04 | （共享上述固件） | 物理 | [使用说明](sensors/ultrasonic/README.md) |
+| pH 传感器 | SEN0161 | ESP32-S3 | 化学 | [使用说明](sensors/ph/README.md) |
+| 力/质量传感器 | HX711 | ESP32-S3 | 物理 | [使用说明](sensors/force/README.md) |
+| 电压传感器 | ESP32 ADC / HX711等AD转换模块 | ESP32-S3 | 物理 |  [使用说明](sensors/voltage/README.md) |
+| 电流传感器 | ACS712 | ESP32-S3 | 物理 |  [使用说明](sensors/current/README.md) |
+| 欧姆定律 | ESP32 ADC / ADS1115 / HX711 + ACS712（一体或双板） | ESP32-S3 | 物理 | [使用说明](sensors/electronics/README.md) |
+| 电功率 | 同上 | ESP32-S3 | 物理 | [使用说明](sensors/electronics/README.md) |
 
 ## 4.下位机固件烧录
 ### 4.1.安装 [Arduino IDE](https://www.arduino.cc/en/software)
@@ -233,35 +233,36 @@ PhysChem-DigitizerP/
 │       └── echarts.min.js      # 图表库（本地内置，不联网）
 ├── docs/
 │   └── images/                 # 文档图片
-└── 传感器代码/                  # 下位机 .ino + 上位机 .py 同目录
+└── sensors/                    # 下位机 .ino + 上位机 .py 同目录
     ├── README.md               # 各传感器固件与模块总览
-    ├── 超声波位移传感器/
+    ├── ultrasonic/
     │   ├── README.md           # 使用说明（接线/校准/原理/FAQ）
     │   ├── HC-SR04esp32.ino    # ESP32 固件
     │   ├── HC-SR04esp8266.ino  # ESP8266 固件
     │   ├── csbwithbt.ino       # ESP32-S3 + BLE 固件
     │   ├── ultrasonic_displacement.py  # 位移测量上位机模块
     │   └── ultrasonic_velocity.py      # 速度测量上位机模块
-    ├── ph传感器/
+    ├── ph/
     │   ├── README.md           # 使用说明（接线/多模式校准/电极保养/FAQ）
     │   ├── ph esp32.ino        # ESP32-S3 固件
-    │   ├── PH传感器原理图.pdf
+    │   ├── schematic.pdf       # PH 传感器原理图
     │   └── ph_sensor.py        # pH 上位机模块
-    ├── 力传感器/
+    ├── force/
     │   ├── README.md           # 使用说明（接线/去皮校准/串口命令/FAQ）
     │   ├── force.ino           # ESP32-S3 HX711 固件
     │   ├── force_sensor.py     # 力/质量上位机模块
-    │   └── 资料（HX711称重模块商家提供的）/
-    ├── 电压传感器/
+    │   └── vendor-docs/        # HX711 商家资料（原「资料（HX711称重模块商家提供的）」）
+    ├── voltage/
     │   ├── README.md           # 使用说明（接线/分压扩展/ADC配置/FAQ）
     │   ├── ESP32_Voltage_Sensor.ino  # ESP32-S3 内置 ADC 固件
     │   ├── HX711_Voltage.ino         # HX711 24 位 ADC 固件
     │   ├── ADS1115_Voltage.ino       # ADS1115 16 位 ADC 固件
     │   └── voltage_sensor.py         # 电压上位机模块（支持 HX711 / ADS1115 模式）
-    └── 电流传感器/              # ACS712 电流（5A/20A/30A，AC/DC，零点校准/去皮）
-        ├── ESP32_ADC_Raw_Data.ino   # ESP32-S3 固件
-        └── current_sensor.py        # 电流上位机模块（5A/20A/30A 量程，AC/DC）
-    └── 电学综合/                # 欧姆定律 + 电功率（上位机模块开发中）
+    ├── current/                # ACS712 电流（5A/20A/30A，AC/DC，零点校准/去皮）
+    │   ├── README.md           # 使用说明（接线/量程/零点校准/FAQ）
+    │   ├── ESP32_ADC_Raw_Data.ino   # ESP32-S3 固件
+    │   └── current_sensor.py        # 电流上位机模块（5A/20A/30A 量程，AC/DC）
+    └── electronics/            # 欧姆定律 + 电功率（上位机模块开发中）
         ├── README.md               # 使用说明（接线/校准/双板接线）
         ├── VI_ESP32_ADC.ino        # 电压(内置ADC)+ACS712电流 一体固件
         ├── VI_ADS1115.ino          # 电压(ADS1115 16位)+ACS712电流 一体固件
@@ -410,18 +411,18 @@ python test_serial.py
 ## 8.技术文档
 
 - **[AGENTS.md](AGENTS.md)** — 开发者指南
-- **[传感器代码总览](传感器代码/README.md)** — 各传感器固件与上位机模块对照表
-- **[超声波位移传感器](传感器代码/超声波位移传感器/README.md)** 
-- **[pH 传感器](传感器代码/ph传感器/README.md)** 
-- **[力传感器](传感器代码/力传感器/README.md)** 
-- **[电压传感器](传感器代码/电压传感器/README.md)** 
-- **[电流传感器](传感器代码/电流传感器/README.md)** 
+- **[传感器总览](sensors/README.md)** — 各传感器固件与上位机模块对照表
+- **[超声波位移传感器](sensors/ultrasonic/README.md)** 
+- **[pH 传感器](sensors/ph/README.md)** 
+- **[力传感器](sensors/force/README.md)** 
+- **[电压传感器](sensors/voltage/README.md)** 
+- **[电流传感器](sensors/current/README.md)** 
 
 ## 9.扩展开发
 
 新增传感器**无需修改 `main.py`**，只需 2 步：
 
-1. 在 `传感器代码/` 下新建子目录，放入 `.ino` 和 `.py`
+1. 在 `sensors/` 下新建子目录，放入 `.ino` 和 `.py`
 2. 在 `.py` 文件头写识别区：
 
 ```python

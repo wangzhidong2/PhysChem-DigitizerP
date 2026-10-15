@@ -818,7 +818,7 @@ def _get_config_file_path():
 
     配置文件始终位于主程序所在目录（即仓库根目录），与具体模块文件位置无关。
     """
-    # 取 main.py 所在目录：模块文件位于 传感器代码/xxx/ 下，
+    # 取 main.py 所在目录：模块文件位于 sensors/xxx/ 下，
     # 上溯两级即为仓库根目录。
     here = os.path.dirname(os.path.abspath(__file__))
     # core.py 在根目录，直接用 here

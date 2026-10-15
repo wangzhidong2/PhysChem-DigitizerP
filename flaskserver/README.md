@@ -1,7 +1,7 @@
 # flaskserver 插件 — 实验数据 HTTP 接口
 
 把运行中的上位机数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。
-设计文档见 `docs/flask设计.md`。
+设计文档见 `docs/flask-server-design.md`。
 
 ## 安装
 

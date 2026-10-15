@@ -1,34 +1,34 @@
-# 传感器代码
+# 传感器代码（sensors/）
 
 本目录存放各传感器的下位机固件（`.ino`）和上位机模块（`.py`），两者在同一子目录中。上位机模块文件头带识别区（meta header），主程序 `main.py` 启动时自动扫描并加载，新增传感器不需要改主程序。
 
 ## 1.目录结构
 
 ```
-传感器代码/
+sensors/
 ├── README.md                                # 本文件
-├── 超声波位移传感器/                          # HC-SR04 超声波
+├── ultrasonic/                              # HC-SR04 超声波
 │   ├── HC-SR04esp32.ino                     # ESP32 固件
 │   ├── HC-SR04esp8266.ino                   # ESP8266 固件
 │   ├── csbwithbt.ino                        # ESP32-S3 + BLE 固件
 │   ├── ultrasonic_displacement.py           # 位移测量
 │   └── ultrasonic_velocity.py               # 速度测量
-├── ph传感器/
+├── ph/
 │   ├── ph esp32.ino                         # ESP32-S3 固件
 │   └── ph_sensor.py
-├── 力传感器/
+├── force/
 │   ├── force.ino                            # ESP32-S3 固件
 │   ├── force_sensor.py
-│   └── 资料（HX711称重模块商家提供的）/
-├── 电压传感器/
+│   └── vendor-docs/                         # HX711 商家资料
+├── voltage/
 │   ├── ESP32_Voltage_Sensor.ino             # 内置 ADC
 │   ├── HX711_Voltage.ino                    # HX711 24 位
 │   ├── ADS1115_Voltage.ino                  # ADS1115 16 位
 │   └── voltage_sensor.py
-└── 电流传感器/
-    ├── ESP32_ADC_Raw_Data.ino               # ESP32-S3 固件
-    └── current_sensor.py
-└── 电学综合/                                  # 欧姆定律 + 电功率（上位机模块开发中）
+├── current/
+│   ├── ESP32_ADC_Raw_Data.ino               # ESP32-S3 固件
+│   └── current_sensor.py
+└── electronics/                             # 欧姆定律 + 电功率（上位机模块开发中）
     ├── VI_ESP32_ADC.ino                      # 电压(内置ADC)+ACS712 一体固件
     ├── VI_ADS1115.ino                        # 电压(ADS1115 16位)+ACS712 一体固件
     ├── VI_HX711.ino                          # 电压(HX711 24位)+ACS712 一体固件

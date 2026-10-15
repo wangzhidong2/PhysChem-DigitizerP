@@ -17,7 +17,7 @@
 //   ESP32-S3 GPIO2 <--->  ACS712 模拟输出（电流通道）
 //
 //  依赖库：Adafruit ADS1X15（Arduino IDE 库管理器搜索安装）
-//  详细说明：参见 传感器代码/电学综合/README.md
+//  详细说明：参见 sensors/electronics/README.md
 // ============================================================
 
 #include <Wire.h>

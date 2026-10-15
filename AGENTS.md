@@ -20,7 +20,7 @@
 
 ### 2.1 建目录丢文件
 
-在 `传感器代码/` 下新建目录，放入下位机 `.ino` 与上位机 `.py`（`.py` 用英文蛇形命名，如 `temperature_sensor.py`）。
+在 `sensors/` 下新建目录，放入下位机 `.ino` 与上位机 `.py`（`.py` 用英文蛇形命名，如 `temperature_sensor.py`）。
 
 ### 2.2 在 `.py` 文件头写识别区
 
@@ -117,17 +117,17 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 
 ## 7. 已知陷阱
 
-### 中文路径
+### 路径与 Arduino sketch 命名
 
-`传感器代码/` 及传感器子目录用中文命名（实测 golang/Python/git 均可正常工作，无需改名）。但以下位置用中文路径会踩坑：
+代码目录已全部改为英文（`sensors/` 及其各传感器子目录），`git` 不再转义路径，`git status` 直接可读。仅商家原始资料（`sensors/force/vendor-docs/` 内的 PDF / DOC）保留中文文件名——不参与构建，无需处理。
 
-- **Arduino Sketch 的目录名与 `.ino` 文件名必须完全一致**，这是 Arduino IDE 的硬性要求，与本项目的中文命名互相冲突——现有 `.ino` 全部不符合此要求（如 `传感器代码/力传感器/force.ino`）。**结果是这些固件必须在 Arduino IDE 里新建同名 sketch 粘贴烧录，无法直接打开编译**。新增固件时避免此坑：把 `.ino` 放在与其同名的目录下，或直接接受「粘贴烧录」的现状。
-- 含空格的 `.ino` 文件名（现有 `ph esp32.ino`）在部分系统 / 构建链上会出问题。
-- `git` 默认转义中文路径（`core.quotepath=true`），`git status` 显示为 `\346\204...`。要看清中文路径需临时关掉：
+**Arduino Sketch 的目录名与 `.ino` 文件名必须完全一致**（Arduino IDE 的硬性要求）：
 
-```bash
-git -c core.quotepath=false status
-```
+- 已符合：`sensors/force/force.ino`（目录名 = 文件名），可直接在 Arduino IDE 打开编译。
+- 仍不符合：其余 `.ino` 均与所在目录不同名（如 `sensors/ultrasonic/HC-SR04esp32.ino`、`sensors/voltage/ESP32_Voltage_Sensor.ino`），**必须在 Arduino IDE 里新建同名 sketch 粘贴烧录**。
+- 含空格的 `.ino` 文件名（现有 `sensors/ph/ph esp32.ino`）在部分系统 / 构建链上会出问题，建议后续改成 `ph.ino` 放进同名目录。
+
+新增固件时避免此坑：把 `.ino` 放在与其同名的目录下（如 `sensors/temperature/temperature.ino`）。
 
 ### 退出确认框
 
