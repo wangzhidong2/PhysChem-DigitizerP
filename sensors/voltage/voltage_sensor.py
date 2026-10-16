@@ -504,7 +504,7 @@ class VoltageSensorWidget(QWidget):
         self.divider_spin.setValue(self.divider_ratio)
         self.divider_spin.setSuffix(" x")
         self.divider_spin.setMinimumWidth(120)
-        self.divider_spin.setFixedHeight(32)
+        self.divider_spin.setFixedHeight(36)
         self.divider_spin.setToolTip(params_hint_text)
         self.divider_spin.valueChanged.connect(self.on_divider_changed)
         params_row.addWidget(self.divider_spin)
@@ -519,7 +519,7 @@ class VoltageSensorWidget(QWidget):
         self.amp_spin.setValue(self.amp_ratio)
         self.amp_spin.setSuffix(" x")
         self.amp_spin.setMinimumWidth(120)
-        self.amp_spin.setFixedHeight(32)
+        self.amp_spin.setFixedHeight(36)
         self.amp_spin.setToolTip(params_hint_text)
         self.amp_spin.valueChanged.connect(self.on_amp_changed)
         params_row.addWidget(self.amp_spin)
@@ -545,7 +545,7 @@ class VoltageSensorWidget(QWidget):
         params_row.addWidget(self.tare_status_label)
 
         self.tare_btn = PushButton("去皮")
-        self.tare_btn.setFixedHeight(32)
+        self.tare_btn.setFixedHeight(36)
         set_action_button_width(self.tare_btn)
         self.tare_btn.setStyleSheet("background-color: #fd7e14; color: white;")
         self.tare_btn.setToolTip("取最近 10 个采样点的平均值作为零点，从测量值中扣除。\n"
