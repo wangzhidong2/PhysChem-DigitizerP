@@ -1058,7 +1058,7 @@ class ProjectInfoDialog(MessageBoxBase):
     )
 
     #: 内容超出时的最大高度上限（小屏 / 高 DPI 时内部滚动，不撑破弹窗）
-    MAX_SCROLL_H = 480
+    MAX_SCROLL_H = 320
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1070,10 +1070,18 @@ class ProjectInfoDialog(MessageBoxBase):
         # 只需「返回」：隐藏确定按钮，取消按钮改文案
         self.yesButton.hide()
         self.cancelButton.setText("返回")
-        self.cancelButton.setMinimumWidth(100)
-        self.widget.setMinimumWidth(680)   # 容下整条仓库 URL（约 55 字符）
+        self.cancelButton.setMinimumWidth(80)
+        # 弹框宽度自适应屏幕：理想 680（容下整条仓库 URL，约 55 字符），
+        # 小屏 / 高 DPI 缩放时不超出屏幕，避免左右内容被裁掉
+        screen = QGuiApplication.primaryScreen()
+        avail_w = screen.availableGeometry().width() if screen else 1280
+        self.widget.setFixedWidth(min(680, int(avail_w * 0.9)))
 
-        self.viewLayout.addWidget(SubtitleLabel("项目信息", self))
+        subtitle = SubtitleLabel("项目信息", self)
+        _f = subtitle.font()
+        _f.setPixelSize(14)
+        subtitle.setFont(_f)
+        self.viewLayout.addWidget(subtitle)
 
         # 内容超高（小屏 / 高 DPI）时内部滚动，不撑破弹窗
         self.content = QWidget()
@@ -1092,6 +1100,7 @@ class ProjectInfoDialog(MessageBoxBase):
             "高精度的传感器解决方案；采用模块化架构，新增传感器只需"
             "丢文件，无需修改主程序。", self.content)
         desc.setWordWrap(True)
+        desc.setFont(QFont("Segoe UI", 9))
         body.addWidget(desc)
 
         body.addLayout(self._build_tags())
@@ -1110,9 +1119,9 @@ class ProjectInfoDialog(MessageBoxBase):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setWidget(self.content)
-        self._scroll.setMinimumHeight(240)
+        self._scroll.setMinimumHeight(160)
         self._scroll.setMaximumHeight(self.MAX_SCROLL_H)
         self.viewLayout.addWidget(self._scroll)
         self.viewLayout.addStretch()
@@ -1126,7 +1135,7 @@ class ProjectInfoDialog(MessageBoxBase):
         映射只在 _on_autoshow_toggled 里做一次。
         """
         self._autoshow = CheckBox("下次启动不再弹出", self)
-        self._autoshow.setFont(QFont("Segoe UI", 10))
+        self._autoshow.setFont(QFont("Segoe UI", 9))
         self._autoshow.setChecked(not bool(app_cfg.showIntroOnStartup.value))
         self._autoshow.setToolTip(
             "勾选后启动不再自动弹出；随时可从主页「项目信息」重新打开")
@@ -1179,7 +1188,7 @@ class ProjectInfoDialog(MessageBoxBase):
         这是最需要先被看到的一段。
         """
         self._notice = build_free_software_notice(
-            self.content, title_size=12, body_size=11)
+            self.content, title_size=11, body_size=10)
         self._notice_label = self._notice.findChild(_WrappedLabel)
         self._notice_title = self._notice.findChild(
             QLabel, "freeSoftwareNoticeTitle")
@@ -1196,10 +1205,10 @@ class ProjectInfoDialog(MessageBoxBase):
         row.setSpacing(8)
         for text, bg, fg in self.TAGS:
             tag = QLabel(text, self.content)
-            tag.setFont(QFont("Segoe UI", 9))
+            tag.setFont(QFont("Segoe UI", 8))
             tag.setStyleSheet(
                 f"background-color: {bg}; color: {fg};"
-                "border-radius: 10px; padding: 4px 12px;")
+                "border-radius: 9px; padding: 3px 10px;")
             row.addWidget(tag)
             self._tag_labels.append(tag)
         row.addStretch()
@@ -1216,9 +1225,9 @@ class ProjectInfoDialog(MessageBoxBase):
         url_edit = LineEdit(self.content)
         url_edit.setText(url)
         url_edit.setReadOnly(True)
-        url_edit.setFont(QFont("Consolas", 10))
+        url_edit.setFont(QFont("Consolas", 9))
         url_edit.setCursor(Qt.CursorShape.IBeamCursor)
-        url_edit.setMinimumWidth(380)   # 加宽，完整显示整个 URL
+        url_edit.setMinimumWidth(300)   # 加宽，完整显示整个 URL
         url_edit.setToolTip("点击全选，Ctrl+C 复制")
         row.addWidget(url_edit, stretch=1)
 
@@ -1646,11 +1655,13 @@ class SettingsWidget(QWidget):
 
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setStyleSheet(scroll_area_style())
 
         self._content = QWidget()
         self._content.setStyleSheet(page_bg_style())
+        # 最小宽度：窗口过窄时出横向滚动条，而不是把卡片的文字压到不可见
+        self._content.setMinimumWidth(720)
         layout = QVBoxLayout(self._content)
         layout.setContentsMargins(24, 20, 24, 24)
         layout.setSpacing(16)

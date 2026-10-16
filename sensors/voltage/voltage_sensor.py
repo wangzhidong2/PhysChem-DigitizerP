@@ -25,6 +25,7 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
     BodyLabel, CaptionLabel, DoubleSpinBox, SwitchButton, FluentIcon as FIF,
+    AdaptiveFlowLayout, FlowLayout,
 )
 import numpy as np
 
@@ -476,8 +477,12 @@ class VoltageSensorWidget(QWidget):
         if self.adc_bits != 16 and self.ads1115_mode:
             self.ads1115_check.setChecked(False)
 
-        params_row = QHBoxLayout()
-        params_row.setSpacing(10)
+        # 紧凑流式布局：按控件自然宽度排列，宽度不够时自动换行。
+        # 不用 AdaptiveFlowLayout——那是等宽卡片网格布局，会把每个控件
+        # 拉成同一列宽，标签与输入框之间出现大片空白
+        params_row = FlowLayout(isTight=True)
+        params_row.setHorizontalSpacing(10)
+        params_row.setVerticalSpacing(8)
 
         # 分压比/放大倍数解释文字（原为常显灰色小字，现改为悬停 tooltip 显示）
         params_hint_text = ("分压比 = (R1+R2)/R2，用于还原分压前的原始电压；\n"
@@ -516,31 +521,22 @@ class VoltageSensorWidget(QWidget):
         self.actual_range_label = BodyLabel(f"实际量程: -{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V~+{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V")
         self.actual_range_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         params_row.addWidget(self.actual_range_label)
-        params_row.addStretch()
-        adc_card_layout.addLayout(params_row)
 
-        # 显示单位选择
-        unit_row = QHBoxLayout()
-        unit_row.setSpacing(10)
-        unit_row.addWidget(BodyLabel("显示单位:"))
+        # 显示单位与去皮并入本行（原各占一行，现合并减少总行数）
+        params_row.addWidget(BodyLabel("显示单位:"))
         self.unit_combo = ComboBox()
         self.unit_combo.addItems(["千伏 (kV)", "伏 (V)", "毫伏 (mV)"])
         unit_map = {'kV': 0, 'V': 1, 'mV': 2}
         self.unit_combo.setCurrentIndex(unit_map.get(self.current_unit, 1))
         self.unit_combo.currentIndexChanged.connect(self.on_unit_changed)
-        unit_row.addWidget(self.unit_combo)
-        unit_row.addStretch()
-        adc_card_layout.addLayout(unit_row)
+        params_row.addWidget(self.unit_combo)
 
-        # 去皮行：状态显示 + 去皮按钮（按钮由「操作按钮」卡移到这里，连接后即可点、可反复点）
-        tare_row = QHBoxLayout()
-        tare_row.setSpacing(10)
-        tare_row.addWidget(BodyLabel("去皮:"))
+        params_row.addWidget(BodyLabel("去皮:"))
         self.tare_status_label = BodyLabel("未启用" if not self.tare_active else
                                         f"已启用 (零点 {self.format_voltage(self.tare_offset_v)} {self.current_unit})")
         self.tare_status_label.setStyleSheet("color: green; font-weight: bold;" if self.tare_active
                                              else "color: #888; font-weight: bold;")
-        tare_row.addWidget(self.tare_status_label)
+        params_row.addWidget(self.tare_status_label)
 
         self.tare_btn = PushButton("去皮")
         self.tare_btn.setFixedHeight(32)
@@ -551,9 +547,8 @@ class VoltageSensorWidget(QWidget):
                                  "可反复点击：每点一次都以当前读数重新归零，没有「取消去皮」按钮。")
         self.tare_btn.clicked.connect(self.tare_now)
         self.tare_btn.setEnabled(False)
-        tare_row.addWidget(self.tare_btn)
-        tare_row.addStretch()
-        adc_card_layout.addLayout(tare_row)
+        params_row.addWidget(self.tare_btn)
+        adc_card_layout.addLayout(params_row)
 
         card_adc = FluentCard("ADC 与电路参数", card_adc_content, expanded=True, icon=FIF.SETTING)
         layout.addWidget(card_adc)
