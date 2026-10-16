@@ -375,12 +375,6 @@ class CurrentSensorWidget(QWidget):
         range_row.addStretch()
         acs_card_layout.addLayout(range_row)
 
-        # 量程显示
-        self.range_label = BodyLabel()
-        self.range_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self.range_label.setStyleSheet("color: #1a1a1a;")
-        acs_card_layout.addWidget(self.range_label)
-
         # 供电电压 + 零点电压 + 分压比
         params_row = QHBoxLayout()
         params_row.setSpacing(10)
@@ -767,11 +761,6 @@ class CurrentSensorWidget(QWidget):
         self.update_current_display()
 
     def update_range_display(self):
-        info = self.ACS712_RANGES.get(self.acs_range, self.ACS712_RANGES['5A'])
-        self.range_label.setText(
-            f"量程: ±{info['range_a']}A  灵敏度: {info['sensitivity']*1000:.0f}mV/A  "
-            f"零点: {self.v_quiescent:.3f}V"
-        )
         # 受分压与 ADC 限制的可测电流范围
         max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4096) - 1
         v_sensor_max = self.VREF * self.divider_ratio  # ADC 满量程对应的传感器输出

@@ -395,7 +395,11 @@ class VoltageSensorWidget(QWidget):
         hx711_row = QHBoxLayout(self.hx711_panel)
         hx711_row.setContentsMargins(0, 0, 0, 0)
         hx711_row.setSpacing(10)
-        self.hx711_check = SwitchButton("HX711 模式（24位有符号）")
+        # 该版本 SwitchButton 无描述文字（setText 只改 On/Off 标签），
+        # 描述用独立标签放在开关旁
+        self.hx711_check = SwitchButton()
+        hx711_row.addWidget(self.hx711_check)
+        hx711_row.addWidget(BodyLabel("HX711 模式（24位有符号）"))
         self.hx711_check.setChecked(self.hx711_mode)
         self.hx711_check.setToolTip("启用后按 HX711 有符号 24 位 + AVDD/Gain 换算电压\n通道A=增益128，通道B=增益32")
         self.hx711_check.checkedChanged.connect(self.on_hx711_mode_changed)
@@ -442,7 +446,9 @@ class VoltageSensorWidget(QWidget):
         ads1115_row = QHBoxLayout(self.ads1115_panel)
         ads1115_row.setContentsMargins(0, 0, 0, 0)
         ads1115_row.setSpacing(10)
-        self.ads1115_check = SwitchButton("ADS1115 模式（16位有符号补码）")
+        self.ads1115_check = SwitchButton()
+        ads1115_row.addWidget(self.ads1115_check)
+        ads1115_row.addWidget(BodyLabel("ADS1115 模式（16位有符号补码）"))
         self.ads1115_check.setChecked(self.ads1115_mode)
         self.ads1115_check.setToolTip(
             "TI ADS1115 16位 I2C ADC\n"

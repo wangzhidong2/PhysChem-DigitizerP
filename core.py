@@ -4490,6 +4490,11 @@ class FluentCard(ExpandGroupSettingCard):
 
         self.setExpand(expanded)
 
+        # 折叠/展开动画的终点是启动时记录的滚动条最大值，若动画期间
+        # 内容高度变化（面板显隐、宽度回流），折叠后卡片会停在半途
+        # 高度，header 下方残留一片空白。动画结束后按当前内容重算一次。
+        self.expandAni.finished.connect(self._syncHeightAfterAni)
+
     # ---------- 内容填充 ----------
     def add_row(self, label, widget):
         """添加一行「标签 + 控件」的紧凑行。"""
@@ -4524,6 +4529,22 @@ class FluentCard(ExpandGroupSettingCard):
         return self.isExpand
 
     # ---------- 尺寸 ----------
+    def _syncHeightAfterAni(self):
+        """折叠/展开动画结束后把高度收敛到当前内容的真实高度。
+
+        折叠：无论动画停在哪里，都收回 header 高度；展开：按内容
+        sizeHint 重算。直接 setFixedHeight，不再播动画。
+        """
+        try:
+            if self.isExpand:
+                h = self.viewLayout.sizeHint().height()
+                self.setFixedHeight(self.card.height() + h)
+                self.verticalScrollBar().setValue(0)
+            else:
+                self.setFixedHeight(self.card.height())
+        except Exception:
+            pass
+
     def _adjustViewSize(self):
         """用自定义内容高度重算卡片高度（替代原生基于 group 行数的算法）。"""
         h = self.body.sizeHint().height()
