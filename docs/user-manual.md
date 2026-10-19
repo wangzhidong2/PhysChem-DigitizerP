@@ -72,7 +72,7 @@ pyqtgraph 引擎下，图表左侧带有分析栏。横轴可以选择显示全�
 
 软件提供两种使用方式。建议不熟悉 Python 的使用者直接用预打包版本：在项目 Releases 页下载压缩包，解压到任意目录，双击主程序就能运行，机器上不用装 Python。
 
-希望从源代码运行的使用者，先到 Python 官网安装 3.10 以上版本，执行 pip install -r requirements.txt 安装依赖。依赖中 PySide6 和 Fluent-Widgets 组件库提供图形界面，numpy 用于数值计算，pyserial、matplotlib、pyqtgraph、flask 均为可选项，缺失时对应功能自动降级。准备好后在项目根目录执行 ./python ./src/main.py 启动软件。要注意 sensor_config.json、app_config.json 和 logs.json 这几个配置文件都生成在 ./src/main.py 所在目录（即 ./src/ 目录）。更换目录会清空配置。
+希望从源代码运行的使用者，先到 Python 官网安装 3.10 以上版本，执行 pip install -r requirements.txt 安装依赖。依赖中 PySide6 和 Fluent-Widgets 组件库提供图形界面，numpy 用于数值计算，pyserial、matplotlib、pyqtgraph、flask 均为可选项，缺失时对应功能自动降级。准备好后在项目根目录执行 python ./src/main.py 启动软件。要注意 sensor_config.json、app_config.json 和 logs.json 这几个配置文件都生成在 ./src/main.py 所在目录（即 ./src/ 目录）。更换目录会清空配置。
 
 ## 六、主页与模块导航
 
