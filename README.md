@@ -12,7 +12,7 @@
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
 
 
-[![QQ群：594232082](https://img.shields.io/badge/QQ%E7%BE%A4-594232082-12B7F5?logo=tencentqq&logoColor=white)](https://qun.qq.com/universal-share/share?ac=1&authKey=W3UYA8Yg0FZSETkgFNg0Hb7fBObSX5wzeBhEayqdJKZ%2BiJsoaIWEMKOppOefA6ZX&busi_data=eyJncm91cENvZGUiOiI1OTQyMzIwODIiLCJ0b2tlbiI6IjJBdDRTNFJ2YWE5cVUzMzhKL0dWSWR4b3EvaUt5NFhzVkcvTGJtTHNmSk5yMzN2STJFZ0dhSnM0blJmUUhJbmciLCJ1aW4iOiIzOTYxMzEzNDg1In0%3D&data=iFx39SO9DQYYORram8aG2Wubsu19mSpAmh7VnrlW_3MAEub8JdWcw2Qkgoiz39TbPspTQaNdf13fL0Sd6lPM2w&svctype=4&tempid=h5_group_info)
+[![点击加入 QQ 交流群（群号 594232082）](docs/images/qq-group-badge.svg)](https://qun.qq.com/universal-share/share?ac=1&authKey=W3UYA8Yg0FZSETkgFNg0Hb7fBObSX5wzeBhEayqdJKZ%2BiJsoaIWEMKOppOefA6ZX&busi_data=eyJncm91cENvZGUiOiI1OTQyMzIwODIiLCJ0b2tlbiI6IjJBdDRTNFJ2YWE5cVUzMzhKL0dWSWR4b3EvaUt5NFhzVkcvTGJtTHNmSk5yMzN2STJFZ0dhSnM0blJmUUhJbmciLCJ1aW4iOiIzOTYxMzEzNDg1In0%3D&data=iFx39SO9DQYYORram8aG2Wubsu19mSpAmh7VnrlW_3MAEub8JdWcw2Qkgoiz39TbPspTQaNdf13fL0Sd6lPM2w&svctype=4&tempid=h5_group_info)
 ## [操作手册用户版](./docs/user-manual.md)
 
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/8b40706c-3ba8-4e17-bb6f-1860efdb9a05/image.png 'image.png')
@@ -53,9 +53,9 @@
 ```powershell
 # Windows（PowerShell / CMD）
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1     # PowerShell 激活虚拟环境
+.\\.venv\\Scripts\\Activate.ps1     # PowerShell 激活虚拟环境
 # 若提示“禁止运行脚本”，先执行：Set-ExecutionPolicy -Scope Process Bypass
-# CMD 用户改用：.venv\Scripts\activate.bat
+# CMD 用户改用：.venv\\Scripts\\activate.bat
 ```
 
 ```bash
@@ -154,7 +154,7 @@ git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
 
 cd PhysChem-DigitizerP
 # 使用虚拟环境时先激活（Windows PowerShell；macOS/Linux 用 source .venv/bin/activate）
-.\.venv\Scripts\Activate.ps1
+.\\.venv\\Scripts\\Activate.ps1
 python ./main.py
 ```
 #### 3.2.6.或者，使用平台的源代码打包功能
