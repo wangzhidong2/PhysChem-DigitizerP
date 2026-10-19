@@ -98,7 +98,7 @@ pip install flask
 pip install PySide6 PySide6-Fluent-Widgets numpy pyserial matplotlib pyqtgraph flask
 ```
 或者，项目根目录已提供[requirements.txt](requirements.txt)，包含所有必需与可选依赖。
-在项目根目录（即 `main.py` 所在目录）打开终端，执行：
+在项目根目录打开终端，执行：
 ```bash
 pip install -r requirements.txt
 ```
@@ -123,13 +123,13 @@ pip install uv                                # 已有 Python 时最省事
 # macOS / Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
 
 uv sync          # 自动下载 Python（若需要）+ 创建 .venv + 按 uv.lock 精确安装依赖
-uv run main.py   # 启动主程序（自动使用项目环境，无需手动激活）
+uv run src/main.py   # 启动主程序（自动使用项目环境，无需手动激活）
 ```
 
 要点：
 
 - **`uv sync` 会自动生成 `uv.lock` 锁文件**（记录每个依赖的精确版本），提交到仓库后，其他人和 CI 都能装出**完全一致**的环境，不会出现“我这儿能跑你那儿报错”。
-- **`uv run <命令>`** 不用先 `activate`，它临时把项目环境放到最前面执行命令，例如 `uv run test_serial.py`、`uv run python -c "import PySide6"`。
+- **`uv run <命令>`** 不用先 `activate`，它临时把项目环境放到最前面执行命令，例如 `uv run src/test_serial.py`、`uv run python -c "import PySide6"`。
 - **默认走清华 PyPI 镜像**（写在 `pyproject.toml` 的 `[[tool.uv.index]]`），国内无需再加 `-i`。海外网络想换回官方源：`uv sync --default-index https://pypi.org/simple`。
 - **打包工具单独分组**：`uv sync` 默认会装 `dev` 组里的 PyInstaller；要纯净的运行时环境用 `uv sync --no-dev`。
 - 想升级依赖版本：`uv lock --upgrade` 后重新 `uv sync`。
@@ -141,7 +141,7 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 ```
 
 - **`uv` 与 `pip` 可以共存**：不想用 uv 时，`pip install -r requirements.txt` 的老流程完全不受影响（`requirements.txt` 会继续保留）。
-- 注意在**项目根目录**（即 `main.py` 所在目录）执行 `uv sync` / `uv run`——程序的 `sensor_config.json`、`app_config.json`、`logs.json` 都以 `main.py` 所在目录为基准路径。
+- 注意在**项目根目录**执行 `uv sync` / `uv run`——程序的 `sensor_config.json`、`app_config.json`、`logs.json` 都以 `src/main.py` 所在目录（即 `src/`）为基准路径。
 
 #### 3.2.5.下载代码（如有git）
 ```bash
@@ -155,26 +155,26 @@ git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
 cd PhysChem-DigitizerP
 # 使用虚拟环境时先激活（Windows PowerShell；macOS/Linux 用 source .venv/bin/activate）
 .\.venv\Scripts\Activate.ps1
-python ./main.py
+python ./src/main.py
 ```
 #### 3.2.6.或者，使用平台的源代码打包功能
 ##### 3.2.6.1.下载代码
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/e776925b-b898-4fe4-82b9-1b01bd4260e2/image.png 'image.png')
-##### 3.2.6.2.解压，双击 `main.py` 打开
+##### 3.2.6.2.解压，双击 `src/main.py` 打开
 ### 3.3.功能模块
 
-项目采用**模块化架构**——主程序 `main.py` 启动时扫描 `sensors/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
+项目采用**模块化架构**——主程序 `src/main.py` 启动时扫描 `src/sensors/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
 
 | 模块 | 传感器 | 开发板 | 类别 |  说明文档 |
 |------|--------|--------|------|----------|
-| 超声波位移 | HC-SR04 | ESP32 / ESP8266 / ESP32-S3 | 物理 |[使用说明](sensors/ultrasonic/README.md) |
-| 超声波速度 | HC-SR04 | （共享上述固件） | 物理 | [使用说明](sensors/ultrasonic/README.md) |
-| pH 传感器 | SEN0161 | ESP32-S3 | 化学 | [使用说明](sensors/ph/README.md) |
-| 力/质量传感器 | HX711 | ESP32-S3 | 物理 | [使用说明](sensors/force/README.md) |
-| 电压传感器 | ESP32 ADC / HX711等AD转换模块 | ESP32-S3 | 物理 |  [使用说明](sensors/voltage/README.md) |
-| 电流传感器 | ACS712 | ESP32-S3 | 物理 |  [使用说明](sensors/current/README.md) |
-| 欧姆定律 | ESP32 ADC / ADS1115 / HX711 + ACS712（一体或双板） | ESP32-S3 | 物理 | [使用说明](sensors/electronics/README.md) |
-| 电功率 | 同上 | ESP32-S3 | 物理 | [使用说明](sensors/electronics/README.md) |
+| 超声波位移 | HC-SR04 | ESP32 / ESP8266 / ESP32-S3 | 物理 |[使用说明](src/sensors/ultrasonic/README.md) |
+| 超声波速度 | HC-SR04 | （共享上述固件） | 物理 | [使用说明](src/sensors/ultrasonic/README.md) |
+| pH 传感器 | SEN0161 | ESP32-S3 | 化学 | [使用说明](src/sensors/ph/README.md) |
+| 力/质量传感器 | HX711 | ESP32-S3 | 物理 | [使用说明](src/sensors/force/README.md) |
+| 电压传感器 | ESP32 ADC / HX711等AD转换模块 | ESP32-S3 | 物理 |  [使用说明](src/sensors/voltage/README.md) |
+| 电流传感器 | ACS712 | ESP32-S3 | 物理 |  [使用说明](src/sensors/current/README.md) |
+| 欧姆定律 | ESP32 ADC / ADS1115 / HX711 + ACS712（一体或双板） | ESP32-S3 | 物理 | [使用说明](src/sensors/electronics/README.md) |
+| 电功率 | 同上 | ESP32-S3 | 物理 | [使用说明](src/sensors/electronics/README.md) |
 
 ## 4.下位机固件烧录
 ### 4.1.安装 [Arduino IDE](https://www.arduino.cc/en/software)
@@ -201,76 +201,82 @@ python ./main.py
 
 ```
 PhysChem-DigitizerP/
-├── main.py                     # 主程序：FluentWindow + 主页 + 动态加载器
-├── core.py                     # 公共模块：通信线程 / 配置 / 图表分析（拟合/离群点剔除）/ 对话框 / AI 分析 / 字体 / 现代样式
-├── test_serial.py              # 串口连接测试工具
-├── sensor_config.json          # 传感器校准配置（运行时自动生成，.gitignore）
-├── app_config.json             # 应用配置（主题/字体/引擎/置顶/日志等，运行时生成，.gitignore）
-├── logs.json                   # 运行日志（JSON Lines，默认开启记录，.gitignore）
-├── requirements.txt            # 依赖清单（pip install -r requirements.txt）
-├── pyproject.toml              # PEP 621 依赖清单 + uv 配置（uv sync / uv run；首次 uv sync 会生成 uv.lock）
-├── CONTRIBUTING.md             # 贡献指南
-├── PhysChem-DigitizerP.spec    # PyInstaller 打包配置
-├── .venv/                      # 虚拟环境（可选，.gitignore；创建方法见 3.2.2）
 ├── README.md                   # 主文档（本文件）
 ├── AGENTS.md                   # 开发者指南（含添加新模块教程）
+├── CONTRIBUTING.md             # 贡献指南
+├── DCO.md                      # 开发者原创声明（DCO）
 ├── LICENSE                     # GPL-3.0 许可证
-├── assets/
-│   └── fonts/                  # 内嵌字体（随程序分发，见 6.9）
-│       ├── MiSans-Regular.ttf              # 桌面端默认字体（小米 MiSans）
-│       ├── HarmonyOS_Sans_SC_Regular.ttf   # 可选内嵌字体（华为 HarmonyOS Sans SC）
-│       ├── HarmonyOS_Sans_SC_Regular.woff2 # 同上，网页仪表盘专用（体积约为 TTF 一半）
-│       └── HarmonyOS_Sans_SC_LICENSE.txt   # 华为字体许可证（随字体分发所必需）
-├── flaskserver/                # 数据接口插件（HTTP + 浏览器仪表盘 + MCP，见 6.10）
-│   ├── __init__.py             # 插件生命周期（启停/密钥/可用性探测）
-│   ├── server.py               # Flask 路由：REST API + 字体托管 + 静态仪表盘
-│   ├── mcp_server.py           # MCP stdio 代理（供 AI Agent 调用，需单独装 mcp）
-│   ├── README.md               # 插件接口文档（端点一览 / curl 示例 / MCP 配置）
-│   └── web/                    # 仪表盘前端（零构建、零 CDN，离线可用）
-│       ├── index.html          # 桌面式界面骨架
-│       ├── style.css           # 样式（字体由 --app-font 变量驱动）
-│       ├── app.js              # 前端逻辑（窗口/任务栏/密钥/字体设置）
-│       └── echarts.min.js      # 图表库（本地内置，不联网）
-├── docs/
+├── requirements.txt            # 依赖清单（pip install -r requirements.txt）
+├── pyproject.toml              # PEP 621 依赖清单 + uv 配置（uv sync / uv run；首次 uv sync 会生成 uv.lock）
+├── PhysChem-DigitizerP.spec    # PyInstaller 打包配置（入口指向 src/main.py）
+├── .venv/                      # 虚拟环境（可选，.gitignore；创建方法见 3.2.2）
+├── docs/                       # 文档与文档图片（含操作手册、设计文档、README 截图）
 │   └── images/                 # 文档图片
-└── sensors/                    # 下位机固件 + 上位机 .py 同一传感器目录
-    ├── README.md               # 各传感器固件与模块总览
-    ├── ultrasonic/
-    │   ├── README.md           # 使用说明（接线/校准/原理/FAQ）
-    │   ├── ultrasonic_displacement.py  # 位移测量上位机模块
-    │   ├── ultrasonic_velocity.py      # 速度测量上位机模块
-    │   ├── HC-SR04esp32/HC-SR04esp32.ino        # ESP32 固件
-    │   ├── HC-SR04esp8266/HC-SR04esp8266.ino    # ESP8266 固件
-    │   └── csbwithbt/csbwithbt.ino              # ESP32-S3 + BLE 固件
-    ├── ph/
-    │   ├── README.md           # 使用说明（接线/多模式校准/电极保养/FAQ）
-    │   ├── schematic.pdf       # PH 传感器原理图
-    │   ├── ph_sensor.py        # pH 上位机模块
-    │   └── ph_esp32/ph_esp32.ino                # ESP32-S3 固件
-    ├── force/
-    │   ├── README.md           # 使用说明（接线/去皮校准/串口命令/FAQ）
-    │   ├── force_sensor.py     # 力/质量上位机模块
-    │   ├── force/force.ino     # ESP32-S3 HX711 固件
-    │   └── vendor-docs/        # HX711 商家资料（原「资料（HX711称重模块商家提供的）」）
-    ├── voltage/
-    │   ├── README.md           # 使用说明（接线/分压扩展/ADC配置/FAQ）
-    │   ├── voltage_sensor.py   # 电压上位机模块（支持 HX711 / ADS1115 模式）
-    │   ├── ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino  # ESP32-S3 内置 ADC 固件
-    │   ├── HX711_Voltage/HX711_Voltage.ino                # HX711 24 位 ADC 固件
-    │   └── ADS1115_Voltage/ADS1115_Voltage.ino            # ADS1115 16 位 ADC 固件
-    ├── current/                # ACS712 电流（5A/20A/30A，AC/DC，零点校准/去皮）
-    │   ├── README.md           # 使用说明（接线/量程/零点校准/FAQ）
-    │   ├── current_sensor.py   # 电流上位机模块（5A/20A/30A 量程，AC/DC）
-    │   └── ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino      # ESP32-S3 固件
-    └── electronics/            # 欧姆定律 + 电功率（上位机模块开发中）
-        ├── README.md           # 使用说明（接线/校准/双板接线）
-        ├── VI_ESP32_ADC/VI_ESP32_ADC.ino   # 电压(内置ADC)+ACS712电流 一体固件
-        ├── VI_ADS1115/VI_ADS1115.ino       # 电压(ADS1115 16位)+ACS712电流 一体固件
-        ├── VI_HX711/VI_HX711.ino           # 电压(HX711 24位)+ACS712电流 一体固件
-        ├── V_ESP32_ADC/V_ESP32_ADC.ino     # 双板分测：电压板（内置 ADC）
-        ├── V_ADS1115/V_ADS1115.ino         # 双板分测：电压板（ADS1115 16 位）
-        ├── V_HX711/V_HX711.ino             # 双板分测：电压板（HX711 24 位）
-        └── I_ACS712/I_ACS712.ino           # 双板分测：电流板（ACS712）
+└── src/                        # 源码目录：主程序只从这里加载，运行时配置也在本目录生成
+    ├── main.py                 # 主程序：FluentWindow + 主页 + 动态加载器
+    ├── core.py                 # 公共模块：通信线程 / 配置 / 图表分析（拟合/离群点剔除）/ 对话框 / AI 分析 / 字体 / 现代样式
+    ├── test_serial.py          # 串口连接测试工具
+    ├── sensor_config.json      # 传感器校准配置（运行时自动生成，.gitignore）
+    ├── app_config.json         # 应用配置（主题/字体/引擎/置顶/日志等，运行时生成，.gitignore）
+    ├── logs.json               # 运行日志（JSON Lines，默认开启记录，.gitignore）
+    ├── assets/
+    │   ├── fonts/              # 内嵌字体（随程序分发，见 6.9）
+    │   │   ├── MiSans-Regular.ttf              # 桌面端默认字体（小米 MiSans）
+    │   │   ├── HarmonyOS_Sans_SC_Regular.ttf   # 可选内嵌字体（华为 HarmonyOS Sans SC）
+    │   │   ├── HarmonyOS_Sans_SC_Regular.woff2 # 同上，网页仪表盘专用（体积约为 TTF 一半）
+    │   │   └── HarmonyOS_Sans_SC_LICENSE.txt   # 华为字体许可证（随字体分发所必需）
+    │   └── images/             # 运行时图标（窗口图标 / 平台 logo）
+    │       ├── icon.ico        # 窗口与 exe 图标
+    │       ├── gitee.svg       # 主页与设置页 Gitee logo
+    │       └── gitcode.svg     # 主页与设置页 GitCode logo
+    ├── flaskserver/            # 数据接口插件（HTTP + 浏览器仪表盘 + MCP，见 6.10）
+    │   ├── __init__.py         # 插件生命周期（启停/密钥/可用性探测）
+    │   ├── server.py           # Flask 路由：REST API + 字体托管 + 静态仪表盘
+    │   ├── mcp_server.py       # MCP stdio 代理（供 AI Agent 调用，需单独装 mcp）
+    │   ├── README.md           # 插件接口文档（端点一览 / curl 示例 / MCP 配置）
+    │   └── web/                # 仪表盘前端（零构建、零 CDN，离线可用）
+    │       ├── index.html      # 桌面式界面骨架
+    │       ├── style.css       # 样式（字体由 --app-font 变量驱动）
+    │       ├── app.js          # 前端逻辑（窗口/任务栏/密钥/字体设置）
+    │       └── echarts.min.js  # 图表库（本地内置，不联网）
+    └── sensors/                # 下位机固件 + 上位机 .py 同一传感器目录
+        ├── README.md               # 各传感器固件与模块总览
+        ├── ultrasonic/
+        │   ├── README.md           # 使用说明（接线/校准/原理/FAQ）
+        │   ├── ultrasonic_displacement.py  # 位移测量上位机模块
+        │   ├── ultrasonic_velocity.py      # 速度测量上位机模块
+        │   ├── HC-SR04esp32/HC-SR04esp32.ino        # ESP32 固件
+        │   ├── HC-SR04esp8266/HC-SR04esp8266.ino    # ESP8266 固件
+        │   └── csbwithbt/csbwithbt.ino              # ESP32-S3 + BLE 固件
+        ├── ph/
+        │   ├── README.md           # 使用说明（接线/多模式校准/电极保养/FAQ）
+        │   ├── schematic.pdf       # PH 传感器原理图
+        │   ├── ph_sensor.py        # pH 上位机模块
+        │   └── ph_esp32/ph_esp32.ino                # ESP32-S3 固件
+        ├── force/
+        │   ├── README.md           # 使用说明（接线/去皮校准/串口命令/FAQ）
+        │   ├── force_sensor.py     # 力/质量上位机模块
+        │   ├── force/force.ino     # ESP32-S3 HX711 固件
+        │   └── vendor-docs/        # HX711 商家资料（原「资料（HX711称重模块商家提供的）」）
+        ├── voltage/
+        │   ├── README.md           # 使用说明（接线/分压扩展/ADC配置/FAQ）
+        │   ├── voltage_sensor.py   # 电压上位机模块（支持 HX711 / ADS1115 模式）
+        │   ├── ESP32_Voltage_Sensor/ESP32_Voltage_Sensor.ino  # ESP32-S3 内置 ADC 固件
+        │   ├── HX711_Voltage/HX711_Voltage.ino                # HX711 24 位 ADC 固件
+        │   └── ADS1115_Voltage/ADS1115_Voltage.ino            # ADS1115 16 位 ADC 固件
+        ├── current/                # ACS712 电流（5A/20A/30A，AC/DC，零点校准/去皮）
+        │   ├── README.md           # 使用说明（接线/量程/零点校准/FAQ）
+        │   ├── current_sensor.py   # 电流上位机模块（5A/20A/30A 量程，AC/DC）
+        │   └── ESP32_ADC_Raw_Data/ESP32_ADC_Raw_Data.ino      # ESP32-S3 固件
+        └── electronics/            # 欧姆定律 + 电功率（上位机模块开发中）
+            ├── README.md           # 使用说明（接线/校准/双板接线）
+            ├── VI_ESP32_ADC/VI_ESP32_ADC.ino   # 电压(内置ADC)+ACS712电流 一体固件
+            ├── VI_ADS1115/VI_ADS1115.ino       # 电压(ADS1115 16位)+ACS712电流 一体固件
+            ├── VI_HX711/VI_HX711.ino           # 电压(HX711 24位)+ACS712电流 一体固件
+            ├── V_ESP32_ADC/V_ESP32_ADC.ino     # 双板分测：电压板（内置 ADC）
+            ├── V_ADS1115/V_ADS1115.ino         # 双板分测：电压板（ADS1115 16 位）
+            ├── V_HX711/V_HX711.ino             # 双板分测：电压板（HX711 24 位）
+            └── I_ACS712/I_ACS712.ino           # 双板分测：电流板（ACS712）
 ```
 
 > 模块加载机制、识别区格式与添加新模块的完整教程请参考 [AGENTS.md](AGENTS.md)。
@@ -280,7 +286,7 @@ PhysChem-DigitizerP/
 ### 6.1.启动软件
 
 ```bash
-python main.py
+python src/main.py
 ```
 
 ### 6.2.通用操作流程
@@ -355,7 +361,7 @@ python main.py
 
 ### 6.9.应用字体（可自定义，含内嵌字体）
 
-界面默认使用**内嵌的 MiSans 字体**（assets/fonts/MiSans-Regular.ttf，小米出品，免费商用）。字体会随程序一起分发并在启动时注册进 Qt，所以**换电脑、换系统都不依赖本机装过该字体**，显示效果始终一致。
+界面默认使用**内嵌的 MiSans 字体**（src/assets/fonts/MiSans-Regular.ttf，小米出品，免费商用）。字体会随程序一起分发并在启动时注册进 Qt，所以**换电脑、换系统都不依赖本机装过该字体**，显示效果始终一致。
 
 想换字体：进入 **设置 → 外观 → 应用字体 → 「选择…」**，会打开一个仿 Word 的字体选择器——列出系统里**已安装的全部字体**（Qt 直接给出中文名，如微软雅黑／宋体／楷体／隶书），每条用**该字体自身的字形**渲染，支持搜索与实时预览。选中即生效，无需重启，并写入 `app_config.json` 的 `General.FontFamily` 下次沿用。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/f5188488-b8ca-4ac2-a398-33310a63c837/image.png 'image.png')
@@ -366,7 +372,7 @@ python main.py
 
 ### 6.10.数据接口与浏览器仪表盘（flaskserver）
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/f90dec07-d72d-49e6-b33b-defa0a472f4f/image.png 'image.png')
-把实验数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。这是**可选插件**：删掉整个 `flaskserver/` 目录，主程序行为完全不变（主页卡片消失、不占端口）。
+把实验数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。这是**可选插件**：删掉整个 `src/flaskserver/` 目录，主程序行为完全不变（主页卡片消失、不占端口）。
 **开启**：主页 →「数据接口」卡片 →「打开…」→ 打开「数据接口」开关（默认监听 `http://127.0.0.1:8765`）；浏览器访问该地址即为实时仪表盘，首次开启自动生成访问密钥。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/55356cfd-de46-44d8-bc32-f472ef38535a/image.png 'image.png')
 ![QQ_1791700657467.png](https://raw.gitcode.com/user-images/assets/9825261/11b6548a-4571-489c-afa3-8a1a1d7778d3/QQ_1791700657467.png 'QQ_1791700657467.png')
@@ -375,9 +381,9 @@ python main.py
 | **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器，与主程序复用同一套逻辑） |
 | **仪表盘登录** | 开启鉴权后先显示登录页，输对密钥才进桌面；登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
 | **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`，以及 `collect`／`command`／`params` 控制端点 |
-| **MCP 代理** | `flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
+| **MCP 代理** | `src/flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
 
-仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
+仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`src/assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
 
 ⚠️ 「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机／其他电脑可访问）。**同一网络内的任何人都能查看并控制实验，甚至可能通过漏洞提权，请仅在可信网络中开启。**
 
@@ -386,14 +392,14 @@ pip install flask          # 插件依赖（可选；未装时主页「数据接
 pip install mcp            # 仅 MCP 代理需要
 ```
 
-完整的端点清单、curl 示例与 MCP 配置见 [flaskserver/README.md](flaskserver/README.md)。
+完整的端点清单、curl 示例与 MCP 配置见 [src/flaskserver/README.md](src/flaskserver/README.md)。
 
 ## 7.故障排除
 
 ### 7.1.快速诊断
 
 ```bash
-python test_serial.py
+python src/test_serial.py
 ```
 
 ### 7.2.常见问题
@@ -406,26 +412,26 @@ python test_serial.py
 | 数据跳变异常 | 传感器干扰/接线松动 | 检查接线，远离干扰源 |
 | 图表不显示 / 显示"未检测到图表引擎" | 绘图引擎未安装 | `pip install matplotlib pyqtgraph`（至少其一）后重启 |
 | 需要排查问题 / 记录运行日志 | 日志文件默认不写盘 | 设置 → 个性化 → 开启「运行日志」，再用「打开日志」查看 `logs.json`（控制台始终有输出） |
-| 界面字体不是 MiSans | 内嵌字体文件缺失，或配置里选了其他字体 | 确认 `assets/fonts/MiSans-Regular.ttf` 存在（打包分发时该目录须一并带上）；再在 设置 → 外观 → 应用字体 中选回 MiSans |
-| 仪表盘中文显示成方块 | 内嵌网页字体未随包分发 | 确认 `assets/fonts/HarmonyOS_Sans_SC_Regular.woff2` 存在；缺失时服务端 `/font.css` 返回空样式并回退系统字体 |
+| 界面字体不是 MiSans | 内嵌字体文件缺失，或配置里选了其他字体 | 确认 `src/assets/fonts/MiSans-Regular.ttf` 存在（打包分发时该目录须一并带上）；再在 设置 → 外观 → 应用字体 中选回 MiSans |
+| 仪表盘中文显示成方块 | 内嵌网页字体未随包分发 | 确认 `src/assets/fonts/HarmonyOS_Sans_SC_Regular.woff2` 存在；缺失时服务端 `/font.css` 返回空样式并回退系统字体 |
 | 主页「数据接口」卡片灰显 | flask 未安装 | `pip install flask` 后重启程序 |
-| 仪表盘能打开但图表空白 | 打包时漏收 `flaskserver/web/echarts.min.js` | 用仓库内的 `PhysChem-DigitizerP.spec` 重新打包（插件目录是整目录收集的） |
+| 仪表盘能打开但图表空白 | 打包时漏收 `src/flaskserver/web/echarts.min.js` | 用仓库内的 `PhysChem-DigitizerP.spec` 重新打包（插件目录是整目录收集的） |
 
 ## 8.技术文档
 
 - **[AGENTS.md](AGENTS.md)** — 开发者指南
-- **[传感器总览](sensors/README.md)** — 各传感器固件与上位机模块对照表
-- **[超声波位移传感器](sensors/ultrasonic/README.md)** 
-- **[pH 传感器](sensors/ph/README.md)** 
-- **[力传感器](sensors/force/README.md)** 
-- **[电压传感器](sensors/voltage/README.md)** 
-- **[电流传感器](sensors/current/README.md)** 
+- **[传感器总览](src/sensors/README.md)** — 各传感器固件与上位机模块对照表
+- **[超声波位移传感器](src/sensors/ultrasonic/README.md)** 
+- **[pH 传感器](src/sensors/ph/README.md)** 
+- **[力传感器](src/sensors/force/README.md)** 
+- **[电压传感器](src/sensors/voltage/README.md)** 
+- **[电流传感器](src/sensors/current/README.md)** 
 
 ## 9.扩展开发
 
-新增传感器**无需修改 `main.py`**，只需 2 步：
+新增传感器**无需修改 `src/main.py`**，只需 2 步：
 
-1. 在 `sensors/` 下新建子目录，放入 `.ino` 和 `.py`
+1. 在 `src/sensors/` 下新建子目录，放入 `.ino` 和 `.py`
 2. 在 `.py` 文件头写识别区：
 
 ```python
@@ -437,7 +443,7 @@ python test_serial.py
 # ===================
 ```
 
-重启 `main.py` 即自动出现在侧边栏 + 主页卡片 + 内容栈。
+重启 `src/main.py` 即自动出现在侧边栏 + 主页卡片 + 内容栈。
 
 >  完整字段说明与注意事项请参考 [AGENTS.md](AGENTS.md)。
 

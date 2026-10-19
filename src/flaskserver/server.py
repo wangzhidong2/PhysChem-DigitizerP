@@ -12,7 +12,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, Response, send_file
 
 _WEB_DIR = Path(__file__).parent / 'web'
-#: 内嵌字体目录：与主程序共用 assets/fonts/（本文件在 flaskserver/ 下，上溯两级为仓库根）
+#: 内嵌字体目录：与主程序共用 src/assets/fonts/（本文件在 src/flaskserver/ 下，上溯两级为 src/）
 _FONT_DIR = Path(__file__).resolve().parent.parent / 'assets' / 'fonts'
 _READ_TIMEOUT_S = 8.0
 

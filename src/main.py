@@ -331,7 +331,7 @@ def scan_modules(modules_dir):
 # ============================================================
 # 插件加载（flaskserver 等）
 #
-# 扫描仓库根目录下的一级子目录：内有 __init__.py 且文件头 50 行含
+# 扫描 main.py 所在目录（src/）下的一级子目录：内有 __init__.py 且文件头 50 行含
 # 「=== PLUGIN META ===」识别区即视为插件。按显式路径加载成正规包
 # （不进 sys.path），失败只记日志并跳过，不影响主程序启动。
 # ============================================================
@@ -429,7 +429,7 @@ class HomePageWidget(QWidget):
         self._project_dialog = None  # 项目信息卡片（首次打开时创建并复用）
         # 自绘 Gitee / GitCode logo（FluentWidgets 没有内置）
         self._img_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "docs", "images")
+            os.path.dirname(os.path.abspath(__file__)), "assets", "images")
         self.init_ui()
 
     def set_modules(self, modules):
@@ -1063,7 +1063,7 @@ class ProjectInfoDialog(MessageBoxBase):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._svg_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "docs", "images")
+            os.path.dirname(os.path.abspath(__file__)), "assets", "images")
         self._tag_labels = []
         self._fitted = False
 
@@ -1749,7 +1749,7 @@ class SettingsWidget(QWidget):
 
         # ===== 源码与反馈分组 =====
         # 自绘 Gitee / GitCode logo（FluentWidgets 没有内置）
-        _img_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs", "images")
+        _img_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "images")
         gitee_icon = self._load_icon(os.path.join(_img_dir, "gitee.svg")) or FIF.CODE
         gitcode_icon = self._load_icon(os.path.join(_img_dir, "gitcode.svg")) or FIF.CODE
 
@@ -3066,7 +3066,7 @@ def _apply_taskbar_identity(window):
       - ID                          : 与进程 AUMID 一致，保证分组唯一
       - RelaunchCommand             : 固定到任务栏后的启动命令
       - RelaunchDisplayNameResource : 任务栏按钮 / 跳转列表显示名
-      - RelaunchIconResource        : 任务栏按钮图标（docs/images/icon.ico）
+      - RelaunchIconResource        : 任务栏按钮图标（assets/images/icon.ico）
 
     属性必须在 window.show() **之前**写入，Windows 才会采用；
     失败静默忽略（仅影响任务栏外观，不影响功能）。
@@ -3129,7 +3129,7 @@ def _apply_taskbar_identity(window):
         else:                                  # 源码运行：python + main.py
             relaunch = f'"{sys.executable}" "{main_script}"'
         icon_path = os.path.join(
-            os.path.dirname(main_script), 'docs', 'images', 'icon.ico')
+            os.path.dirname(main_script), 'assets', 'images', 'icon.ico')
 
         appid_fmtid = _guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3")
         # 属性 pid：2=RelaunchCommand 3=RelaunchIconResource
@@ -3185,7 +3185,7 @@ def main():
     setup_logging()          # 按 app_config.json 初始化运行日志（默认静默）
     app = QApplication(sys.argv)
     # 应用图标（.ico 同时设在 app 和 window 上）
-    icon_path = str(Path(__file__).parent / "docs" / "images" / "icon.ico")
+    icon_path = str(Path(__file__).parent / "assets" / "images" / "icon.ico")
     app_icon = QIcon(icon_path)
     # 显式注册各尺寸，避免任务栏按需缩放时取不到合适位图
     for size in (16, 24, 32, 48, 64, 128, 256):

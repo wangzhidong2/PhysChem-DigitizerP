@@ -240,7 +240,7 @@ class AppConfig(QConfig):
     # 传感器配置持久化开关：False 时不读取也不写入 sensor_config.json，
     # 所有更改仅本次会话有效（默认开启，保持原有行为）
     configPersistenceEnabled = ConfigItem("General", "ConfigPersistenceEnabled", True)
-    # 运行日志：默认开启；控制台始终输出，开启时同时写入项目根 logs.json
+    # 运行日志：默认开启；控制台始终输出，开启时同时写入 src/ 目录 logs.json
     logEnabled = ConfigItem("General", "LogEnabled", True)
     # 日志详细度：warning=简略（仅警告/错误）/ info=标准（应用事件）/ debug=详细
     logLevel = OptionsConfigItem(
@@ -340,7 +340,7 @@ def get_embedded_font_path(filename=None):
 
     filename 缺省取清单里的第一个（默认字体）。同时兼容源码运行与
     PyInstaller 打包（onedir 下 sys._MEIPASS 指向 _internal/，与 datas
-    收集目录一致）。传感器模块可能把仓库根目录插到 sys.path 前面，
+    收集目录一致）。传感器模块可能把源码目录（src/）插到 sys.path 前面，
     故除 __file__ 同级外再按 sys.path 兜底搜索。
     """
     filename = filename or EMBEDDED_FONT_FILE
@@ -583,7 +583,7 @@ qconfig.load(_app_config_path, app_cfg)
 # - LogEnabled   ：是否写入 logs.json；控制台始终输出（关闭时仅不落盘）
 # - LogLevel     ：warning / info / debug 三档详细度（开启后生效，默认 info）
 # - LogMaxEntries：logs.json 最大保留条数，超出后裁剪最旧记录
-# 日志文件为项目根目录 logs.json，JSON Lines 格式（每条一行 JSON 对象），
+# 日志文件为 src/ 目录 logs.json，JSON Lines 格式（每条一行 JSON 对象），
 # 跨会话追加、即写即刷；文件属于本机运行数据，已在 .gitignore 中忽略。
 # ============================================================
 LOG_FILENAME = 'logs.json'
@@ -699,7 +699,7 @@ log = get_logger('core')
 
 
 def get_log_file_path():
-    """logs.json 的绝对路径（项目根目录，与 sensor_config.json 同目录）。
+    """logs.json 的绝对路径（src/ 源码目录，与 sensor_config.json 同目录）。
 
     可用环境变量 PHYSCHEM_LOG_FILE 覆盖（自动化测试/多实例隔离用）。
     """
@@ -814,12 +814,10 @@ if not any(CHART_ENGINE_AVAILABLE.values()):
 def _get_config_file_path():
     """获取统一配置文件的绝对路径。
 
-    配置文件始终位于主程序所在目录（即仓库根目录），与具体模块文件位置无关。
+    配置文件始终位于源码目录（即 src/，与 main.py 同级），与具体模块文件位置无关。
     """
-    # 取 main.py 所在目录：模块文件位于 sensors/xxx/ 下，
-    # 上溯两级即为仓库根目录。
+    # core.py 与 main.py 同在 src/ 目录，直接用其所在目录。
     here = os.path.dirname(os.path.abspath(__file__))
-    # core.py 在根目录，直接用 here
     return os.path.join(here, CONFIG_FILENAME)
 
 

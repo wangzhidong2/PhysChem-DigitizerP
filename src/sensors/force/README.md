@@ -3,7 +3,7 @@
 HX711 24 位 ADC + 应变片式称重传感器，配 ESP32-S3 采集。上位机 `force_sensor.py`（主类 `ForceSensorWidget`，侧边栏图标 `F`）支持去皮、两点标定、单位切换（g / kg / N）。
 
 <p align="center">
-  <img src="../../docs/images/实拍图.jpg" alt="力传感器实拍" width="600"/>
+  <img src="../../../docs/images/实拍图.jpg" alt="力传感器实拍" width="600"/>
 </p>
 <p align="center">图1: 力/质量传感器模块实物</p>
 
@@ -38,17 +38,17 @@ B+ / B-      →    未使用
 2. 接线松动会导致读数跳动。推荐HX711到应变片采取锡焊
 
 <p align="center">
-  <img src="../../docs/images/接线指南一.png" alt="接线指南一" width="600"/>
+  <img src="../../../docs/images/接线指南一.png" alt="接线指南一" width="600"/>
 </p>
 <p align="center">图2: 5kg，小10kg 与 HX711 模块接线示意图</p>
 
 <p align="center">
-  <img src="../../docs/images/接线指南二.png" alt="接线指南二" width="600"/>
+  <img src="../../../docs/images/接线指南二.png" alt="接线指南二" width="600"/>
 </p>
 <p align="center">图3: 大10kg及以上称重传感器接线示意图</p>
 
 <p align="center">
-  <img src="../../docs/images/组装注意事项.png" alt="组装注意事项" width="600"/>
+  <img src="../../../docs/images/组装注意事项.png" alt="组装注意事项" width="600"/>
 </p>
 <p align="center">图4: 秤盘组装注意事项</p>
 
@@ -113,7 +113,7 @@ B+ / B-      →    未使用
 
 ### 4.2.两点标定步骤
 
-1. 运行 `main.py`，进入力传感器模块，连接设备
+1. 运行 `src/main.py`，进入力传感器模块，连接设备
 2. 点「校准（CALIBRATE）」，**空载**（托盘上什么都不放）记录零点
 3. 弹出「校准 - 已知质量」输入框，填入砝码质量（范围 0.01~100000 克，2 位小数）
 4. 把砝码放在水平放置的托盘上，点记录按钮
@@ -169,7 +169,7 @@ g → N  :  ÷ 1000 × 9.8
 ### 5.3.操作步骤
 
 1. 烧录固件，按上文接线
-2. 运行 `main.py`，进入力传感器模块
+2. 运行 `src/main.py`，进入力传感器模块
 3. 选择连接方式（有线串口 / 模拟器），连接
 4. 先去皮，必要时校准（见第 4 章）
 5. 开始采集，观察质量曲线；数据可存为 CSV
@@ -180,7 +180,7 @@ g → N  :  ÷ 1000 × 9.8
 
 ### 5.5.保存数据
 
-点「保存数据」导出 CSV，文件名形如 `force_sensor_data_YYYYmmdd_HHMMSS.csv`，存在运行目录（`main.py` 所在目录）。表头随校准状态变化。
+点「保存数据」导出 CSV，文件名形如 `force_sensor_data_YYYYmmdd_HHMMSS.csv`，存在运行目录（`src/main.py` 所在目录）。表头随校准状态变化。
 
 已校准时（`force_{单位}` 随当前单位取 `force_g` / `force_kg` / `force_N`）：
 
@@ -206,7 +206,7 @@ time_s,raw_adc,raw_value
 
 ### 5.6.AI 分析实验
 
-图表卡右上角「AI 分析实验」进对话式 AI，提问时会自动附上当前的数据。系统提示词里写清了 `质量=(raw−offset)×scale` 的换算、蠕变/温漂/振动这些误差来源，以及加载卸载台阶怎么判读，到 AI 窗口「设置 → 模块预置系统提示词」可以查看、修改。详见根目录 [README.md 第 6.7 节](../../README.md)。
+图表卡右上角「AI 分析实验」进对话式 AI，提问时会自动附上当前的数据。系统提示词里写清了 `质量=(raw−offset)×scale` 的换算、蠕变/温漂/振动这些误差来源，以及加载卸载台阶怎么判读，到 AI 窗口「设置 → 模块预置系统提示词」可以查看、修改。详见根目录 [README.md 第 6.7 节](../../../README.md)。
 
 ## 6.常见问题
 

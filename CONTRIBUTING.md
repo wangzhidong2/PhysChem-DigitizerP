@@ -103,7 +103,7 @@ git rebase --signoff HEAD~N    # N 为需要补签的提交数
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python main.py
+python src/main.py
 ```
 
 ```bash
@@ -111,7 +111,7 @@ python main.py
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python main.py
+python src/main.py
 ```
 
 - 激活成功后终端提示符前会出现 `(.venv)`；`deactivate` 退出。

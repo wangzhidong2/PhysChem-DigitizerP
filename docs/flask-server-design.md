@@ -56,13 +56,13 @@
 
 ### 3.1 为什么不能叫 `flask/`
 
-`python main.py` 启动时仓库根目录位于 `sys.path[0]`；六个传感器模块里还各自有一句
+`python src/main.py` 启动时源码目录（`src/`）位于 `sys.path[0]`；六个传感器模块里还各自有一句
 
 ```python
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 ```
 
-把仓库根**插到 `sys.path` 最前面**。因此根目录下名为 `flask` 的文件夹会参与 `import flask` 的解析：
+把源码目录（`src/`）**插到 `sys.path` 最前面**。因此 `src/` 下名为 `flask` 的文件夹会参与 `import flask` 的解析：
 
 | 情况 | 后果 |
 |---|---|
@@ -72,23 +72,24 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 
 第三条恰好破坏"缺失没有影响"这一核心需求，所以**目录名必须避开 `flask` 这个精确名字**。
 
-**决定：根目录 `flaskserver/`。** 要改名只需改加载器里的一处常量。
+**决定：`src/flaskserver/`。** 要改名只需改加载器里的一处常量。
 
 ### 3.2 目录结构
 
 ```
 PhysChem-DigitizerP/
-├── main.py                       ← 插件扫描/加载/注入；主页「数据接口」按钮
-├── core.py                       ← 新增 DataService（数据与控制总线）+ 配置项
-├── sensors/                      ← 六个模块各加 api_snapshot() / api_command()
-└── flaskserver/                  ← 插件目录（整个删掉 → 程序毫无影响）
-    ├── __init__.py               ← 识别区 + available() + Plugin 类（生命周期）
-    ├── server.py                 ← Flask app、路由、token 校验、静态托管、后台线程
-    ├── web/                      ← 前端（独立文件，不嵌 Python 字符串）
-    │   ├── index.html
-    │   ├── app.js
-    │   └── style.css
-    └── README.md                 ← 插件使用说明（装 flask / 端点清单 / 示例）
+└── src/
+    ├── main.py                       ← 插件扫描/加载/注入；主页「数据接口」按钮
+    ├── core.py                       ← 新增 DataService（数据与控制总线）+ 配置项
+    ├── sensors/                      ← 六个模块各加 api_snapshot() / api_command()
+    └── flaskserver/                  ← 插件目录（整个删掉 → 程序毫无影响）
+        ├── __init__.py               ← 识别区 + available() + Plugin 类（生命周期）
+        ├── server.py                 ← Flask app、路由、token 校验、静态托管、后台线程
+        ├── web/                      ← 前端（独立文件，不嵌 Python 字符串）
+        │   ├── index.html
+        │   ├── app.js
+        │   └── style.css
+        └── README.md                 ← 插件使用说明（装 flask / 端点清单 / 示例）
 ```
 
 **对比早期草案**：原先计划的 `plugin.py`（生命周期）与 `bridge.py`（命令队列 + 快照）**已移入主程序**——前者并入 `__init__.py`，后者成为 `core.DataService`。插件只剩两个 Python 文件。
@@ -185,7 +186,7 @@ def build_app(service, token, allow_lan, enable_cors):
 
 ### 6.1 发现规则
 
-`main.py` 扫描**仓库根目录下的一级子目录**，满足两条即视为插件：
+`main.py` 扫描**其自身所在目录（`src/`）下的一级子目录**，满足两条即视为插件：
 
 1. 目录内有 `__init__.py`
 2. `__init__.py` 前 50 行内含识别区
@@ -422,7 +423,7 @@ token 通过 `X-Auth-Token` 请求头或 `?token=` 传递。
 
 ## 12. 前端仪表盘
 
-- 位置：`flaskserver/web/`，由 Flask 以 `static_folder` 托管，`/` 返回 `index.html`
+- 位置：`src/flaskserver/web/`，由 Flask 以 `static_folder` 托管，`/` 返回 `index.html`
 - **零构建、零 CDN**：手写原生 JS + Canvas，离线实验环境可用
 - 第一版内容：
   - 模块卡片列表：名称、连接/采集状态、实时值

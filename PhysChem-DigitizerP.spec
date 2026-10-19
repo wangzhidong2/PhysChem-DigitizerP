@@ -11,13 +11,17 @@
 产物：dist/PhysChem-DigitizerP/ 整个目录即绿色程序，压缩后即可分发。
 
 原理（无需改动源码）：
+- 入口脚本为 src/main.py，源码根目录 src/ 同时是运行时资源根：
+  core.py 的配置/日志、内嵌字体、传感器与插件目录都按 `__file__` 定位。
 - 传感器模块由 main.py 用 importlib 按 `__file__` 相对路径动态加载，
   PyInstaller 静态分析发现不了，必须作为数据文件手动收集；
   onedir 模式下 main 脚本的 `__file__` 指向 _internal/（PyInstaller 6+），
   datas 收集的文件恰好落在同一目录，运行时路径自然对上。
-- flaskserver 插件同理整目录收集（collect_data_files），含 web/ 静态资源。
-- 窗口图标 docs/images/icon.ico、内嵌字体 assets/fonts/ 均按 `__file__`
-  相对路径查找，一并打包。
+  注意 datas 的 dest 必须去掉 `src/` 前缀（落到 _internal/sensors，
+  而不是 _internal/src/sensors），否则运行期路径对不上。
+- flaskserver 插件同理整目录手动收集，含 web/ 静态资源。
+- 窗口图标 src/assets/images/icon.ico、内嵌字体 src/assets/fonts/ 均按
+  `__file__` 相对路径查找，一并打包。
 - qfluentwidgets 的 FluentIcon SVG/QSS 资源用 collect_data_files 收集
   （含 i18n 翻译，缺了界面文案会回退英文）。
 
@@ -35,45 +39,54 @@ import os
 from PyInstaller.utils.hooks import collect_data_files
 
 # --- 只收集传感器模块源码，排除商家资料 / 缓存 / 测试文件 ---
+# 源码在 src/sensors/ 下，datas 的 dest 去掉 src/ 前缀，
+# 使打包后落点为 _internal/sensors/…（与 main.py 的 __file__ 同级）。
 sensor_datas = []
-for dirpath, dirnames, filenames in os.walk('sensors'):
+for dirpath, dirnames, filenames in os.walk('src/sensors'):
     if '__pycache__' in dirpath:
         continue
     # 排除 vendor-docs（商家资料，原「资料（HX711称重模块商家提供的）」）等非代码目录，避免包体膨胀
     if 'vendor-docs' in dirpath:
         continue
+    dest = os.path.relpath(dirpath, 'src')
     for fn in filenames:
         if fn.endswith('.py') and not fn.startswith('_') and not fn.startswith('test'):
-            sensor_datas.append((os.path.join(dirpath, fn), dirpath))
+            sensor_datas.append((os.path.join(dirpath, fn), dest))
 
-# --- flaskserver 插件：整目录收集（.py 也要！）---
-# 注意 include_py_files=True：collect_data_files 默认**不收集 .py**，
-# 而插件的 __init__.py / server.py 正是靠 importlib 按路径动态加载的，
-# 只收 web/ 静态资源会导致打包后插件整个加载不上。
-plugin_datas = [
-    (src, dst) for src, dst in
-    collect_data_files('flaskserver', include_py_files=True)
-    if '__pycache__' not in src
-]
+# --- flaskserver 插件：整目录手动收集（.py 与 web/ 静态资源都要）---
+# 插件由 main.py 按路径 importlib 动态加载，PyInstaller 静态分析发现不了；
+# collect_data_files 依赖包可被 import 定位，源码在 src/ 下不可靠，故直接 walk。
+plugin_datas = []
+for dirpath, dirnames, filenames in os.walk('src/flaskserver'):
+    if '__pycache__' in dirpath:
+        continue
+    dest = os.path.relpath(dirpath, 'src')
+    for fn in filenames:
+        if fn.endswith('.pyc'):
+            continue
+        plugin_datas.append((os.path.join(dirpath, fn), dest))
 
 datas = sensor_datas + plugin_datas + [
-    # 窗口图标：main.py 按 __file__ 相对 docs/images/icon.ico 加载
-    (os.path.join('docs', 'images', 'icon.ico'), os.path.join('docs', 'images')),
-    # Gitee / GitCode 平台 logo：主页与设置页按 docs/images/ 相对路径加载，
+    # 窗口图标：main.py 按 __file__ 相对 assets/images/icon.ico 加载
+    (os.path.join('src', 'assets', 'images', 'icon.ico'),
+     os.path.join('assets', 'images')),
+    # Gitee / GitCode 平台 logo：主页与设置页按 assets/images/ 相对路径加载，
     # 加载失败仅回退 FluentIcon，但正常分发应带全
-    (os.path.join('docs', 'images', 'gitee.svg'), os.path.join('docs', 'images')),
-    (os.path.join('docs', 'images', 'gitcode.svg'), os.path.join('docs', 'images')),
+    (os.path.join('src', 'assets', 'images', 'gitee.svg'),
+     os.path.join('assets', 'images')),
+    (os.path.join('src', 'assets', 'images', 'gitcode.svg'),
+     os.path.join('assets', 'images')),
     # 内嵌字体：core.load_embedded_font() 按 __file__ 相对 assets/fonts/ 注册，
     # 漏带则回退系统字体（界面不会崩，但默认字体失效）。许可证随字体一并分发。
-    (os.path.join('assets', 'fonts', 'MiSans-Regular.ttf'),
+    (os.path.join('src', 'assets', 'fonts', 'MiSans-Regular.ttf'),
      os.path.join('assets', 'fonts')),
-    (os.path.join('assets', 'fonts', 'HarmonyOS_Sans_SC_Regular.ttf'),
+    (os.path.join('src', 'assets', 'fonts', 'HarmonyOS_Sans_SC_Regular.ttf'),
      os.path.join('assets', 'fonts')),
-    (os.path.join('assets', 'fonts', 'HarmonyOS_Sans_SC_LICENSE.txt'),
+    (os.path.join('src', 'assets', 'fonts', 'HarmonyOS_Sans_SC_LICENSE.txt'),
      os.path.join('assets', 'fonts')),
     # 浏览器仪表盘内嵌字体：flaskserver 经 /font.css + /font-file 提供。
     # 只带 woff2（4 MB）——TTF 7.9 MB 是桌面端 Qt 用的，网页端用不上，不再进包体
-    (os.path.join('assets', 'fonts', 'HarmonyOS_Sans_SC_Regular.woff2'),
+    (os.path.join('src', 'assets', 'fonts', 'HarmonyOS_Sans_SC_Regular.woff2'),
      os.path.join('assets', 'fonts')),
 ]
 # docs/images 其余 png 为 README 截图，运行时用不到，不打包以控包体
@@ -81,8 +94,8 @@ datas = sensor_datas + plugin_datas + [
 datas += collect_data_files('qfluentwidgets')
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    ['src/main.py'],
+    pathex=['src'],
     binaries=[],
     datas=datas,
     hiddenimports=[
@@ -112,7 +125,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=True,           # 保留控制台：传感器加载/串口日志直接可见，便于排障
-    icon=os.path.join('docs', 'images', 'icon.ico'),   # exe 文件图标
+    icon=os.path.join('src', 'assets', 'images', 'icon.ico'),   # exe 文件图标
 )
 
 coll = COLLECT(
