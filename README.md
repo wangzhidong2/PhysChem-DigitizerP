@@ -141,7 +141,7 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 ```
 
 - **`uv` 与 `pip` 可以共存**：不想用 uv 时，`pip install -r requirements.txt` 的老流程完全不受影响（`requirements.txt` 会继续保留）。
-- 注意在**项目根目录**执行 `uv sync` / `uv run`——程序的 `sensor_config.json`、`app_config.json`、`logs.json` 都以 `src/main.py` 所在目录（即 `src/`）为基准路径。
+- 注意在**项目根目录**执行 `uv sync` / `uv run`——程序的 `sensor_config.json`、`app_config.json`、`logs.json` 都以 `./src/main.py` 所在目录（即 `src/`）为基准路径。
 
 #### 3.2.5.下载代码（如有git）
 ```bash
@@ -160,10 +160,10 @@ python ./src/main.py
 #### 3.2.6.或者，使用平台的源代码打包功能
 ##### 3.2.6.1.下载代码
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/e776925b-b898-4fe4-82b9-1b01bd4260e2/image.png 'image.png')
-##### 3.2.6.2.解压，双击 `src/main.py` 打开
+##### 3.2.6.2.解压，双击 `./src/main.py` 打开
 ### 3.3.功能模块
 
-项目采用**模块化架构**——主程序 `src/main.py` 启动时扫描 `src/sensors/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
+项目采用**模块化架构**——主程序 `./src/main.py` 启动时扫描 `./src/sensors/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
 
 | 模块 | 传感器 | 开发板 | 类别 |  说明文档 |
 |------|--------|--------|------|----------|
@@ -286,7 +286,7 @@ PhysChem-DigitizerP/
 ### 6.1.启动软件
 
 ```bash
-python src/main.py
+python ./src/main.py
 ```
 
 ### 6.2.通用操作流程
@@ -399,7 +399,7 @@ pip install mcp            # 仅 MCP 代理需要
 ### 7.1.快速诊断
 
 ```bash
-python src/test_serial.py
+python ./src/test_serial.py
 ```
 
 ### 7.2.常见问题
@@ -415,7 +415,7 @@ python src/test_serial.py
 | 界面字体不是 MiSans | 内嵌字体文件缺失，或配置里选了其他字体 | 确认 `src/assets/fonts/MiSans-Regular.ttf` 存在（打包分发时该目录须一并带上）；再在 设置 → 外观 → 应用字体 中选回 MiSans |
 | 仪表盘中文显示成方块 | 内嵌网页字体未随包分发 | 确认 `src/assets/fonts/HarmonyOS_Sans_SC_Regular.woff2` 存在；缺失时服务端 `/font.css` 返回空样式并回退系统字体 |
 | 主页「数据接口」卡片灰显 | flask 未安装 | `pip install flask` 后重启程序 |
-| 仪表盘能打开但图表空白 | 打包时漏收 `src/flaskserver/web/echarts.min.js` | 用仓库内的 `PhysChem-DigitizerP.spec` 重新打包（插件目录是整目录收集的） |
+| 仪表盘能打开但图表空白 | 打包时漏收 `../src/flaskserver/web/echarts.min.js` | 用仓库内的 `PhysChem-DigitizerP.spec` 重新打包（插件目录是整目录收集的） |
 
 ## 8.技术文档
 
@@ -431,7 +431,7 @@ python src/test_serial.py
 
 新增传感器**无需修改 `src/main.py`**，只需 2 步：
 
-1. 在 `src/sensors/` 下新建子目录，放入 `.ino` 和 `.py`
+1. 在 `./src/sensors/` 下新建子目录，放入 `.ino` 和 `.py`
 2. 在 `.py` 文件头写识别区：
 
 ```python
@@ -443,7 +443,7 @@ python src/test_serial.py
 # ===================
 ```
 
-重启 `src/main.py` 即自动出现在侧边栏 + 主页卡片 + 内容栈。
+重启 `./src/main.py` 即自动出现在侧边栏 + 主页卡片 + 内容栈。
 
 >  完整字段说明与注意事项请参考 [AGENTS.md](AGENTS.md)。
 
