@@ -12,9 +12,6 @@ pyserial>=3.5
 matplotlib>=3.5.0
 pyqtgraph>=0.13.0
 
-# BLE 无线通信（可选，但如果要用蓝牙功能则需安装）
-bleak
-
 # 数据接口插件 flaskserver/（可选：不装则主页「数据接口」灰显，程序照常运行）
 flask>=3.0
 

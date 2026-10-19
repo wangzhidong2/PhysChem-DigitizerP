@@ -2518,9 +2518,6 @@ class SettingsWidget(QWidget):
              "数据可视化", "https://matplotlib.org/"),
             ("numpy", "BSD 3-Clause License",
              "数值计算", "https://numpy.org/"),
-            ("bleak", "MIT License",
-             "BLE 无线通信（可选依赖）",
-             "https://github.com/hbldh/bleak"),
         ):
             link_btn = self._make_link_button("访问", lib_url)
             content = f"{lib_license} · {lib_purpose}"
@@ -2986,7 +2983,7 @@ class MainWindow(FluentWindow):
         QTimer.singleShot(0) 延迟到正常事件循环里弹框；确认后置
         _exit_confirmed 并再次 close()，此次直接走清理 + 接受关闭。
 
-        子页面销毁不会触发模块自身的 closeEvent，若串口/BLE/模拟器线程
+        子页面销毁不会触发模块自身的 closeEvent，若串口/模拟器线程
         仍在运行，QThread 对象被销毁时会触发 Qt fail-fast 闪退
         （0xC0000409）。确认退出后逐模块调用断开方法（不同模块方法名
         不同：disconnect_all / disconnect_serial）停线程。
@@ -3027,7 +3024,7 @@ class MainWindow(FluentWindow):
             self.close()
 
     def _stop_module_threads(self):
-        """逐模块调用断开方法停止串口/BLE/模拟器线程（退出清理）。"""
+        """逐模块调用断开方法停止串口/模拟器线程（退出清理）。"""
         for name, widget in self.modules.items():
             if name in ("主页", "设置"):
                 continue

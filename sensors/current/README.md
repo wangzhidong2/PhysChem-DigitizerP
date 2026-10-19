@@ -126,9 +126,9 @@ OUT  ─── R1 (10kΩ) ─┬──→  GPIO1
 
 ### 7.1.连接方式
 
-下拉框有三项：**有线串口 / BLE蓝牙 / 模拟器**。
+下拉框有两项：**有线串口 / 模拟器**。
 
-本目录的 `ESP32_ADC_Raw_Data.ino` 只走 USB 串口，不含 BLE 广播。要无线连接得自己加 NUS（Nordic UART Service，`6E400001-B5A3-F393-E0A9-E50E24DCCA9E`）骨架，`ultrasonic/csbwithbt/csbwithbt.ino` 可以拿来参考。没装 `bleak` 时该项灰显并标注「（未安装bleak）」；没装 pyserial 时自动切到模拟器模式。
+本目录的 `ESP32_ADC_Raw_Data.ino` 只走 USB 串口。没装 pyserial 时自动切到模拟器模式。
 
 ### 7.2.参数配置
 

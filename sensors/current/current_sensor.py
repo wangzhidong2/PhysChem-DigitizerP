@@ -13,7 +13,6 @@
 
 import sys
 import os
-import threading
 from collections import deque
 from datetime import datetime
 from PySide6.QtWidgets import (
@@ -33,12 +32,12 @@ import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
     fluent_message_box, ChartPanel,
-    SerialThread, BLESerialThread, scan_ble_devices, SimulatorThread,
+    SerialThread, SimulatorThread,
     SampleRateComboBox, stop_thread,
     load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    BLE_AVAILABLE, CollapsibleCard, FluentCard, ExpandableTextEdit,
+    CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
     get_logger,
@@ -120,7 +119,6 @@ class CurrentSensorWidget(QWidget):
         super().__init__()
         self.serial_thread = None
         self._collecting = False  # 当前是否在采集（合并开始/停止按钮状态）
-        self.ble_thread = None
         self.current_data = []   # 电流值（安培，瞬时值）
         self.vsensor_data = []   # ACS712 输出电压（V，还原后），用于零点变化后重算
         self.time_data = []
@@ -258,10 +256,7 @@ class CurrentSensorWidget(QWidget):
 
         row1.addWidget(BodyLabel("连接方式:"))
         self.mode_combo = ComboBox()
-        self.mode_combo.addItems(["有线串口", "BLE蓝牙", "模拟器"])
-        if not BLE_AVAILABLE:
-            self.mode_combo.setItemEnabled(1, False)
-            self.mode_combo.setItemText(1, "BLE蓝牙（未安装bleak）")
+        self.mode_combo.addItems(["有线串口", "模拟器"])
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         row1.addWidget(self.mode_combo)
 
@@ -280,23 +275,7 @@ class CurrentSensorWidget(QWidget):
         self.refresh_btn.clicked.connect(self.refresh_ports)
         serial_layout.addWidget(self.refresh_btn)
 
-        self.ble_panel = QWidget()
-        ble_layout = QHBoxLayout(self.ble_panel)
-        ble_layout.setContentsMargins(0, 0, 0, 0)
-        ble_layout.setSpacing(8)
-        self.ble_device_combo = ComboBox()
-        self.ble_device_combo.setMinimumWidth(180)
-        ble_layout.addWidget(self.ble_device_combo)
-        self.ble_scan_btn = PushButton("扫描BLE")
-        self.ble_scan_btn.setFixedHeight(36)
-        self.ble_scan_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.ble_scan_btn.clicked.connect(self.scan_ble)
-        if not BLE_AVAILABLE:
-            self.ble_scan_btn.setEnabled(False)
-        ble_layout.addWidget(self.ble_scan_btn)
-
         row1.addWidget(self.serial_panel)
-        row1.addWidget(self.ble_panel)
 
         # 模拟器面板：无需选择端口
         self.sim_panel = QWidget()
@@ -308,7 +287,6 @@ class CurrentSensorWidget(QWidget):
         sim_layout.addStretch()
         row1.addWidget(self.sim_panel)
 
-        self.ble_panel.hide()
         self.sim_panel.hide()
 
         row1.addSpacing(16)
@@ -614,15 +592,9 @@ class CurrentSensorWidget(QWidget):
     def on_mode_changed(self, index):
         if index == 0:
             self.serial_panel.show()
-            self.ble_panel.hide()
-            self.sim_panel.hide()
-        elif index == 1:
-            self.serial_panel.hide()
-            self.ble_panel.show()
             self.sim_panel.hide()
         else:
             self.serial_panel.hide()
-            self.ble_panel.hide()
             self.sim_panel.show()
 
     def on_range_changed(self, index):
@@ -784,42 +756,16 @@ class CurrentSensorWidget(QWidget):
         if not ports:
             self.port_combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
 
-    def scan_ble(self):
-        if not BLE_AVAILABLE:
-            fluent_message_box(self, "提示", "请先安装 bleak 库：pip install bleak")
-            return
-        self.ble_scan_btn.setEnabled(False)
-        self.ble_scan_btn.setText("扫描中...")
-        self._ble_scan_thread = threading.Thread(target=self._do_scan_ble, daemon=True)
-        self._ble_scan_thread.start()
-
-    def _do_scan_ble(self):
-        try:
-            devices = scan_ble_devices()
-            self.ble_device_combo.clear()
-            for name, addr in devices:
-                self.ble_device_combo.addItem(f"{name} ({addr})")
-            if not devices:
-                self.ble_device_combo.addItem("未找到设备")
-        except Exception as e:
-            log.error("BLE 扫描错误: %s", e)
-        finally:
-            self.ble_scan_btn.setEnabled(BLE_AVAILABLE)
-            self.ble_scan_btn.setText("扫描BLE")
-
     def toggle_connection(self):
         """切换连接状态：已连接则断开，否则按当前模式连接"""
-        if (self.serial_thread and self.serial_thread.isRunning()) or \
-           (self.ble_thread and self.ble_thread.isRunning()):
+        if self.serial_thread and self.serial_thread.isRunning():
             self.disconnect_all()
         else:
             self.connect_device()
 
     def connect_device(self):
         mode = self.mode_combo.currentText()
-        if "BLE" in mode:
-            self.connect_ble()
-        elif "模拟器" in mode:
+        if "模拟器" in mode:
             self.connect_simulator()
         else:
             self.connect_serial()
@@ -866,45 +812,10 @@ class CurrentSensorWidget(QWidget):
         except Exception as e:
             fluent_message_box(self, "连接错误", f"无法连接串口: {e}")
 
-    def connect_ble(self):
-        if not BLE_AVAILABLE:
-            fluent_message_box(self, "提示", "请先安装 bleak 库：pip install bleak")
-            return
-        device_text = self.ble_device_combo.currentText()
-        if not device_text or "未找到" in device_text:
-            fluent_message_box(self, "提示", "请先扫描并选择 BLE 设备")
-            return
-        try:
-            address = device_text.split("(")[-1].rstrip(")")
-        except Exception:
-            fluent_message_box(self, "提示", "无法解析设备地址")
-            return
-        try:
-            self.ble_thread = BLESerialThread(address)
-            self.ble_thread.data_received.connect(self.handle_data)
-            self.ble_thread.connection_status.connect(self.on_ble_status)
-            self.ble_thread.start()
-            log.info("BLE 连接中: %s", address)
-            self.connect_btn.setText("断开")
-            self._set_collect_enabled(True)
-            self.current_value_label.setText("电流: BLE连接中...")
-            self.current_raw_label.setText("ADC: BLE连接中...")
-        except Exception as e:
-            fluent_message_box(self, "连接错误", f"BLE 连接失败: {e}")
-
-    def on_ble_status(self, status):
-        if status == "connected":
-            log.info("BLE 已连接")
-            self.current_value_label.setText("电流: BLE已连接，等待数据...")
-            self.current_raw_label.setText("原始ADC: 等待数据...")
-
     def disconnect_all(self):
         if self.serial_thread:
             stop_thread(self.serial_thread, name="电流串口线程")
             self.serial_thread = None
-        if self.ble_thread:
-            stop_thread(self.ble_thread, name="电流BLE线程")
-            self.ble_thread = None
         log.info("已断开连接")
         self.connect_btn.setText("连接")
         self._set_collect_enabled(False)
@@ -1217,8 +1128,7 @@ class CurrentSensorWidget(QWidget):
         return {
             'key': 'current_sensor',
             'name': '电流传感器',
-            'connected': (self.serial_thread is not None
-                          or self.ble_thread is not None),
+            'connected': self.serial_thread is not None,
             'collecting': self._collecting,
             'x_label': d.get('x_label', '时间 (秒)'),
             'y_label': d.get('y_label', '电流 (A)'),

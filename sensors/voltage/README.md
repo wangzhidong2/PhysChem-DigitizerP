@@ -146,10 +146,10 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 
 ### 6.1.连接方式
 
-下拉框有三项：**有线串口 / BLE蓝牙 / 模拟器**。
+下拉框有两项：**有线串口 / 模拟器**。
 ![image.png](https://raw.gitcode.com/user-images/assets/9940564/3df75e04-829d-4556-83d3-f6ccf81e2529/image.png 'image.png')
 
-本目录三个固件都只走 USB 串口，不含 BLE 广播。
+本目录三个固件都只走 USB 串口。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/6f539316-dff6-4f5a-826c-fe68efe03652/image.png 'image.png')
 
 ### 6.2.参数配置（按 ADC 位数联动）

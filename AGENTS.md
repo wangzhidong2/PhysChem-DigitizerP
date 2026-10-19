@@ -8,7 +8,6 @@
 - **禁止直接 `import serial`**：串口一律走 `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`。pyserial 是可选依赖，未装时各模块须自动降级到模拟器模式。
 - **禁止用 matplotlib / pyqtgraph 原生控件画图**：不得创建 `Figure` / `FigureCanvas` / `pg.PlotWidget`，一律用 `core.ChartPanel`，否则设置页的引擎热切换对该模块失效。
 - **禁止构造原生 Qt 控件**：不得使用 `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`，一律用 FluentWidgets 对应组件。
-- **禁止直接 `import bleak`**：BLE 是可选依赖，未装时须自动降级并提示。
 - **禁止改 `main_legacy.py`**：迁移前的单文件存档，不再维护。新功能只改 `main.py` + 模块文件。
 - **禁止基于 `NavButton` / `SidebarWidget` 开发**：迁移前的遗留侧边栏，`MainWindow` 已改用 `FluentWindow` 自带导航。
 - **禁止在 `sensor_config.json` 之外散落校准数据**：校准参数统一经 `load_sensor_config()` / `save_sensor_config()` 读写。

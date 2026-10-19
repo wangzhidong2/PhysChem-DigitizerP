@@ -40,8 +40,7 @@ classifiers = [
 # 依赖与 requirements.txt 一一对应，并补充了 PyPI 上的版本下限：
 #   PySide6-Fluent-Widgets 已并入 PySideSix-Frameless-Window，
 #   且 1.7.0 起才支持 PySide6 6.6+，故设 >=1.7.0（此处用 PyPI 包名，
-#   import 名仍是 qfluentwidgets）；bleak 的 Windows 后端依赖
-#   winrt-runtime，由 pip/uv 自动解析，无需显式声明。
+#   import 名仍是 qfluentwidgets）。
 dependencies = [
     "PySide6>=6.4.0",                       # 图形界面框架
     "PySide6-Fluent-Widgets>=1.7.0",        # WinUI3 风格组件库（必需）
@@ -49,7 +48,6 @@ dependencies = [
     "pyserial>=3.5",                        # 串口通信（可选依赖，缺失降级为模拟器模式）
     "matplotlib>=3.5.0",                    # 绘图引擎（与 pyqtgraph 至少安装其一）
     "pyqtgraph>=0.13.0",                    # 绘图引擎（与 matplotlib 至少安装其一）
-    "bleak>=0.21.0",                        # BLE 无线通信（可选依赖，缺失自动降级）
     "flask>=3.0",                           # 数据接口插件 flaskserver/（可选依赖，缺失时主页卡片灰显）
 ]
 

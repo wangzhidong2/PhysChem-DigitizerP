@@ -8,7 +8,6 @@ core.py — PhysChem-DigitizerP 公共模块
 集中存放各传感器模块共享的代码：
 - 配置管理（load/save_sensor_config）
 - 串口通信线程（SerialThread）
-- BLE 通信线程（BLESerialThread）+ 设备扫描
 - 通用对话框（CalibrationDialog / SampleRateDialog）
 - 共享样式（卡片 / 按钮 / 现代化风格 ComboBox）
 - 主题工具函数
@@ -22,7 +21,6 @@ import sys
 import json
 import time
 import random
-import asyncio
 import bisect
 import logging
 import queue
@@ -619,7 +617,7 @@ class JsonLinesLogHandler(logging.Handler):
     """把日志逐条追加到 logs.json（JSON Lines，UTF-8，立即 flush）。
 
     跨会话追加；总行数超出上限（含 10% 余量）时重写文件、只保留最新
-    max_entries 条，避免每次写入都裁剪。文件写入加锁，串口/BLE 等
+    max_entries 条，避免每次写入都裁剪。文件写入加锁，串口等
     后台线程记录同样安全。
     """
 
@@ -3483,137 +3481,6 @@ class SimulatorThread(QThread):
 
 
 # ============================================================
-# BLE 通信（可选依赖 bleak）
-# ============================================================
-BLE_NUS_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-BLE_NUS_TX_UUID      = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-BLE_NUS_RX_UUID      = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-
-try:
-    from bleak import BleakClient, BleakScanner
-    BLE_AVAILABLE = True
-except ImportError:
-    BLE_AVAILABLE = False
-    # 启动控制台提示（用户指定文案）：蓝牙功能优雅降级，其余不受影响
-    log.warning("未安装bleak，蓝牙连接不可用。")
-
-
-class BLESerialThread(QThread):
-    """BLE 串口通信线程 — 基于 bleak 库连接 ESP32-S3 的 NUS 服务"""
-    data_received = Signal(str)
-    connection_status = Signal(str)
-
-    def __init__(self, device_address, device_name=""):
-        super().__init__()
-        self.device_address = device_address
-        self.device_name = device_name
-        # 初始即为运行态：stop() 若先于 run() 执行不会被覆盖，避免卡死
-        self.running = True
-        self._buffer = ""
-        self._client = None
-
-    def run(self):
-        if not BLE_AVAILABLE:
-            self.data_received.emit("ERROR:bleak 库未安装，请运行 pip install bleak")
-            return
-        if not self.running:   # start() 后立即被 stop()：直接退出
-            return
-
-        try:
-            asyncio.run(self._ble_loop())
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            error_msg = str(e)
-            if "not found" in error_msg.lower() or "could not find" in error_msg.lower():
-                self.data_received.emit("ERROR:设备未找到，请确保 ESP32-S3 已上电并配对")
-            elif "timeout" in error_msg.lower():
-                self.data_received.emit("ERROR:连接超时，请检查设备是否在范围内")
-            else:
-                self.data_received.emit(f"ERROR:BLE 连接失败: {error_msg}")
-
-    async def _ble_loop(self):
-        try:
-            self._client = BleakClient(
-                self.device_address,
-                timeout=10.0,
-                disconnected_callback=self._on_disconnected
-            )
-            await self._client.connect()
-
-            if self._client.is_connected:
-                self.connection_status.emit("connected")
-                self.data_received.emit("START")
-            else:
-                self.data_received.emit("ERROR:连接建立失败")
-                return
-
-            try:
-                await self._client.start_notify(BLE_NUS_TX_UUID, self._notification_handler)
-            except Exception as e:
-                self.data_received.emit(f"ERROR:无法订阅数据通知: {e}")
-                return
-
-            while self.running and self._client.is_connected:
-                await asyncio.sleep(0.05)
-
-            if self._client.is_connected:
-                try:
-                    await self._client.stop_notify(BLE_NUS_TX_UUID)
-                except:
-                    pass
-                try:
-                    await self._client.disconnect()
-                except:
-                    pass
-        except Exception as e:
-            raise e
-
-    def _notification_handler(self, sender, data):
-        try:
-            text = data.decode('utf-8', errors='ignore')
-            self._buffer += text
-            while '\n' in self._buffer:
-                line, self._buffer = self._buffer.split('\n', 1)
-                line = line.strip()
-                if line:
-                    # 详细档调试信息（默认 info 档不落盘/不大屏）
-                    log.debug("BLE 原始数据: %s", line)
-                    self.data_received.emit(line)
-        except Exception as e:
-            log.warning("BLE 数据处理错误: %s", e)
-
-    def _on_disconnected(self, client):
-        if self.running:
-            self.data_received.emit("ERROR:设备意外断开连接")
-            self.running = False
-
-    def stop(self):
-        self.running = False
-        if self._client and self._client.is_connected:
-            try:
-                asyncio.run(self._client.disconnect())
-            except:
-                pass
-
-
-def scan_ble_devices():
-    """扫描附近的 BLE 设备，返回 [(名称, 地址), ...]"""
-    if not BLE_AVAILABLE:
-        return []
-    try:
-        devices = asyncio.run(BleakScanner.discover(timeout=5.0))
-        result = []
-        for d in devices:
-            name = d.name or "未知设备"
-            result.append((name, d.address))
-        return sorted(result, key=lambda x: x[0])
-    except Exception as e:
-        log.error("BLE 扫描错误: %s", e)
-        return []
-
-
-# ============================================================
 # 可展开/收起的文本记录区
 # ============================================================
 class ExpandableTextEdit(QWidget):
@@ -5668,7 +5535,7 @@ def card_style():
 
     注意：页面容器常写 `content.setStyleSheet("background: #f3f3f3;")`，
     该无选择器的样式表会级联到所有子 widget，导致卡片内的中间容器
-    （如 serial_panel、ble_panel 等未设 objectName 的 QWidget）继承
+    （如 serial_panel 等未设 objectName 的 QWidget）继承
     灰色背景。这里用 `QWidget#card QWidget` 把卡片内所有子 widget
     背景置透明，使其透出卡片灰底；各控件（ComboBox/TextEdit/
     QPushButton 等）自身的样式表优先级更高，不受影响。
@@ -6900,7 +6767,7 @@ class DataService(QObject):
         """GUI 线程执行：切换连接方式（可选端口），按需立即连接。
 
         params:
-            mode: str   必填，如 '模拟器' / '串口'（可模糊匹配「有线串口」）/ 'BLE蓝牙'
+            mode: str   必填，如 '模拟器' / '串口'（可模糊匹配「有线串口」）
             port: str   串口模式下可选；不在列表时自动 refresh_ports() 后重试
             connect: bool  可选，true 时立即 disconnect_all() + connect_device()
         """
@@ -6914,13 +6781,12 @@ class DataService(QObject):
             t = mc.itemText(i)
             hit = (t == mode
                    or (mode in ('串口', 'serial') and '串口' in t)
-                   or (mode in ('模拟器', 'simulator') and '模拟器' in t)
-                   or (mode in ('蓝牙', 'ble') and ('BLE' in t.upper() or '蓝牙' in t)))
+                   or (mode in ('模拟器', 'simulator') and '模拟器' in t))
             if not hit:
                 continue
             try:
                 if not mc.model().item(i).isEnabled():
-                    continue  # 跳过禁用项（如未装 bleak 的 BLE）
+                    continue  # 跳过禁用项
             except Exception:
                 pass
             target, target_text = i, t
@@ -6930,8 +6796,7 @@ class DataService(QObject):
             return {'ok': False, 'error': 'bad_mode',
                     'message': '未知连接方式: %s（可选: %s）' % (mode, names)}
         pc = getattr(widget, 'port_combo', None)
-        is_port_mode = ('模拟器' not in target_text
-                        and 'BLE' not in target_text.upper() and '蓝牙' not in target_text)
+        is_port_mode = '模拟器' not in target_text
         if pc is not None and is_port_mode:
             port = str(params.get('port', '') or '').strip()
             if port:

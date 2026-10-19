@@ -90,14 +90,12 @@ pip install pyserial
 pip install matplotlib pyqtgraph
 # WinUI3 风格组件库（必需）
 pip install PySide6-Fluent-Widgets
-# 可选（BLE 无线通信）:
-pip install bleak
 # 可选（数据接口插件 flaskserver/，供 AI Agent / 浏览器仪表盘）:
 pip install flask
 ```
 或者
 ```bash
-pip install PySide6 PySide6-Fluent-Widgets numpy pyserial matplotlib pyqtgraph bleak flask
+pip install PySide6 PySide6-Fluent-Widgets numpy pyserial matplotlib pyqtgraph flask
 ```
 或者，项目根目录已提供[requirements.txt](requirements.txt)，包含所有必需与可选依赖。
 在项目根目录（即 `main.py` 所在目录）打开终端，执行：
@@ -112,7 +110,6 @@ pip install numpy
 pip install pyserial
 pip install pyqtgraph
 pip install matplotlib
-pip install bleak
 pip install flask
 ```
 #### 3.2.4.用 uv 一键管理环境（推荐，可选）
@@ -321,7 +318,7 @@ python main.py
 - 配置的引擎被卸载时，启动自动降级到另一个可用引擎
 - 两个引擎都未安装时，图表区域显示"未检测到图表引擎"占位提示，安装后重启即可恢复绘图
 
-### 6.6.pyserial 未安装时的表现（程序不会崩溃，模拟器/BLE 模式不受影响）：
+### 6.6.pyserial 未安装时的表现（程序不会崩溃，模拟器模式不受影响）：
 - 启动时控制台打印缺失提示，各传感器模块自动切换到"模拟器"模式
 - 串口下拉框显示"未安装 pyserial"占位；手动选择串口模式并连接时，弹窗提示安装命令 `pip install pyserial`
 - 安装后重启程序即可恢复串口连接功能
@@ -375,7 +372,7 @@ python main.py
 ![QQ_1791700657467.png](https://raw.gitcode.com/user-images/assets/9825261/11b6548a-4571-489c-afa3-8a1a1d7778d3/QQ_1791700657467.png 'QQ_1791700657467.png')
 | 能力 | 说明 |
 |------|------|
-| **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器／蓝牙，与主程序复用同一套逻辑） |
+| **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器，与主程序复用同一套逻辑） |
 | **仪表盘登录** | 开启鉴权后先显示登录页，输对密钥才进桌面；登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
 | **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`，以及 `collect`／`command`／`params` 控制端点 |
 | **MCP 代理** | `flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
