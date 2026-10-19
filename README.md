@@ -10,6 +10,8 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/wangzhidong2/PhysChem-DigitizerP)
 [![Gitee](https://img.shields.io/badge/Gitee-Repository-red?logo=gitee)](https://gitee.com/wangzhidong2/PhysChem-DigitizerP/)
 [![GitCode](https://img.shields.io/badge/GitCode-Repository-orange?logo=gitcode)](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP)
+
+
 [![QQ群：594232082](https://img.shields.io/badge/QQ%E7%BE%A4-594232082-12B7F5?logo=tencentqq&logoColor=white)](https://qun.qq.com/universal-share/share?ac=1&authKey=W3UYA8Yg0FZSETkgFNg0Hb7fBObSX5wzeBhEayqdJKZ%2BiJsoaIWEMKOppOefA6ZX&busi_data=eyJncm91cENvZGUiOiI1OTQyMzIwODIiLCJ0b2tlbiI6IjJBdDRTNFJ2YWE5cVUzMzhKL0dWSWR4b3EvaUt5NFhzVkcvTGJtTHNmSk5yMzN2STJFZ0dhSnM0blJmUUhJbmciLCJ1aW4iOiIzOTYxMzEzNDg1In0%3D&data=iFx39SO9DQYYORram8aG2Wubsu19mSpAmh7VnrlW_3MAEub8JdWcw2Qkgoiz39TbPspTQaNdf13fL0Sd6lPM2w&svctype=4&tempid=h5_group_info)
 ## [操作手册用户版](./docs/user-manual.md)
 
