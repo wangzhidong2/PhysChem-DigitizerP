@@ -53,9 +53,9 @@
 ```powershell
 # Windows（PowerShell / CMD）
 python -m venv .venv
-.\\.venv\\Scripts\\Activate.ps1     # PowerShell 激活虚拟环境
+.\.venv\Scripts\Activate.ps1     # PowerShell 激活虚拟环境
 # 若提示“禁止运行脚本”，先执行：Set-ExecutionPolicy -Scope Process Bypass
-# CMD 用户改用：.venv\\Scripts\\activate.bat
+# CMD 用户改用：.venv\Scripts\activate.bat
 ```
 
 ```bash
@@ -154,7 +154,7 @@ git clone https://gitcode.com/wangzhidong2/PhysChem-DigitizerP.git
 
 cd PhysChem-DigitizerP
 # 使用虚拟环境时先激活（Windows PowerShell；macOS/Linux 用 source .venv/bin/activate）
-.\\.venv\\Scripts\\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 python ./main.py
 ```
 #### 3.2.6.或者，使用平台的源代码打包功能
