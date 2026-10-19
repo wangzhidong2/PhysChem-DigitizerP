@@ -104,7 +104,7 @@ R1、R2 串联，从中点引一根线接 `ESP32-S3` 的 GPIO1：
 
 ### 4.3.校准步骤
 
-1. 运行 `src/main.py`，进入 pH 传感器模块，连接串口
+1. 运行 `./src/main.py`，进入 pH 传感器模块，连接串口
 2. 开始采集，将清洗后的电极放入第一种缓冲液，等读数稳定，记下当前 ADC 值
 3. 多点校准则依次测量其余缓冲液，分别记下 ADC 值
 4. 点「✏️ 编辑校准参数」，选模式，填入各缓冲液的 pH 值和对应 ADC 值；单点模式还要填理论斜率（mV/pH）
@@ -139,7 +139,7 @@ default_calibration = [
 ### 5.3.操作步骤
 
 1. 烧录固件，按上文接线
-2. 运行 `src/main.py`，进入 pH 传感器模块
+2. 运行 `./src/main.py`，进入 pH 传感器模块
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/7ffd67db-caee-4ab9-8378-493115b576e9/image.png 'image.png')
 3. 选择串口模式，连接串口，开始采集
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/f7adc178-cd21-425c-bb88-af598fc7530b/image.png 'image.png')
@@ -158,7 +158,7 @@ default_calibration = [
 
 ### 5.5.保存数据
 
-点「保存数据」导出 CSV，文件名形如 `ph_sensor_data_YYYYmmdd_HHMMSS.csv`，存在运行目录（`src/main.py` 所在目录）：
+点「保存数据」导出 CSV，文件名形如 `ph_sensor_data_YYYYmmdd_HHMMSS.csv`，存在运行目录（`./src/main.py` 所在目录）：
 
 ```
 time_s,adc_raw,ph_value

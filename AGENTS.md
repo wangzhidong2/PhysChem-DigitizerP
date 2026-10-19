@@ -15,11 +15,11 @@
 
 ## 2. 新增传感器模块
 
-**不改 `src/main.py`**，只需两步：
+**不改 `./src/main.py`**，只需两步：
 
 ### 2.1 建目录丢文件
 
-在 `src/sensors/` 下新建目录，放入上位机 `.py`（英文蛇形命名，如 `temperature_sensor.py`）与固件——**固件必须放在与其同名的 sketch 子目录**（`temperature_sensor/temperature_sensor.ino`），Arduino IDE 才能直接打开编译。
+在 `./src/sensors/` 下新建目录，放入上位机 `.py`（英文蛇形命名，如 `temperature_sensor.py`）与固件——**固件必须放在与其同名的 sketch 子目录**（`temperature_sensor/temperature_sensor.ino`），Arduino IDE 才能直接打开编译。
 
 ### 2.2 在 `.py` 文件头写识别区
 
@@ -91,9 +91,9 @@ c.end()
 
 ## 5. 环境与构建
 
-- 用 uv：`uv sync` 建环境、`uv run src/main.py` 启动、`uv run src/test_serial.py` 诊断。
+- 用 uv：`uv sync` 建环境、`uv run ./src/main.py` 启动、`uv run ./src/test_serial.py` 诊断。
 - 用 pip：`pip install -r requirements.txt`。
-- **命令的工作目录必须是项目根目录**（`src/main.py` 位于 `src/`）：`sensor_config.json` / `app_config.json` / `logs.json` 均以 `src/main.py` 所在目录（即 `src/`）为基准路径。
+- **命令的工作目录必须是项目根目录**（`./src/main.py` 位于 `./src/`）：`sensor_config.json` / `app_config.json` / `logs.json` 均以 `./src/main.py` 所在目录（即 `./src/`）为基准路径。
 - 本项目是脚本式应用（无 `build-system`），`pyproject.toml` 里已声明 `[tool.uv] package = false`，`uv build` 会被跳过；打包走 `PhysChem-DigitizerP.spec`：
 
 ```bash
@@ -118,13 +118,13 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 
 ### 路径与 Arduino sketch 命名
 
-代码目录已全部改为英文（`src/sensors/` 及其各传感器子目录），`git` 不再转义路径，`git status` 直接可读。仅商家原始资料（`sensors/force/vendor-docs/` 内的 PDF / DOC）保留中文文件名——不参与构建，无需处理。
+代码目录已全部改为英文（`./src/sensors/` 及其各传感器子目录），`git` 不再转义路径，`git status` 直接可读。仅商家原始资料（`sensors/force/vendor-docs/` 内的 PDF / DOC）保留中文文件名——不参与构建，无需处理。
 
 **每个固件都放在与其同名的 sketch 子目录里**（Arduino IDE 硬性要求：sketch 目录名 = `.ino` 文件名）：
 
-- 现状**全部符合**，可直接在 Arduino IDE 打开编译，不必再粘贴烧录。例如 `src/sensors/force/force/force.ino`、`src/sensors/ultrasonic/HC-SR04esp32/HC-SR04esp32.ino`、`src/sensors/electronics/VI_ADS1115/VI_ADS1115.ino`。
-- 原含空格的 `ph esp32.ino` 已改为 `src/sensors/ph/ph_esp32/ph_esp32.ino`，空格问题一并消除。
-- **新增固件必须沿用** `src/sensors/<device>/<SketchName>/<SketchName>.ino`，否则 Arduino IDE 打不开、只能用「粘贴烧录」。
+- 现状**全部符合**，可直接在 Arduino IDE 打开编译，不必再粘贴烧录。例如 `./src/sensors/force/force/force.ino`、`./src/sensors/ultrasonic/HC-SR04esp32/HC-SR04esp32.ino`、`./src/sensors/electronics/VI_ADS1115/VI_ADS1115.ino`。
+- 原含空格的 `ph esp32.ino` 已改为 `./src/sensors/ph/ph_esp32/ph_esp32.ino`，空格问题一并消除。
+- **新增固件必须沿用** `./src/sensors/<device>/<SketchName>/<SketchName>.ino`，否则 Arduino IDE 打不开、只能用「粘贴烧录」。
 
 ### 退出确认框
 

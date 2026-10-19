@@ -14,8 +14,8 @@
 | --- | --- | --- |
 | 项目说明文档 | 项目根目录 README.md | 软件简介、安装方法、通用操作流程、绘图引擎、图表分析、AI 分析、数据接口和常见故障处理。 |
 | 开发者指南 | 项目根目录 AGENTS.md | 模块识别区格式、组件选型约定、图表接口、主题切换和新增传感器模块的方法。 |
-| 数据接口插件说明 | src/flaskserver/README.md | REST 接口清单、curl 调用示例、仪表盘登录方法和 MCP接入配置。 |
-| 传感器使用说明 | src/sensors/各传感器目录/README.md | 每种传感器的物料清单、接线图、固件、校准步骤、测量原理和常见问题。 |
+| 数据接口插件说明 | ./src/flaskserver/README.md | REST 接口清单、curl 调用示例、仪表盘登录方法和 MCP接入配置。 |
+| 传感器使用说明 | ./src/sensors/各传感器目录/README.md | 每种传感器的物料清单、接线图、固件、校准步骤、测量原理和常见问题。 |
 
 ## 二、说明
 
@@ -72,7 +72,7 @@ pyqtgraph 引擎下，图表左侧带有分析栏。横轴可以选择显示全�
 
 软件提供两种使用方式。建议不熟悉 Python 的使用者直接用预打包版本：在项目 Releases 页下载压缩包，解压到任意目录，双击主程序就能运行，机器上不用装 Python。
 
-希望从源代码运行的使用者，先到 Python 官网安装 3.10 以上版本，执行 pip install -r requirements.txt 安装依赖。依赖中 PySide6 和 Fluent-Widgets 组件库提供图形界面，numpy 用于数值计算，pyserial、matplotlib、pyqtgraph、flask 均为可选项，缺失时对应功能自动降级。准备好后在项目根目录执行 ./python src/main.py 启动软件。要注意 sensor_config.json、app_config.json 和 logs.json 这几个配置文件都生成在 src/main.py 所在目录（即 src/ 目录）。更换目录会清空配置。
+希望从源代码运行的使用者，先到 Python 官网安装 3.10 以上版本，执行 pip install -r requirements.txt 安装依赖。依赖中 PySide6 和 Fluent-Widgets 组件库提供图形界面，numpy 用于数值计算，pyserial、matplotlib、pyqtgraph、flask 均为可选项，缺失时对应功能自动降级。准备好后在项目根目录执行 ./python ./src/main.py 启动软件。要注意 sensor_config.json、app_config.json 和 logs.json 这几个配置文件都生成在 ./src/main.py 所在目录（即 ./src/ 目录）。更换目录会清空配置。
 
 ## 六、主页与模块导航
 
@@ -225,7 +225,7 @@ pH 读数准不准，关键在校准。软件给了单点、两点、三点三�
 
 真实实验需要先把固件烧录进开发板，并完成传感器接线，这两步在软件之外完成，一次准备好后可长期使用。
 
-烧录使用 Arduino IDE。安装后在“文件—首选项”的附加开发板管理器网址中填入 ESP32 或 ESP8266 的支持包地址，国内网络建议使用带 -cn 后缀的 ESP32 镜像；随后在开发板管理器中搜索安装 esp32 或 esp8266 支持包。用 USB 线连接开发板，在工具菜单选择板型：ESP32 选“ESP32 S3 Dev Module”，ESP8266 选“WeMos D1 R1”，并选好端口。打开传感器目录中对应的 `.ino` 文件上传。这里有一个 Arduino 的硬性要求：Sketch 目录名必须和 `.ino` 文件名一致——本仓库的固件都已放进与其同名的子目录（如 `src/sensors/force/force/force.ino`），所以**可以直接在 IDE 里打开、上传，不必再新建 Sketch 粘贴代码**。
+烧录使用 Arduino IDE。安装后在“文件—首选项”的附加开发板管理器网址中填入 ESP32 或 ESP8266 的支持包地址，国内网络建议使用带 -cn 后缀的 ESP32 镜像；随后在开发板管理器中搜索安装 esp32 或 esp8266 支持包。用 USB 线连接开发板，在工具菜单选择板型：ESP32 选“ESP32 S3 Dev Module”，ESP8266 选“WeMos D1 R1”，并选好端口。打开传感器目录中对应的 `.ino` 文件上传。这里有一个 Arduino 的硬性要求：Sketch 目录名必须和 `.ino` 文件名一致——本仓库的固件都已放进与其同名的子目录（如 `./src/sensors/force/force/force.ino`），所以**可以直接在 IDE 里打开、上传，不必再新建 Sketch 粘贴代码**。
 
 (其实IDE 会自动给你弹出一个对话框引导你)。
 

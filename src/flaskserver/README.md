@@ -71,7 +71,7 @@ curl "http://127.0.0.1:8765/api/modules/force_sensor/series?limit=100"
 
 ```bash
 PCD_API_BASE=http://127.0.0.1:8765 PCD_TOKEN=<密钥> \
-  python src/flaskserver/mcp_server.py
+  python ./src/flaskserver/mcp_server.py
 ```
 
 提供工具：`list_modules` / `get_snapshot` / `get_series` /
@@ -79,5 +79,5 @@ PCD_API_BASE=http://127.0.0.1:8765 PCD_TOKEN=<密钥> \
 
 ## 可插拔保证
 
-整个 `src/flaskserver/` 目录删掉后主程序行为完全不变（主页卡片消失、无 HTTP 端口）。
+整个 `./src/flaskserver/` 目录删掉后主程序行为完全不变（主页卡片消失、无 HTTP 端口）。
 本插件只做协议翻译：无业务逻辑、不持有数据、不认识具体传感器。

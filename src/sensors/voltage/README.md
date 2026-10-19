@@ -187,7 +187,7 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 
 1. 选择方案并烧录对应固件
 2. 按上文接线
-3. 运行 `src/main.py`，进入电压传感器模块
+3. 运行 `./src/main.py`，进入电压传感器模块
 4. 配置 ADC 位数 / HX711 / ADS1115 模式及参数（PGA、通道、AVDD、分压比、放大比）
 5. 连接串口；需要去皮就先点「去皮」（不必等开始采集），然后开始采集
 6. 观察实时电压与曲线，数据可存为 CSV
@@ -199,7 +199,7 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 ### 6.7.保存数据
 ![image.png](https://raw.gitcode.com/user-images/assets/9940564/49c3f526-3169-454b-a567-ec16dae7aa91/image.png 'image.png')
 ![image.png](https://raw.gitcode.com/user-images/assets/9940564/c0f8a2c2-e3e3-4463-89f1-cdfd13ee8b0c/image.png 'image.png')
-点「保存数据」导出 CSV，文件名形如 `voltage_sensor_data_YYYYmmdd_HHMMSS.csv`，存在运行目录（`src/main.py` 所在目录）。表头随当前单位变化：
+点「保存数据」导出 CSV，文件名形如 `voltage_sensor_data_YYYYmmdd_HHMMSS.csv`，存在运行目录（`./src/main.py` 所在目录）。表头随当前单位变化：
 
 ```
 timestamp_s,raw_adc,voltage_v

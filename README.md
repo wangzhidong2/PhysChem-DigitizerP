@@ -123,13 +123,13 @@ pip install uv                                # 已有 Python 时最省事
 # macOS / Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
 
 uv sync          # 自动下载 Python（若需要）+ 创建 .venv + 按 uv.lock 精确安装依赖
-uv run src/main.py   # 启动主程序（自动使用项目环境，无需手动激活）
+uv run ./src/main.py   # 启动主程序（自动使用项目环境，无需手动激活）
 ```
 
 要点：
 
 - **`uv sync` 会自动生成 `uv.lock` 锁文件**（记录每个依赖的精确版本），提交到仓库后，其他人和 CI 都能装出**完全一致**的环境，不会出现“我这儿能跑你那儿报错”。
-- **`uv run <命令>`** 不用先 `activate`，它临时把项目环境放到最前面执行命令，例如 `uv run src/test_serial.py`、`uv run python -c "import PySide6"`。
+- **`uv run <命令>`** 不用先 `activate`，它临时把项目环境放到最前面执行命令，例如 `uv run ./src/test_serial.py`、`uv run python -c "import PySide6"`。
 - **默认走清华 PyPI 镜像**（写在 `pyproject.toml` 的 `[[tool.uv.index]]`），国内无需再加 `-i`。海外网络想换回官方源：`uv sync --default-index https://pypi.org/simple`。
 - **打包工具单独分组**：`uv sync` 默认会装 `dev` 组里的 PyInstaller；要纯净的运行时环境用 `uv sync --no-dev`。
 - 想升级依赖版本：`uv lock --upgrade` 后重新 `uv sync`。
@@ -141,7 +141,7 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 ```
 
 - **`uv` 与 `pip` 可以共存**：不想用 uv 时，`pip install -r requirements.txt` 的老流程完全不受影响（`requirements.txt` 会继续保留）。
-- 注意在**项目根目录**执行 `uv sync` / `uv run`——程序的 `sensor_config.json`、`app_config.json`、`logs.json` 都以 `./src/main.py` 所在目录（即 `src/`）为基准路径。
+- 注意在**项目根目录**执行 `uv sync` / `uv run`——程序的 `sensor_config.json`、`app_config.json`、`logs.json` 都以 `./src/main.py` 所在目录（即 `./src/`）为基准路径。
 
 #### 3.2.5.下载代码（如有git）
 ```bash
@@ -361,7 +361,7 @@ python ./src/main.py
 
 ### 6.9.应用字体（可自定义，含内嵌字体）
 
-界面默认使用**内嵌的 MiSans 字体**（src/assets/fonts/MiSans-Regular.ttf，小米出品，免费商用）。字体会随程序一起分发并在启动时注册进 Qt，所以**换电脑、换系统都不依赖本机装过该字体**，显示效果始终一致。
+界面默认使用**内嵌的 MiSans 字体**（./src/assets/fonts/MiSans-Regular.ttf，小米出品，免费商用）。字体会随程序一起分发并在启动时注册进 Qt，所以**换电脑、换系统都不依赖本机装过该字体**，显示效果始终一致。
 
 想换字体：进入 **设置 → 外观 → 应用字体 → 「选择…」**，会打开一个仿 Word 的字体选择器——列出系统里**已安装的全部字体**（Qt 直接给出中文名，如微软雅黑／宋体／楷体／隶书），每条用**该字体自身的字形**渲染，支持搜索与实时预览。选中即生效，无需重启，并写入 `app_config.json` 的 `General.FontFamily` 下次沿用。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/f5188488-b8ca-4ac2-a398-33310a63c837/image.png 'image.png')
@@ -372,7 +372,7 @@ python ./src/main.py
 
 ### 6.10.数据接口与浏览器仪表盘（flaskserver）
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/f90dec07-d72d-49e6-b33b-defa0a472f4f/image.png 'image.png')
-把实验数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。这是**可选插件**：删掉整个 `src/flaskserver/` 目录，主程序行为完全不变（主页卡片消失、不占端口）。
+把实验数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。这是**可选插件**：删掉整个 `./src/flaskserver/` 目录，主程序行为完全不变（主页卡片消失、不占端口）。
 **开启**：主页 →「数据接口」卡片 →「打开…」→ 打开「数据接口」开关（默认监听 `http://127.0.0.1:8765`）；浏览器访问该地址即为实时仪表盘，首次开启自动生成访问密钥。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/55356cfd-de46-44d8-bc32-f472ef38535a/image.png 'image.png')
 ![QQ_1791700657467.png](https://raw.gitcode.com/user-images/assets/9825261/11b6548a-4571-489c-afa3-8a1a1d7778d3/QQ_1791700657467.png 'QQ_1791700657467.png')
@@ -381,9 +381,9 @@ python ./src/main.py
 | **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器，与主程序复用同一套逻辑） |
 | **仪表盘登录** | 开启鉴权后先显示登录页，输对密钥才进桌面；登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
 | **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`，以及 `collect`／`command`／`params` 控制端点 |
-| **MCP 代理** | `src/flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
+| **MCP 代理** | `./src/flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
 
-仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`src/assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
+仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`./src/assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
 
 ⚠️ 「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机／其他电脑可访问）。**同一网络内的任何人都能查看并控制实验，甚至可能通过漏洞提权，请仅在可信网络中开启。**
 
@@ -412,8 +412,8 @@ python ./src/test_serial.py
 | 数据跳变异常 | 传感器干扰/接线松动 | 检查接线，远离干扰源 |
 | 图表不显示 / 显示"未检测到图表引擎" | 绘图引擎未安装 | `pip install matplotlib pyqtgraph`（至少其一）后重启 |
 | 需要排查问题 / 记录运行日志 | 日志文件默认不写盘 | 设置 → 个性化 → 开启「运行日志」，再用「打开日志」查看 `logs.json`（控制台始终有输出） |
-| 界面字体不是 MiSans | 内嵌字体文件缺失，或配置里选了其他字体 | 确认 `src/assets/fonts/MiSans-Regular.ttf` 存在（打包分发时该目录须一并带上）；再在 设置 → 外观 → 应用字体 中选回 MiSans |
-| 仪表盘中文显示成方块 | 内嵌网页字体未随包分发 | 确认 `src/assets/fonts/HarmonyOS_Sans_SC_Regular.woff2` 存在；缺失时服务端 `/font.css` 返回空样式并回退系统字体 |
+| 界面字体不是 MiSans | 内嵌字体文件缺失，或配置里选了其他字体 | 确认 `./src/assets/fonts/MiSans-Regular.ttf` 存在（打包分发时该目录须一并带上）；再在 设置 → 外观 → 应用字体 中选回 MiSans |
+| 仪表盘中文显示成方块 | 内嵌网页字体未随包分发 | 确认 `./src/assets/fonts/HarmonyOS_Sans_SC_Regular.woff2` 存在；缺失时服务端 `/font.css` 返回空样式并回退系统字体 |
 | 主页「数据接口」卡片灰显 | flask 未安装 | `pip install flask` 后重启程序 |
 | 仪表盘能打开但图表空白 | 打包时漏收 `../src/flaskserver/web/echarts.min.js` | 用仓库内的 `PhysChem-DigitizerP.spec` 重新打包（插件目录是整目录收集的） |
 
@@ -429,7 +429,7 @@ python ./src/test_serial.py
 
 ## 9.扩展开发
 
-新增传感器**无需修改 `src/main.py`**，只需 2 步：
+新增传感器**无需修改 `./src/main.py`**，只需 2 步：
 
 1. 在 `./src/sensors/` 下新建子目录，放入 `.ino` 和 `.py`
 2. 在 `.py` 文件头写识别区：

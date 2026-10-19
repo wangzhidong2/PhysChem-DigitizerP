@@ -56,13 +56,13 @@
 
 ### 3.1 为什么不能叫 `flask/`
 
-`python src/main.py` 启动时源码目录（`src/`）位于 `sys.path[0]`；六个传感器模块里还各自有一句
+`python ./src/main.py` 启动时源码目录（`./src/`）位于 `sys.path[0]`；六个传感器模块里还各自有一句
 
 ```python
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 ```
 
-把源码目录（`src/`）**插到 `sys.path` 最前面**。因此 `src/` 下名为 `flask` 的文件夹会参与 `import flask` 的解析：
+把源码目录（`./src/`）**插到 `sys.path` 最前面**。因此 `./src/` 下名为 `flask` 的文件夹会参与 `import flask` 的解析：
 
 | 情况 | 后果 |
 |---|---|
@@ -72,7 +72,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.
 
 第三条恰好破坏"缺失没有影响"这一核心需求，所以**目录名必须避开 `flask` 这个精确名字**。
 
-**决定：`src/flaskserver/`。** 要改名只需改加载器里的一处常量。
+**决定：`./src/flaskserver/`。** 要改名只需改加载器里的一处常量。
 
 ### 3.2 目录结构
 
@@ -186,7 +186,7 @@ def build_app(service, token, allow_lan, enable_cors):
 
 ### 6.1 发现规则
 
-`main.py` 扫描**其自身所在目录（`src/`）下的一级子目录**，满足两条即视为插件：
+`main.py` 扫描**其自身所在目录（`./src/`）下的一级子目录**，满足两条即视为插件：
 
 1. 目录内有 `__init__.py`
 2. `__init__.py` 前 50 行内含识别区
@@ -423,7 +423,7 @@ token 通过 `X-Auth-Token` 请求头或 `?token=` 传递。
 
 ## 12. 前端仪表盘
 
-- 位置：`src/flaskserver/web/`，由 Flask 以 `static_folder` 托管，`/` 返回 `index.html`
+- 位置：`./src/flaskserver/web/`，由 Flask 以 `static_folder` 托管，`/` 返回 `index.html`
 - **零构建、零 CDN**：手写原生 JS + Canvas，离线实验环境可用
 - 第一版内容：
   - 模块卡片列表：名称、连接/采集状态、实时值

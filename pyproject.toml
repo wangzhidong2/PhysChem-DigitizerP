@@ -1,19 +1,19 @@
 # PhysChem-DigitizerP —— uv / PEP 621 项目配置
 #
-# 本项目是「脚本式应用」（src/main.py + src/core.py + src/sensors/ 动态加载模块），
+# 本项目是「脚本式应用」（./src/main.py + ./src/core.py + ./src/sensors/ 动态加载模块），
 # 不是可安装的包：没有 build-system，用 `tool.uv.package = false` 声明为
 # "virtual 项目"。因此构建类命令会被跳过，但依赖管理、锁文件、venv、
 # 运行入口全部照常可用。
 #
 # 常用命令：
 #   uv sync                     # 创建 .venv 并安装全部依赖（含 dev 组）
-#   uv run src/main.py          # 启动主程序（自动使用项目环境，无需手动激活）
-#   uv run src/test_serial.py   # 串口诊断工具
+#   uv run ./src/main.py        # 启动主程序（自动使用项目环境，无需手动激活）
+#   uv run ./src/test_serial.py # 串口诊断工具
 #   uv run <任意命令>            # 在项目环境里执行命令（如 uv run python -c "..."）
 #   uv lock --upgrade           # 升级 uv.lock 中的依赖版本
 #   uv build                    # 打包（本项目为 virtual 项目，此命令跳过）
-# 注意：运行/打包命令请在项目根目录执行（main.py 位于 src/），
-#       程序的配置与日志文件均以 src/main.py 所在目录（即 src/）为基准路径。
+# 注意：运行/打包命令请在项目根目录执行（main.py 位于 ./src/），
+#       程序的配置与日志文件均以 ./src/main.py 所在目录（即 ./src/）为基准路径。
 
 [project]
 name = "physchem-digitizerp"
