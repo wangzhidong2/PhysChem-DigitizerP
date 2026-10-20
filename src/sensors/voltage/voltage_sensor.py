@@ -13,14 +13,15 @@
 
 import sys
 import os
+import time
 from collections import deque
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QSizePolicy,
+    QSizePolicy, QColorDialog,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
     BodyLabel, CaptionLabel, DoubleSpinBox, SwitchButton, FluentIcon as FIF,
@@ -64,6 +65,39 @@ AI_SYSTEM_PROMPT = (
     "③数据呈台阶状时指出量化或参考跳变来源；④给出多点校准、软件滤波/多次平均、"
     "调整 PGA/增益、更换更高精度 ADC、改善接地与屏蔽等具体建议。"
 )
+
+
+# 多路连接的默认曲线配色（按新建顺序轮换取未用色，界面上可单独改色）
+CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
+                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
+
+
+class _Channel:
+    """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
+
+    每路连接独立选择「有线串口 / 模拟器」、独立串口、独立曲线颜色、
+    独立去皮零点；数据按主机统一时间戳记录（见 handle_data）。
+    UI 行控件引用由模块统一保管在 _rows[channel.id] 里。
+    """
+
+    def __init__(self, cid, name, color, mode='serial', port=''):
+        self.id = cid                      # 稳定 id（信号绑定用，删除后不复用）
+        self.name = name                    # 显示名（通道N，创建时定序）
+        self.color = color                  # 曲线颜色
+        self.mode = mode                    # 'serial' | 'simulator'
+        self.port = port                    # 串口模式下选中的端口
+        self.thread = None                  # SerialThread / SimulatorThread
+        # 采集数据（内部电压单位：伏特）
+        self.time_data = []
+        self.raw_data = []
+        self.voltage_data = []
+        # 去皮 / 实时显示用的滚动窗口（含未采集时的实时数据）
+        self.live_window = deque(maxlen=10)
+        # 上次记录样本的主机相对秒（采样间隔过滤，每路独立）
+        self.last_sample_s = None
+        # 去皮零点（每路独立）
+        self.tare_offset_v = 0.0
+        self.tare_active = False
 
 
 class VoltageSensorWidget(QWidget):
@@ -111,16 +145,16 @@ class VoltageSensorWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.serial_thread = None
         self._collecting = False  # 当前是否在采集（合并开始/停止按钮状态）
-        self.voltage_data = []
-        self.time_data = []
-        self.raw_data = []
-        self.start_timestamp_ms = 0
+        # 多路连接：每路一个 _Channel（独立模式/串口/颜色/去皮/数据）
+        self.channels = []
+        self._rows = {}              # channel.id -> 行控件引用 dict
+        self._next_channel_id = 1   # 稳定 id 分配器（删除后不复用）
+        self._next_channel_seq = 1  # 显示名序号（通道N）
+        self._t0_mono = None        # 采集期主机统一时间基准（首个样本时刻）
 
-        # 采样频率设置（毫秒）
+        # 采样频率设置（毫秒）—— 全部通道共用
         self.sample_interval_ms = 100  # 默认 100ms (10Hz)
-        self.last_sample_time_ms = 0   # 上次采样时间
 
         self.adc_bits = 12
         self.divider_ratio = 1.0
@@ -135,11 +169,6 @@ class VoltageSensorWidget(QWidget):
         self.ads1115_channel = 'AIN0'  # 默认单端 AIN0
         # 显示单位：内部 voltage_data 始终存伏特，仅在显示/保存时按当前单位换算
         self.current_unit = 'V'     # 可选：kV / V / mV
-        # 去皮偏移：空载时传感器输出的非零电压，从测量值中扣除
-        self.tare_offset_v = 0.0    # 单位：伏特（与 voltage_data 一致）
-        self.tare_active = False    # 是否启用去皮
-        # 最近若干个采样（含未开始采集时的实时数据），去皮时取平均作为新零点
-        self._live_raw_window = deque(maxlen=10)
 
         self.config = self.load_config()
         self.adc_bits = self.config.get('adc_bits', 12)
@@ -152,13 +181,10 @@ class VoltageSensorWidget(QWidget):
         self.ads1115_pga = self.config.get('ads1115_pga', '±2.048V')
         self.ads1115_channel = self.config.get('ads1115_channel', 'AIN0')
         self.current_unit = self.config.get('current_unit', 'V')
-        self.tare_offset_v = self.config.get('tare_offset_v', 0.0)
-        self.tare_active = self.config.get('tare_active', False)
 
         self.init_ui()
-        # pyserial 未安装：自动切换到模拟器模式（串口连接优雅降级）
-        if not SERIAL_AVAILABLE:
-            self.mode_combo.setCurrentIndex(self.mode_combo.findText("模拟器"))
+        # 恢复上次的通道列表（含模式/串口/颜色/去皮）；无记录时建一路默认通道
+        self._restore_channels()
 
     def load_config(self):
         config = load_sensor_config('voltage_sensor')
@@ -174,11 +200,10 @@ class VoltageSensorWidget(QWidget):
             self.ads1115_pga = config.get('ads1115_pga', '±2.048V')
             self.ads1115_channel = config.get('ads1115_channel', 'AIN0')
             self.current_unit = config.get('current_unit', 'V')
-            self.tare_offset_v = config.get('tare_offset_v', 0.0)
-            self.tare_active = config.get('tare_active', False)
         return config
 
     def save_config(self):
+        first = self.channels[0] if self.channels else None
         config = {
             'adc_bits': self.adc_bits,
             'divider_ratio': self.divider_ratio,
@@ -191,8 +216,16 @@ class VoltageSensorWidget(QWidget):
             'ads1115_pga': self.ads1115_pga,
             'ads1115_channel': self.ads1115_channel,
             'current_unit': self.current_unit,
-            'tare_offset_v': self.tare_offset_v,
-            'tare_active': self.tare_active
+            # 兼容旧版单通道上位机：顶层去皮字段取第 1 路的值
+            'tare_offset_v': first.tare_offset_v if first else 0.0,
+            'tare_active': first.tare_active if first else False,
+            # 多路连接：每路的模式/串口/颜色/去皮
+            'channels': [
+                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
+                 'color': ch.color, 'tare_offset_v': ch.tare_offset_v,
+                 'tare_active': ch.tare_active}
+                for ch in self.channels
+            ],
         }
         return save_sensor_config('voltage_sensor', config)
 
@@ -212,16 +245,17 @@ class VoltageSensorWidget(QWidget):
             return f"{v:.3f}"
         return f"{v:.4f}"
 
-    def adc_to_voltage(self, adc_value, apply_tare=True):
+    def adc_to_voltage(self, adc_value, apply_tare=True, channel=None):
         """实际被测电压 = ADC端电压 × 分压比 / 放大倍数。
 
         apply_tare=False 时不扣去皮零点，用于在已有零点的基础上重新计算新零点。
+        多路连接时传 channel：按该通道自己的零点去皮（各路零点独立）。
         """
         v_adc = self.adc_to_vadc(adc_value)
         actual_voltage = v_adc * self.divider_ratio / self.amp_ratio
-        # 启用去皮时扣除零点偏移
-        if apply_tare and self.tare_active:
-            actual_voltage -= self.tare_offset_v
+        # 启用去皮时扣除该通道自己的零点偏移
+        if apply_tare and channel is not None and channel.tare_active:
+            actual_voltage -= channel.tare_offset_v
         return actual_voltage
 
     def adc_to_vadc(self, adc_value):
@@ -274,59 +308,39 @@ class VoltageSensorWidget(QWidget):
         card_layout.setContentsMargins(20, 4, 20, 16)
         card_layout.setSpacing(12)
 
-        # 第一行：连接方式 + 设备选择 + 按钮
+        # 通道工具行：「新建连接」+ 使用说明
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+        self.add_channel_btn = PushButton("＋ 新建连接")
+        self.add_channel_btn.setFixedHeight(36)
+        self.add_channel_btn.setStyleSheet(self.CARD_BTN_STYLE)
+        self.add_channel_btn.setToolTip(
+            "增加一路 ESP32 连接：\n"
+            "每路可单独选择「有线串口 / 模拟器」，单独连接/断开，\n"
+            "单独点色块换曲线颜色；多路数据叠加画在同一张图上")
+        self.add_channel_btn.clicked.connect(lambda: self.add_channel())
+        toolbar.addWidget(self.add_channel_btn)
+        toolbar.addWidget(CaptionLabel(
+            "每路连接可单独选择串口/模拟器与曲线颜色，多路数据同图叠加对比"))
+        toolbar.addStretch()
+        card_layout.addLayout(toolbar)
+
+        # 通道行容器：每路连接一行控件
+        self.channels_container = QWidget()
+        self.channels_layout = QVBoxLayout(self.channels_container)
+        self.channels_layout.setContentsMargins(0, 0, 0, 0)
+        self.channels_layout.setSpacing(8)
+        card_layout.addWidget(self.channels_container)
+
+        # 采样频率行（全部通道共用同一采样间隔）
         row1 = QHBoxLayout()
         row1.setSpacing(10)
-
-        row1.addWidget(BodyLabel("连接方式:"))
-        self.mode_combo = ComboBox()
-        self.mode_combo.addItems(["有线串口", "模拟器"])
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        row1.addWidget(self.mode_combo)
-
-        self.serial_panel = QWidget()
-        serial_layout = QHBoxLayout(self.serial_panel)
-        serial_layout.setContentsMargins(0, 0, 0, 0)
-        serial_layout.setSpacing(8)
-        serial_layout.addWidget(BodyLabel("串口:"))
-        self.port_combo = ComboBox()
-        self.refresh_ports()
-        self.port_combo.setMinimumWidth(140)
-        serial_layout.addWidget(self.port_combo)
-        self.refresh_btn = PushButton("刷新")
-        self.refresh_btn.setFixedHeight(36)
-        self.refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.refresh_btn.clicked.connect(self.refresh_ports)
-        serial_layout.addWidget(self.refresh_btn)
-
-        # 模拟器面板：无需选择端口
-        self.sim_panel = QWidget()
-        sim_layout = QHBoxLayout(self.sim_panel)
-        sim_layout.setContentsMargins(0, 0, 0, 0)
-        sim_layout.setSpacing(8)
-        sim_hint = CaptionLabel("无需硬件，生成随机数据用于调试")
-        sim_layout.addWidget(sim_hint)
-        sim_layout.addStretch()
-
-        row1.addWidget(self.serial_panel)
-        row1.addWidget(self.sim_panel)
-        self.sim_panel.hide()
-
-        row1.addSpacing(16)
-        self.connect_btn = PushButton("连接")
-        self.connect_btn.setFixedHeight(36)
-        self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.connect_btn.clicked.connect(self.toggle_connection)
-        row1.addWidget(self.connect_btn)
-
-        row1.addSpacing(16)
         row1.addWidget(BodyLabel("采样频率:"))
         self.sample_rate_combo = SampleRateComboBox()
         self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
         self.sample_rate_combo.setMaximumWidth(120)
         self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
         row1.addWidget(self.sample_rate_combo)
-
         row1.addStretch()
         card_layout.addLayout(row1)
 
@@ -516,10 +530,8 @@ class VoltageSensorWidget(QWidget):
         params_row.addWidget(self.unit_combo)
 
         params_row.addWidget(BodyLabel("去皮:"))
-        self.tare_status_label = BodyLabel("未启用" if not self.tare_active else
-                                        f"已启用 (零点 {self.format_voltage(self.tare_offset_v)} {self.current_unit})")
-        self.tare_status_label.setStyleSheet("color: green; font-weight: bold;" if self.tare_active
-                                             else "color: #888; font-weight: bold;")
+        self.tare_status_label = BodyLabel("未启用")
+        self.tare_status_label.setStyleSheet("color: #888; font-weight: bold;")
         params_row.addWidget(self.tare_status_label)
 
         self.tare_btn = PushButton("去皮")
@@ -528,7 +540,7 @@ class VoltageSensorWidget(QWidget):
         self.tare_btn.setStyleSheet("background-color: #fd7e14; color: white;")
         self.tare_btn.setToolTip("取最近 10 个采样点的平均值作为零点，从测量值中扣除。\n"
                                  "随时可点（不必先开始采集，连上设备有数据即可）。\n"
-                                 "可反复点击：每点一次都以当前读数重新归零，没有「取消去皮」按钮。")
+                                 "可反复点击重新归零；多路连接时对有数据流入的通道分别去皮（各路零点独立）。")
         self.tare_btn.clicked.connect(self.tare_now)
         self.tare_btn.setEnabled(False)
         params_row.addWidget(self.tare_btn)
@@ -658,14 +670,6 @@ class VoltageSensorWidget(QWidget):
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)
 
-    def on_mode_changed(self, index):
-        if index == 0:
-            self.serial_panel.show()
-            self.sim_panel.hide()
-        else:
-            self.serial_panel.hide()
-            self.sim_panel.show()
-
     def on_adc_bits_changed(self, index):
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
         self.adc_bits = bits_map.get(index, 12)
@@ -747,15 +751,21 @@ class VoltageSensorWidget(QWidget):
         self.update_chart()
         # 刷新去皮状态标签（单位变了显示值要跟着变）
         self.update_tare_status_label()
-        # 刷新当前电压大字显示（如果有最后一个数据点）
-        if self.voltage_data:
-            self.current_voltage_label.setText(f"{self.format_voltage(self.voltage_data[-1])} {self.current_unit}")
+        # 刷新当前电压大字显示（取最近一路有数据的通道）
+        for ch in reversed(self.channels):
+            if ch.voltage_data:
+                self.current_voltage_label.setText(
+                    f"{self.format_voltage(ch.voltage_data[-1])} {self.current_unit}")
+                break
 
     def update_tare_status_label(self):
-        """根据当前去皮状态刷新状态标签（按钮文案固定为「去皮」，不再切换成「取消去皮」）"""
-        if self.tare_active:
-            self.tare_status_label.setText(
-                f"已启用 (零点 {self.format_voltage(self.tare_offset_v)} {self.current_unit})")
+        """刷新去皮状态标签：多路时逐路显示零点（各路独立）。"""
+        actives = [ch for ch in self.channels if ch.tare_active]
+        if actives:
+            text = "已启用 (" + "; ".join(
+                f"{ch.name} {self.format_voltage(ch.tare_offset_v)}{self.current_unit}"
+                for ch in actives) + ")"
+            self.tare_status_label.setText(text)
             self.tare_status_label.setStyleSheet("color: green; font-weight: bold;")
         else:
             self.tare_status_label.setText("未启用")
@@ -764,19 +774,23 @@ class VoltageSensorWidget(QWidget):
     def tare_now(self):
         """去皮：取最近若干个采样点的平均值作为零点，从测量值中扣除。
 
-        与旧实现的区别：
         1. 不要求先「开始采集」——设备连着、有数据流入即可去皮（用实时采样窗口）；
         2. 可反复点击，每点一次都以当前读数重新归零，没有「取消去皮」；
-        3. 零点按去皮前的读数计算，重复去皮不会互相叠加、也不会把已有零点清掉。
+        3. 零点按去皮前的读数计算，重复去皮不会互相叠加、也不会把已有零点清掉；
+        4. 多路连接时对**所有有数据流入的通道**分别去皮，各路零点独立。
         """
-        if not self._live_raw_window:
+        targets = [ch for ch in self.channels if ch.live_window]
+        if not targets:
             fluent_message_box(self, "提示", "还没有收到数据，等数据流入后再去皮")
             return
-        # 取最近 10 个采样点（去皮前的电压）平均值作为新零点
-        pre_tare = [self.adc_to_voltage(r, apply_tare=False) for r in self._live_raw_window]
-        self.tare_offset_v = float(np.mean(pre_tare))
-        self.tare_active = True
-        log.info("去皮：零点=%.6g V（取最近 %d 个采样）", self.tare_offset_v, len(pre_tare))
+        parts = []
+        for ch in targets:
+            # 取最近 10 个采样点（去皮前的电压）平均值作为新零点
+            pre_tare = [self.adc_to_voltage(r, apply_tare=False) for r in ch.live_window]
+            ch.tare_offset_v = float(np.mean(pre_tare))
+            ch.tare_active = True
+            parts.append(f"{ch.name} 零点={ch.tare_offset_v:.6g}V")
+        log.info("去皮：%s", "; ".join(parts))
         self.save_config()
         self.update_tare_status_label()
         # 按新零点重算已采集的数据，曲线同步归零
@@ -790,22 +804,28 @@ class VoltageSensorWidget(QWidget):
         """执行模块特有控制动作（由 DataService 保证在 GUI 线程调用）。
         通用动作（start/stop/clear/toggle）返回 None 交给通用动作表。"""
         if action == 'tare':
-            if not self._live_raw_window:
+            if not any(ch.live_window for ch in self.channels):
                 return {'ok': False, 'message': '还没有收到数据，无法去皮'}
             self.tare_now()
-            return {'ok': True, 'message': f'已去皮（零点={self.tare_offset_v:.6g} V）'}
+            offsets = "; ".join(f"{ch.name}={ch.tare_offset_v:.6g}V"
+                                for ch in self.channels if ch.tare_active)
+            return {'ok': True, 'message': f'已去皮（{offsets}）'}
         return None
 
     def recompute_voltage_data(self):
-        """去皮状态变化后，按已有 raw_data 重算 voltage_data"""
-        if not self.raw_data:
+        """去皮状态变化后，按各通道已有 raw_data 重算 voltage_data"""
+        if not any(ch.raw_data for ch in self.channels):
             return
-        self.voltage_data = [self.adc_to_voltage(r) for r in self.raw_data]
+        for ch in self.channels:
+            ch.voltage_data = [self.adc_to_voltage(r, channel=ch) for r in ch.raw_data]
         self.update_stats()
         self.update_chart()
-        if self.voltage_data:
-            self.current_voltage_label.setText(
-                f"{self.format_voltage(self.voltage_data[-1])} {self.current_unit}")
+        # 大字显示最近一路有数据的最新值
+        for ch in reversed(self.channels):
+            if ch.voltage_data:
+                self.current_voltage_label.setText(
+                    f"{self.format_voltage(ch.voltage_data[-1])} {self.current_unit}")
+                break
 
     def update_range_display(self):
         if self.hx711_mode:
@@ -826,82 +846,267 @@ class VoltageSensorWidget(QWidget):
             actual_full = full * self.divider_ratio / self.amp_ratio
             self.actual_range_label.setText(f"实际量程: -{actual_full:.2f}V~+{actual_full:.2f}V")
 
-    def refresh_ports(self):
-        """刷新可用串口列表（pyserial 未安装时显示占位提示）"""
-        self.port_combo.clear()
+    # ============================================================
+    # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
+    # ============================================================
+    def _restore_channels(self):
+        """按配置重建通道行；旧版单通道配置自动迁移为一路通道。"""
+        saved = (self.config or {}).get('channels') or []
+        if saved:
+            for item in saved:
+                mode = item.get('mode', 'serial')
+                if mode != 'simulator' and not SERIAL_AVAILABLE:
+                    mode = 'simulator'   # pyserial 缺失时优雅降级
+                ch = self._make_channel(
+                    name=item.get('name') or None,
+                    color=item.get('color') or None,
+                    mode=mode, port=item.get('port', ''))
+                ch.tare_offset_v = float(item.get('tare_offset_v', 0.0) or 0.0)
+                ch.tare_active = bool(item.get('tare_active', False))
+        else:
+            # 旧版单通道配置迁移：保留顶层去皮字段作为第 1 路零点
+            ch = self._make_channel(
+                mode='serial' if SERIAL_AVAILABLE else 'simulator')
+            ch.tare_offset_v = float((self.config or {}).get('tare_offset_v', 0.0) or 0.0)
+            ch.tare_active = bool((self.config or {}).get('tare_active', False))
+        self._sync_compat_aliases()
+        self.update_tare_status_label()
+
+    def _make_channel(self, color=None, mode='serial', port='', name=None):
+        """创建通道对象 + 对应 UI 行（不重复使用已删除通道的 id/name）。"""
+        cid = self._next_channel_id
+        self._next_channel_id += 1
+        seq = self._next_channel_seq
+        self._next_channel_seq += 1
+        if not color:
+            used = {ch.color for ch in self.channels}
+            color = next((c for c in CHANNEL_COLORS if c not in used),
+                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
+        ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port)
+        self.channels.append(ch)
+        self._build_channel_row(ch)
+        self._update_delete_btns()
+        return ch
+
+    def add_channel(self):
+        """「新建连接」按钮：增加一路连接（默认有线串口，缺 pyserial 时为模拟器）。"""
+        self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
+        self._sync_compat_aliases()
+        self.save_config()
+
+    def _delete_channel(self, ch):
+        """删除一路连接（正在连接的通道须先断开；至少保留一路）。"""
+        if ch.thread and ch.thread.isRunning():
+            fluent_message_box(self, "提示", f"{ch.name} 正在连接，请先断开再删除")
+            return
+        refs = self._rows.pop(ch.id, None)
+        if refs:
+            self.channels_layout.removeWidget(refs['row'])
+            refs['row'].deleteLater()
+        self.channels.remove(ch)
+        self._update_delete_btns()
+        self._sync_compat_aliases()
+        self.save_config()
+
+    def _update_delete_btns(self):
+        """仅剩一路时禁用其删除按钮（至少保留一路连接行）。"""
+        single = len(self.channels) <= 1
+        for ch in self.channels:
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['delete_btn'].setEnabled(not single)
+
+    def _sync_compat_aliases(self):
+        """DataService / 网页端兼容：对外仍暴露单一 mode_combo/port_combo。
+
+        core.DataService.connection_info / _apply_connection 依赖这两个属性
+        读写连接方式与端口；多路化后让它们指向第 1 路的行控件，
+        set_connection('模拟器'/.../串口端口) 即作用于第 1 路，网页端不破。
+        """
+        if self.channels:
+            refs = self._rows[self.channels[0].id]
+            self.mode_combo = refs['mode_combo']
+            self.port_combo = refs['port_combo']
+
+    def _build_channel_row(self, ch):
+        """为通道创建一行连接控件：色块 | 名称 | 模式 | 串口+刷新 | 连接 | 删除。"""
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
+
+        color_btn = PushButton()
+        color_btn.setFixedSize(32, 32)
+        color_btn.clicked.connect(lambda _=False, c=ch: self._pick_channel_color(c))
+        h.addWidget(color_btn)
+
+        h.addWidget(BodyLabel(ch.name))
+
+        mode_combo = ComboBox()
+        mode_combo.addItems(["有线串口", "模拟器"])
+        mode_combo.setCurrentIndex(1 if ch.mode == 'simulator' else 0)
+        mode_combo.currentIndexChanged.connect(
+            lambda i, c=ch: self._on_channel_mode_changed(c, i))
+        h.addWidget(mode_combo)
+
+        port_combo = ComboBox()
+        port_combo.setMinimumWidth(140)
+        self._fill_channel_ports(ch, port_combo)
+        port_combo.currentTextChanged.connect(lambda t, c=ch: setattr(c, 'port', t))
+        h.addWidget(port_combo)
+
+        refresh_btn = PushButton("刷新")
+        refresh_btn.setFixedHeight(32)
+        refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
+        refresh_btn.clicked.connect(lambda _=False, c=ch: self._refresh_channel_ports(c))
+        h.addWidget(refresh_btn)
+
+        connect_btn = PushButton("连接")
+        connect_btn.setFixedHeight(32)
+        connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
+        connect_btn.clicked.connect(lambda _=False, c=ch: self._toggle_channel_connection(c))
+        h.addWidget(connect_btn)
+
+        delete_btn = PushButton("删除")
+        delete_btn.setFixedHeight(32)
+        delete_btn.setStyleSheet(self.CARD_BTN_STYLE)
+        delete_btn.setToolTip("删除这一路连接（需先断开）")
+        delete_btn.clicked.connect(lambda _=False, c=ch: self._delete_channel(c))
+        h.addWidget(delete_btn)
+
+        h.addStretch()
+        self.channels_layout.addWidget(row)
+        self._rows[ch.id] = {
+            'row': row, 'color_btn': color_btn, 'mode_combo': mode_combo,
+            'port_combo': port_combo, 'refresh_btn': refresh_btn,
+            'connect_btn': connect_btn, 'delete_btn': delete_btn,
+        }
+        self._apply_channel_color(ch)
+        self._apply_channel_mode_visibility(ch)
+
+    def _fill_channel_ports(self, ch, combo):
+        """重填串口列表，尽量保住该通道上次选中的端口。"""
+        want = ch.port
+        combo.clear()
         ports = list_serial_ports()
         for device, _desc in ports:
-            self.port_combo.addItem(device)
+            combo.addItem(device)
         if not ports:
-            self.port_combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
+            combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
+        if want and combo.findText(want) >= 0:
+            combo.setCurrentText(want)
+        ch.port = combo.currentText()
 
-    def toggle_connection(self):
-        """切换连接状态：已连接则断开，否则按当前模式连接"""
-        if self.serial_thread and self.serial_thread.isRunning():
-            self.disconnect_all()
+    def refresh_ports(self):
+        """刷新所有通道的串口列表（网页端 refresh_ports 命令也走这里）。"""
+        for ch in self.channels:
+            self._refresh_channel_ports(ch)
+
+    def _refresh_channel_ports(self, ch):
+        refs = self._rows.get(ch.id)
+        if refs:
+            self._fill_channel_ports(ch, refs['port_combo'])
+
+    def _apply_channel_color(self, ch):
+        """把通道颜色刷到行内色块按钮上。"""
+        refs = self._rows.get(ch.id)
+        if refs:
+            refs['color_btn'].setStyleSheet(
+                f"background-color: {ch.color}; border: 1px solid rgba(0,0,0,0.15);"
+                f" border-radius: 4px;")
+            refs['color_btn'].setToolTip(f"曲线颜色: {ch.color}（点击更换）")
+
+    def _pick_channel_color(self, ch):
+        """点击色块：弹 QColorDialog 为本路选曲线颜色。"""
+        color = QColorDialog.getColor(QColor(ch.color), self, f"选择 {ch.name} 的曲线颜色")
+        if color.isValid():
+            ch.color = color.name()
+            self._apply_channel_color(ch)
+            self.save_config()
+            self.update_chart()
+
+    def _on_channel_mode_changed(self, ch, index):
+        ch.mode = 'simulator' if index == 1 else 'serial'
+        self._apply_channel_mode_visibility(ch)
+        self.save_config()
+
+    def _apply_channel_mode_visibility(self, ch):
+        """模拟器模式下隐藏本路的串口下拉与刷新按钮。"""
+        refs = self._rows.get(ch.id)
+        if refs:
+            is_sim = ch.mode == 'simulator'
+            refs['port_combo'].setVisible(not is_sim)
+            refs['refresh_btn'].setVisible(not is_sim)
+
+    def _toggle_channel_connection(self, ch):
+        """单路的连接/断开按钮：按本路线程状态切换。"""
+        if ch.thread and ch.thread.isRunning():
+            self._disconnect_channel(ch)
         else:
-            self.connect_device()
+            self._connect_channel(ch)
+
+    def _connect_channel(self, ch):
+        """连接单路：串口或模拟器（其余通道不受影响）。"""
+        try:
+            if ch.mode == 'simulator':
+                # 模拟器产生有符号 ADC 范围的原始值，中点为 0V
+                max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+                th = SimulatorThread(value_min=-max_adc, value_max=max_adc,
+                                     interval_ms=self.sample_interval_ms)
+            else:
+                if not SERIAL_AVAILABLE:
+                    fluent_message_box(self, "提示", serial_unavailable_hint())
+                    return
+                port = self._rows[ch.id]['port_combo'].currentText()
+                if not port or "未安装" in port or "无可用" in port:
+                    fluent_message_box(self, "错误", f"{ch.name}: 请选择串口")
+                    return
+                ch.port = port
+                th = SerialThread(port)
+            th.data_received.connect(lambda d, c=ch: self.handle_data(d, c))
+            ch.thread = th
+            th.start()
+        except Exception as e:
+            ch.thread = None
+            fluent_message_box(self, "连接错误", f"{ch.name} 连接失败: {e}")
+            return
+        refs = self._rows.get(ch.id)
+        if refs:
+            refs['connect_btn'].setText("断开")
+        log.info("%s 已连接（%s）", ch.name,
+                 '模拟器' if ch.mode == 'simulator' else ch.port)
+        self._set_collect_enabled(True)
+        self.tare_btn.setEnabled(True)   # 连接后即可去皮，不必先开始采集
+        self.current_voltage_label.setText("--.- V")
+        self.current_raw_label.setText(f"{ch.name}: 连接中...")
+        self.current_vadc_label.setText("ADC端电压: --.- V")
+
+    def _disconnect_channel(self, ch):
+        """断开单路（其余通道不受影响）。"""
+        if ch.thread:
+            stop_thread(ch.thread, name=f"电压{ch.name}线程")
+            ch.thread = None
+        refs = self._rows.get(ch.id)
+        if refs:
+            refs['connect_btn'].setText("连接")
+        log.info("%s 已断开", ch.name)
+        if not any(c.thread for c in self.channels):
+            self._set_collect_enabled(False)
+            self.tare_btn.setEnabled(False)
+            self.current_voltage_label.setText(f"--.- {self.current_unit}")
+            self.current_raw_label.setText("原始ADC: 已断开")
+            self.current_vadc_label.setText("ADC端电压: --.- V")
 
     def connect_device(self):
-        mode = self.mode_combo.currentText()
-        if "模拟器" in mode:
-            self.connect_simulator()
-        else:
-            self.connect_serial()
-
-    def connect_simulator(self):
-        """连接模拟器：随机生成 ADC 原始值，无需硬件"""
-        try:
-            # 模拟器产生有符号 ADC 范围的原始值，中点为 0V
-            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
-            self.serial_thread = SimulatorThread(
-                value_min=-max_adc, value_max=max_adc,
-                interval_ms=self.sample_interval_ms)
-            self.serial_thread.data_received.connect(self.handle_data)
-            self.serial_thread.start()
-            log.info("模拟器已连接")
-            self.connect_btn.setText("断开")
-            self._set_collect_enabled(True)
-            self.tare_btn.setEnabled(True)   # 连接后即可去皮，不必先开始采集
-            self.current_voltage_label.setText("--.- V")
-            self.current_raw_label.setText("原始ADC: 模拟器连接中...")
-            self.current_vadc_label.setText("ADC端电压: --.- V")
-        except Exception as e:
-            fluent_message_box(self, "连接错误", f"模拟器启动失败: {e}")
-
-    def connect_serial(self):
-        if not SERIAL_AVAILABLE:
-            fluent_message_box(self, "提示", serial_unavailable_hint())
-            return
-        port = self.port_combo.currentText()
-        if not port:
-            fluent_message_box(self, "错误", "请选择串口")
-            return
-        try:
-            self.serial_thread = SerialThread(port)
-            self.serial_thread.data_received.connect(self.handle_data)
-            self.serial_thread.start()
-            log.info("串口已连接: %s", port)
-            self.connect_btn.setText("断开")
-            self._set_collect_enabled(True)
-            self.tare_btn.setEnabled(True)   # 连接后即可去皮，不必先开始采集
-            self.current_voltage_label.setText("--.- V")
-            self.current_raw_label.setText("原始ADC: 连接中...")
-            self.current_vadc_label.setText("ADC端电压: --.- V")
-        except Exception as e:
-            fluent_message_box(self, "连接错误", f"无法连接串口: {e}")
+        """连接全部未连接的通道（网页端 set_connection connect=true 走这里）。"""
+        for ch in self.channels:
+            if not (ch.thread and ch.thread.isRunning()):
+                self._connect_channel(ch)
 
     def disconnect_all(self):
-        if self.serial_thread:
-            stop_thread(self.serial_thread, name="电压串口线程")
-            self.serial_thread = None
-        log.info("已断开连接")
-        self.connect_btn.setText("连接")
-        self._set_collect_enabled(False)
-        self.tare_btn.setEnabled(False)
-        self.current_voltage_label.setText(f"--.- {self.current_unit}")
-        self.current_raw_label.setText("原始ADC: 已断开")
-        self.current_vadc_label.setText("ADC端电压: --.- V")
+        """断开全部通道（退出清理 / 网页端命令也走这里）。"""
+        for ch in list(self.channels):
+            self._disconnect_channel(ch)
 
     def toggle_collection(self):
         """合并的开始/停止按钮：按当前采集状态切换。"""
@@ -921,13 +1126,17 @@ class VoltageSensorWidget(QWidget):
         update_collect_btn(self.float_collect_btn, self._collecting)
 
     def start_collection(self):
-        self.voltage_data.clear()
-        self.time_data.clear()
-        self.raw_data.clear()
+        for ch in self.channels:
+            ch.time_data.clear()
+            ch.raw_data.clear()
+            ch.voltage_data.clear()
+            ch.last_sample_s = None
         self.data_text.clear()
-        self.last_sample_time_ms = 0  # 重置采样时间
+        # 主机统一时间基准：以采集期收到的**首个样本**为 t=0（各路共享）
+        self._t0_mono = None
         self._collecting = True
-        log.info("开始采集")
+        log.info("开始采集（已连接 %d 路）",
+                 sum(1 for ch in self.channels if ch.thread))
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
         self.current_voltage_label.setText("电压: 采集中...")
@@ -936,119 +1145,127 @@ class VoltageSensorWidget(QWidget):
     def stop_collection(self):
         self._collecting = False
         self._refresh_collect_btn()
-        self.save_btn.setEnabled(len(self.voltage_data) > 0)
-        log.info("停止采集，共 %d 个数据点", len(self.voltage_data))
-        if len(self.voltage_data) > 0:
-            avg_v = np.mean(self.voltage_data)
-            self.current_voltage_label.setText(f"{self.format_voltage(avg_v)} {self.current_unit}")
+        total = sum(len(ch.voltage_data) for ch in self.channels)
+        self.save_btn.setEnabled(total > 0)
+        log.info("停止采集，共 %d 个数据点", total)
+        if total > 0:
+            # 大字显示数据最多通道的均值
+            main = max(self.channels, key=lambda c: len(c.voltage_data))
+            if main.voltage_data:
+                avg_v = np.mean(main.voltage_data)
+                self.current_voltage_label.setText(
+                    f"{self.format_voltage(avg_v)} {self.current_unit}")
 
-    def handle_data(self, data):
+    def handle_data(self, data, ch):
+        """一路连接的数据回调（SerialThread / SimulatorThread → 本模块）。
+
+        多路连接下的约定：
+        - ERROR / START 按通道处理，出错只断开这一路；
+        - 记录用**主机统一时间戳**（time.monotonic），各路天然对齐在同一
+          时间轴（不同 ESP32 开机时刻不同，固件时间戳不可跨路比较）；
+        - 固件的 timestamp 字段只做格式解析，不参与记录。
+        """
         if data.startswith("ERROR:"):
-            log.error("设备错误: %s", data[6:])
-            fluent_message_box(self, "连接错误", data[6:])
-            self.disconnect_all()
+            log.error("%s 设备错误: %s", ch.name, data[6:])
+            fluent_message_box(self, "连接错误", f"{ch.name}: {data[6:]}")
+            self._disconnect_channel(ch)
             return
 
         if data == "START":
-            self.current_voltage_label.setText("电压: 设备就绪")
-            self.current_raw_label.setText("原始ADC: 等待数据...")
-            return
-
-        if not self._collecting:
-            try:
-                if "," in data:
-                    parts = data.split(",")
-                    if len(parts) == 2:
-                        raw_value = int(parts[1])
-                        self._live_raw_window.append(raw_value)
-                        voltage = self.adc_to_voltage(raw_value)
-                        v_adc = self.adc_to_vadc(raw_value)
-                        self.current_raw_label.setText(f"原始ADC: {raw_value}")
-                        self.current_voltage_label.setText(f"{self.format_voltage(voltage)} {self.current_unit}")
-                        self.current_vadc_label.setText(f"ADC端电压: {self.format_voltage(v_adc)} {self.current_unit}")
-            except ValueError:
-                pass
+            self.current_raw_label.setText(f"{ch.name}: 设备就绪，等待数据...")
             return
 
         try:
-            if "," in data:
-                parts = data.split(",")
-                if len(parts) == 2:
-                    timestamp_ms = int(parts[0])
-                    raw_value = int(parts[1])
-
-                    # 采样频率控制：检查是否达到采样间隔
-                    if timestamp_ms - self.last_sample_time_ms < self.sample_interval_ms:
-                        return  # 未达到采样间隔，跳过此数据
-
-                    # 更新上次采样时间
-                    self.last_sample_time_ms = timestamp_ms
-
-                    if len(self.time_data) == 0:
-                        self.start_timestamp_ms = timestamp_ms
-
-                    relative_time_s = (timestamp_ms - self.start_timestamp_ms) / 1000.0
-
-                    self.raw_data.append(raw_value)
-                    self._live_raw_window.append(raw_value)
-
-                    voltage = self.adc_to_voltage(raw_value)
-                    v_adc = self.adc_to_vadc(raw_value)
-
-                    self.voltage_data.append(voltage)
-                    self.time_data.append(relative_time_s)
-
-                    current_time = datetime.now()
-                    time_str = current_time.strftime("%H:%M:%S.%f")[:-3]
-
-                    display_text = (f"时间: {time_str} | ADC: {raw_value} | "
-                                    f"ADC端: {self.format_voltage(v_adc)} {self.current_unit} | "
-                                    f"实际电压: {self.format_voltage(voltage)} {self.current_unit}")
-                    self.current_raw_label.setText(f"原始ADC: {raw_value}")
-                    self.current_voltage_label.setText(f"{self.format_voltage(voltage)} {self.current_unit}")
-                    self.current_vadc_label.setText(f"ADC端电压: {self.format_voltage(v_adc)} {self.current_unit}")
-
-                    self.data_text.append(display_text)
-                    self.data_text.verticalScrollBar().setValue(
-                        self.data_text.verticalScrollBar().maximum()
-                    )
-
-                    self.update_stats()
-
+            if "," not in data:
+                return
+            parts = data.split(",")
+            if len(parts) != 2:
+                return
+            raw_value = int(parts[1])
         except ValueError:
-            pass
+            return
+
+        # 实时显示 + 去皮滚动窗口（未采集时也持续刷新）
+        ch.live_window.append(raw_value)
+        voltage = self.adc_to_voltage(raw_value, channel=ch)
+        v_adc = self.adc_to_vadc(raw_value)
+        self.current_raw_label.setText(f"{ch.name} ADC: {raw_value}")
+        self.current_voltage_label.setText(
+            f"{self.format_voltage(voltage)} {self.current_unit}（{ch.name}）")
+        self.current_vadc_label.setText(
+            f"ADC端电压: {self.format_voltage(v_adc)} {self.current_unit}")
+
+        if not self._collecting:
+            return
+
+        # 主机统一时间戳：采集期首个到达样本定为 t=0
+        now = time.monotonic()
+        if self._t0_mono is None:
+            self._t0_mono = now
+        t_rel = now - self._t0_mono
+
+        # 采样频率控制（每路独立过滤）
+        if ch.last_sample_s is not None and \
+                (t_rel - ch.last_sample_s) * 1000 < self.sample_interval_ms:
+            return
+        ch.last_sample_s = t_rel
+
+        ch.raw_data.append(raw_value)
+        ch.voltage_data.append(voltage)
+        ch.time_data.append(t_rel)
+
+        time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        display_text = (f"{time_str} | {ch.name} | ADC: {raw_value} | "
+                        f"ADC端: {self.format_voltage(v_adc)} {self.current_unit} | "
+                        f"实际电压: {self.format_voltage(voltage)} {self.current_unit}")
+        self.data_text.append(display_text)
+        self.data_text.verticalScrollBar().setValue(
+            self.data_text.verticalScrollBar().maximum()
+        )
+        self.update_stats()
 
     def update_stats(self):
-        if len(self.voltage_data) > 0:
-            avg_v = np.mean(self.voltage_data)
-            max_v = np.max(self.voltage_data)
-            min_v = np.min(self.voltage_data)
-            std_v = np.std(self.voltage_data)
+        """统计栏：每路有数据的通道各显示一行统计（点数/均值/极值/σ）。"""
+        parts = []
+        for ch in self.channels:
+            if not ch.voltage_data:
+                continue
+            avg_v = np.mean(ch.voltage_data)
+            max_v = np.max(ch.voltage_data)
+            min_v = np.min(ch.voltage_data)
+            std_v = np.std(ch.voltage_data)
             u = self.current_unit
-
-            stats_text = (f"统计: 数据点 {len(self.voltage_data)} | "
-                         f"平均={self.format_voltage(avg_v)}{u} | "
-                         f"最大={self.format_voltage(max_v)}{u} | "
-                         f"最小={self.format_voltage(min_v)}{u} | "
-                         f"标准差 σ={self.format_voltage(std_v)}{u}")
-            self.stats_label.setText(stats_text)
+            parts.append(
+                f"{ch.name}: 点数 {len(ch.voltage_data)} | "
+                f"均={self.format_voltage(avg_v)}{u} | "
+                f"最大={self.format_voltage(max_v)}{u} | "
+                f"最小={self.format_voltage(min_v)}{u} | "
+                f"σ={self.format_voltage(std_v)}{u}")
+        if parts:
+            self.stats_label.setText("统计: " + " ‖ ".join(parts))
 
     def update_chart(self):
         if not self.isVisible():
             return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
-        if len(self.voltage_data) > 0:
-            # 图表数据按当前单位换算
-            display_data = [self.to_current_unit(v) for v in self.voltage_data]
-            c = self.chart
-            c.begin()
-            c.plot(self.time_data, display_data, color='#0078d4', width=2,
-                   label=f'电压 ({self.current_unit})')
-            c.set_labels('时间 (秒)', f'电压 ({self.current_unit})')
-            c.set_title('电压传感器实时数据')
-            c.legend()
-            if len(self.time_data) > 1:
-                c.set_xlim(min(self.time_data), max(self.time_data))
-            c.end()
+        active = [ch for ch in self.channels if ch.voltage_data]
+        if not active:
+            return
+        c = self.chart
+        c.begin()
+        all_t = []
+        # 每路一条曲线：颜色 = 各通道行色块上选的颜色，图例 = 通道名
+        for ch in active:
+            display_data = [self.to_current_unit(v) for v in ch.voltage_data]
+            c.plot(ch.time_data, display_data, color=ch.color, width=2,
+                   label=f'{ch.name} ({self.current_unit})')
+            all_t.extend(ch.time_data)
+        c.set_labels('时间 (秒)', f'电压 ({self.current_unit})')
+        c.set_title('电压传感器实时数据（多路对比）' if len(active) > 1
+                    else '电压传感器实时数据')
+        c.legend()
+        if len(all_t) > 1:
+            c.set_xlim(min(all_t), max(all_t))
+        c.end()
 
     def on_sample_interval_changed(self, interval_ms):
         """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
@@ -1056,27 +1273,35 @@ class VoltageSensorWidget(QWidget):
         self.save_config()
 
     def save_data(self):
-        if len(self.voltage_data) == 0:
+        total = sum(len(ch.voltage_data) for ch in self.channels)
+        if total == 0:
             fluent_message_box(self, "警告", "没有数据可保存")
             return
         try:
             filename = f"voltage_sensor_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             with open(filename, 'w', encoding='utf-8') as f:
-                # CSV 表头按当前单位命名，方便后续分析
-                f.write(f"timestamp_s,raw_adc,voltage_{self.current_unit.lower()}\n")
-                for i, (timestamp, voltage) in enumerate(zip(self.time_data, self.voltage_data)):
-                    raw = self.raw_data[i] if i < len(self.raw_data) else 0
-                    f.write(f"{timestamp:.3f},{raw},{self.to_current_unit(voltage):.6f}\n")
-            log.info("数据已保存到: %s（%d 点）", filename, len(self.voltage_data))
+                # 长表格式：一行一个样本 + 通道名列。多路的时间轴天然对齐
+                # （主机统一时间戳），便于 Excel 透视/筛选按通道分组分析
+                f.write(f"channel,timestamp_s,raw_adc,voltage_{self.current_unit.lower()}\n")
+                for ch in self.channels:
+                    for i, voltage in enumerate(ch.voltage_data):
+                        t = ch.time_data[i] if i < len(ch.time_data) else 0.0
+                        raw = ch.raw_data[i] if i < len(ch.raw_data) else 0
+                        f.write(f"{ch.name},{t:.3f},{raw},"
+                                f"{self.to_current_unit(voltage):.6f}\n")
+            log.info("数据已保存到: %s（%d 点）", filename, total)
             fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
             log.error("保存失败: %s", e)
             fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
-        self.voltage_data.clear()
-        self.time_data.clear()
-        self.raw_data.clear()
+        for ch in self.channels:
+            ch.time_data.clear()
+            ch.raw_data.clear()
+            ch.voltage_data.clear()
+            ch.last_sample_s = None
+        self._t0_mono = None
         self.data_text.clear()
         log.info("已清除数据")
         self.current_voltage_label.setText(f"--.- {self.current_unit}")
@@ -1087,9 +1312,15 @@ class VoltageSensorWidget(QWidget):
         self.save_btn.setEnabled(False)
 
     def _ai_data(self):
-        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
-        if not self.voltage_data:
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。
+
+        多路连接时取**数据最多的通道**作为主分析序列，各通道概况与
+        每路去皮零点写入 params，供模型理解多路对比背景。
+        """
+        active = [ch for ch in self.channels if ch.voltage_data]
+        if not active:
             return None
+        main = max(active, key=lambda c: len(c.voltage_data))
         # 电路参数：ADC 端满量程、实际量程与理论分辨率（随模式变化）
         if self.ads1115_mode:
             fs = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
@@ -1102,11 +1333,16 @@ class VoltageSensorWidget(QWidget):
             counts = float(self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095))
         actual = fs * self.divider_ratio / self.amp_ratio
         res = actual / counts
+        channels_desc = "、".join(
+            f"{ch.name}[{len(ch.voltage_data)}点]"
+            + (f"去皮{ch.tare_offset_v:.4g}V" if ch.tare_active else "未去皮")
+            for ch in active)
         return {
             'title': '电压传感器',
             'x_label': '时间 (秒)',
             'y_label': f'电压 ({self.current_unit})',
-            'points': list(zip(self.time_data, [self.to_current_unit(v) for v in self.voltage_data])),
+            'points': list(zip(main.time_data,
+                               [self.to_current_unit(v) for v in main.voltage_data])),
             'params': (
                 f"采样方式={'ADS1115 16位' if self.ads1115_mode else ('HX711 24位' if self.hx711_mode else f'ESP32 内置 ADC {self.adc_bits}位')}, "
                 f"参考电压=3.3V, 分压比={self.divider_ratio}, 放大倍数={self.amp_ratio}, "
@@ -1115,7 +1351,8 @@ class VoltageSensorWidget(QWidget):
                 f"ADS1115 PGA={self.ads1115_pga}/通道={self.ads1115_channel}, "
                 f"HX711 AVDD={self.hx711_avdd}V/通道={self.hx711_channel}"
                 f"(增益{128 if self.hx711_channel == 'A' else 32}), "
-                f"去皮={'启用(偏移=%.6gV)' % self.tare_offset_v if self.tare_active else '未启用'}, "
+                f"多路连接: 共{len(active)}路（{channels_desc}），"
+                f"主分析通道={main.name}, 各路零点独立, "
                 f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
             'system_prompt': AI_SYSTEM_PROMPT,
         }
@@ -1126,20 +1363,31 @@ class VoltageSensorWidget(QWidget):
         d = self._ai_data() or {}
         points = list(d.get('points') or [])
         latest = None
-        if points:
-            t, y = points[-1]
-            latest = {'t': t, 'y': y,
-                      'raw': self.raw_data[-1] if self.raw_data else None}
+        main = max((ch for ch in self.channels if ch.voltage_data),
+                   key=lambda c: len(c.voltage_data), default=None)
+        if main is not None:
+            latest = {'t': main.time_data[-1],
+                      'y': self.to_current_unit(main.voltage_data[-1]),
+                      'raw': main.raw_data[-1] if main.raw_data else None}
         return {
             'key': 'voltage_sensor',
             'name': '电压传感器',
-            'connected': self.serial_thread is not None,
+            'connected': any(ch.thread is not None for ch in self.channels),
             'collecting': self._collecting,
             'x_label': d.get('x_label', '时间 (秒)'),
             'y_label': d.get('y_label', '电压 (V)'),
             'params': d.get('params', {}),
             'points': points,
             'latest': latest,
+            # 多路连接明细（points 仍为主通道序列，前端单曲线不破）
+            'channels': [
+                {'name': ch.name, 'color': ch.color,
+                 'connected': ch.thread is not None,
+                 'points_n': len(ch.voltage_data),
+                 'tare_active': ch.tare_active,
+                 'latest_raw': ch.raw_data[-1] if ch.raw_data else None}
+                for ch in self.channels
+            ],
         }
 
     def apply_theme(self, theme):

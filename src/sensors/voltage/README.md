@@ -149,6 +149,8 @@ PGA 档位在固件里通过 `PGA_RANGE` 选，要和上位机设置一致：
 下拉框有两项：**有线串口 / 模拟器**。
 ![image.png](https://raw.gitcode.com/user-images/assets/9940564/3df75e04-829d-4556-83d3-f6ccf81e2529/image.png 'image.png')
 
+**多路连接**：连接控制卡片点「＋ 新建连接」可添加任意多路，每路单独选择串口/模拟器、单独连接/断开/删除、单独点色块换曲线颜色；多路数据以主机统一时间戳叠加画在同一张图上，去皮每路独立零点，CSV 按长表格式（`channel,timestamp_s,raw_adc,voltage_…`）保存。设计与细节见 `docs/multi-channel-design.md`。
+
 本目录三个固件都只走 USB 串口。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/6f539316-dff6-4f5a-826c-fe68efe03652/image.png 'image.png')
 
