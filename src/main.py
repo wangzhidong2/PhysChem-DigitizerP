@@ -51,7 +51,7 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         qconfig, IndicatorPosition,
         LineEdit,
         CardWidget, IconWidget, PillToolButton, CheckBox,
-        AdaptiveFlowLayout, ToolTipFilter,
+        AdaptiveFlowLayout, ToolTipFilter, TransparentToolButton,
     )
 
 
@@ -996,6 +996,37 @@ def build_free_software_notice(parent, title_size=12, body_size=11):
 
 
 # ============================================================
+# 弹窗标题行右上角关闭按钮（等效取消/返回）
+# ============================================================
+def add_titlebar_close_button(dialog, layout, title_widget):
+    """在弹窗标题行右上角加 × 关闭按钮（等效取消按钮）。
+
+    qfluentwidgets 的 Dialog / MessageBoxBase 是无系统标题栏的自绘弹窗，
+    没有关闭钮；把标题控件从原布局移出（widget 不销毁），与 × 组成
+    「标题 + 弹性 + ×」同一行后插回布局顶部。× 点击调 reject()——
+    与库内 cancelButton 的行为一致（Dialog.__onCancelButtonClicked /
+    MessageBoxBase.__onCancelButtonClicked 均 reject）。
+    """
+    close_btn = TransparentToolButton(FIF.CLOSE, dialog)
+    close_btn.setFixedSize(28, 28)
+    close_btn.setToolTip("关闭")
+    close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    close_btn.clicked.connect(dialog.reject)
+    for i in range(layout.count()):
+        item = layout.itemAt(i)
+        if item is not None and item.widget() is title_widget:
+            layout.takeAt(i)
+            break
+    title_row = QHBoxLayout()
+    title_row.setContentsMargins(0, 0, 0, 0)
+    title_row.setSpacing(8)
+    title_row.addWidget(title_widget, 1, Qt.AlignmentFlag.AlignVCenter)
+    title_row.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignTop)
+    layout.insertLayout(0, title_row)
+    return close_btn
+
+
+# ============================================================
 # 「项目信息」卡片（主页聚合按钮弹出）
 # ============================================================
 class _WrappedLabel(QLabel):
@@ -1082,6 +1113,8 @@ class ProjectInfoDialog(MessageBoxBase):
         _f.setPixelSize(14)
         subtitle.setFont(_f)
         self.viewLayout.addWidget(subtitle)
+        # 标题行右上角 ×：等效「返回」（reject，与取消按钮一致）
+        add_titlebar_close_button(self, self.viewLayout, subtitle)
 
         # 内容超高（小屏 / 高 DPI）时内部滚动，不撑破弹窗
         self.content = QWidget()
@@ -3017,6 +3050,8 @@ class MainWindow(FluentWindow):
         )
         box.yesButton.setText("确认退出")
         box.cancelButton.setText("取消")
+        # 标题行右上角 ×：等效「取消」（reject 后 exec() 返回假，不退出）
+        add_titlebar_close_button(box, box.textLayout, box.titleLabel)
         box.raise_()
         box.activateWindow()
         if box.exec():
