@@ -98,7 +98,7 @@ class _Channel:
     """
 
     def __init__(self, cid, name, color, mode='serial', port='',
-                 sample_interval_ms=100):
+                 sample_interval_ms=100, adc_params=None):
         self.id = cid                      # 稳定 id（信号绑定用，删除后不复用）
         self.name = name                    # 显示名（可自定义，留空回退默认名）
         self.default_name = name            # 默认名（通道N，创建时定序）
@@ -107,6 +107,17 @@ class _Channel:
         self.port = port                    # 串口模式下选中的端口
         self.thread = None                  # SerialThread / SimulatorThread
         self.sample_interval_ms = sample_interval_ms  # 本路采样间隔（每路独立）
+        # 本路 ADC 换算参数（每路独立；缺省继承模块级/全局默认）
+        p = adc_params or {}
+        self.adc_bits = p.get('adc_bits', 12)
+        self.divider_ratio = p.get('divider_ratio', 1.0)
+        self.amp_ratio = p.get('amp_ratio', 1.0)
+        self.hx711_mode = p.get('hx711_mode', False)
+        self.hx711_avdd = p.get('hx711_avdd', 5.0)
+        self.hx711_channel = p.get('hx711_channel', 'B')
+        self.ads1115_mode = p.get('ads1115_mode', False)
+        self.ads1115_pga = p.get('ads1115_pga', '±2.048V')
+        self.ads1115_channel = p.get('ads1115_channel', 'AIN0')
         # 采集数据（内部电压单位：伏特）
         self.time_data = []
         self.raw_data = []
@@ -202,24 +213,29 @@ class VoltageSensorWidget(QWidget):
     def save_config(self):
         first = self.channels[0] if self.channels else None
         config = {
-            'adc_bits': self.adc_bits,
-            'divider_ratio': self.divider_ratio,
-            'amp_ratio': self.amp_ratio,
-            'hx711_mode': self.hx711_mode,
-            'hx711_avdd': self.hx711_avdd,
-            'hx711_channel': self.hx711_channel,
-            'ads1115_mode': self.ads1115_mode,
-            'ads1115_pga': self.ads1115_pga,
-            'ads1115_channel': self.ads1115_channel,
+            # 兼容旧版单通道上位机：顶层 ADC/采样/去皮字段取第 1 路的值
+            'adc_bits': first.adc_bits if first else self.adc_bits,
+            'divider_ratio': first.divider_ratio if first else self.divider_ratio,
+            'amp_ratio': first.amp_ratio if first else self.amp_ratio,
+            'hx711_mode': first.hx711_mode if first else self.hx711_mode,
+            'hx711_avdd': first.hx711_avdd if first else self.hx711_avdd,
+            'hx711_channel': first.hx711_channel if first else self.hx711_channel,
+            'ads1115_mode': first.ads1115_mode if first else self.ads1115_mode,
+            'ads1115_pga': first.ads1115_pga if first else self.ads1115_pga,
+            'ads1115_channel': first.ads1115_channel if first else self.ads1115_channel,
             'current_unit': self.current_unit,
-            # 兼容旧版单通道上位机：顶层采样间隔/去皮字段取第 1 路的值
             'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
             'tare_offset_v': first.tare_offset_v if first else 0.0,
             'tare_active': first.tare_active if first else False,
-            # 多路连接：每路的模式/串口/颜色/采样间隔/去皮
+            # 多路连接：每路的模式/串口/颜色/采样间隔/去皮/ADC 换算参数
             'channels': [
                 {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
                  'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
+                 'adc_bits': ch.adc_bits, 'divider_ratio': ch.divider_ratio,
+                 'amp_ratio': ch.amp_ratio, 'hx711_mode': ch.hx711_mode,
+                 'hx711_avdd': ch.hx711_avdd, 'hx711_channel': ch.hx711_channel,
+                 'ads1115_mode': ch.ads1115_mode, 'ads1115_pga': ch.ads1115_pga,
+                 'ads1115_channel': ch.ads1115_channel,
                  'tare_offset_v': ch.tare_offset_v,
                  'tare_active': ch.tare_active}
                 for ch in self.channels
@@ -247,35 +263,61 @@ class VoltageSensorWidget(QWidget):
         """实际被测电压 = ADC端电压 × 分压比 / 放大倍数。
 
         apply_tare=False 时不扣去皮零点，用于在已有零点的基础上重新计算新零点。
-        多路连接时传 channel：按该通道自己的零点去皮（各路零点独立）。
+        多路连接时传 channel：换算用该路自己的 ADC 参数与零点（各路独立）。
         """
-        v_adc = self.adc_to_vadc(adc_value)
-        actual_voltage = v_adc * self.divider_ratio / self.amp_ratio
+        v_adc = self.adc_to_vadc(adc_value, channel)
+        src = self._adc_param_source(channel)
+        actual_voltage = v_adc * src['divider_ratio'] / src['amp_ratio']
         # 启用去皮时扣除该通道自己的零点偏移
         if apply_tare and channel is not None and channel.tare_active:
             actual_voltage -= channel.tare_offset_v
         return actual_voltage
 
-    def adc_to_vadc(self, adc_value):
+    def _adc_param_source(self, channel=None):
+        """取一路 ADC 参数字典：显式通道 > ADC 卡当前选中路 > 第 1 路 > 模块级。
+
+        模块级字段（self.adc_bits 等）始终与第 1 路保持镜像，
+        供旧版单通道调用方与配置顶层字段使用。
+        """
+        ch = channel
+        if ch is None:
+            ch = self._active_channel_obj()
+        if ch is None and self.channels:
+            ch = self.channels[0]
+        if ch is not None:
+            return {'adc_bits': ch.adc_bits, 'divider_ratio': ch.divider_ratio,
+                    'amp_ratio': ch.amp_ratio, 'hx711_mode': ch.hx711_mode,
+                    'hx711_avdd': ch.hx711_avdd, 'hx711_channel': ch.hx711_channel,
+                    'ads1115_mode': ch.ads1115_mode, 'ads1115_pga': ch.ads1115_pga,
+                    'ads1115_channel': ch.ads1115_channel}
+        return {'adc_bits': self.adc_bits, 'divider_ratio': self.divider_ratio,
+                'amp_ratio': self.amp_ratio, 'hx711_mode': self.hx711_mode,
+                'hx711_avdd': self.hx711_avdd, 'hx711_channel': self.hx711_channel,
+                'ads1115_mode': self.ads1115_mode, 'ads1115_pga': self.ads1115_pga,
+                'ads1115_channel': self.ads1115_channel}
+
+    def adc_to_vadc(self, adc_value, channel=None):
         """计算 ADC 输入端电压（未做分压/放大还原）。
 
         统一有符号换算：下位机输出有符号 ADC 值，0 对应 0V，量程 -VREF~+VREF。
         例如 12 位 ADC，原始值 -4095~+4095，0 对应 0V，
         -4095 对应 -VREF，+4095 对应 +VREF。
         公式：(adc / max_adc) × VREF
+        多路连接时传 channel：按该路自己的 ADC 位数/模式换算。
         """
+        src = self._adc_param_source(channel)
         # HX711 模式：24位有符号补码（饱和码 ±2^23）
         # 数据手册：满量程差分输入范围 = ±0.5 × (AVDD / Gain)，
         # 即满码对应电压 = AVDD / Gain / 2（通道A Gain128@5V → ±20mV，B Gain32@5V → ±80mV）
-        if self.hx711_mode:
-            gain = 128 if self.hx711_channel == 'A' else 32
-            return adc_value / 8388608.0 * (self.hx711_avdd / gain / 2)
+        if src['hx711_mode']:
+            gain = 128 if src['hx711_channel'] == 'A' else 32
+            return adc_value / 8388608.0 * (src['hx711_avdd'] / gain / 2)
         # ADS1115 模式：16位有符号补码，电压 = raw / 32768 × FSR
         # 数据手册 SBAS444E 9.3.3 节：FSR 由 PGA 设置（±6.144V ~ ±0.256V）
-        if self.ads1115_mode:
-            fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
+        if src['ads1115_mode']:
+            fsr = self.ADS1115_PGA_RANGES.get(src['ads1115_pga'], 2.048)
             return adc_value / 32768.0 * fsr
-        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+        max_adc = self.ADC_BITS_OPTIONS.get(src['adc_bits'], 4095)
         return (adc_value / max_adc) * self.VREF
 
     def init_ui(self):
@@ -528,6 +570,14 @@ class VoltageSensorWidget(QWidget):
         adc_card_layout.addLayout(params_row)
 
         card_adc = FluentCard("ADC 与电路参数", card_adc_content, expanded=True, icon=FIF.SETTING)
+        # header 右侧：「当前连接」下拉——ADC 参数按路独立，切换后编辑所选路
+        self._active_channel_combo = ComboBox()
+        self._active_channel_combo.setMinimumWidth(110)
+        self._active_channel_combo.setToolTip(
+            "ADC 与电路参数按连接独立设置：\n切换后下方控件显示并编辑所选连接的参数")
+        self._active_channel_combo.currentIndexChanged.connect(
+            self._on_active_channel_changed)
+        card_adc.add_header_widget(self._active_channel_combo)
         layout.addWidget(card_adc)
 
         # ========== 卡片3：实时数据（可折叠） ==========
@@ -651,74 +701,180 @@ class VoltageSensorWidget(QWidget):
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)
 
+    # ---- ADC 参数按路独立：当前选中路辅助 ----
+    ADC_BITS_INDEX = {8: 0, 10: 1, 12: 2, 14: 3, 16: 4, 18: 5, 20: 6, 22: 7, 24: 8}
+
+    def _active_channel_obj(self):
+        """ADC 参数卡当前选中的通道对象（无通道/未初始化返回 None）。"""
+        combo = getattr(self, '_active_channel_combo', None)
+        if combo is None:
+            return None
+        cid = combo.currentData()
+        return next((ch for ch in self.channels if ch.id == cid), None)
+
+    def _write_adc_param(self, attr, value):
+        """把改动写入当前选中路；若为第 1 路同步模块级镜像字段。"""
+        ch = self._active_channel_obj()
+        if ch is not None:
+            setattr(ch, attr, value)
+            if self.channels and ch is self.channels[0]:
+                setattr(self, attr, value)
+        else:
+            setattr(self, attr, value)  # 无路时（初始化期）写全局默认
+
+    def _refresh_active_channel_combo(self, keep_id=None):
+        """通道增删/改名后重建「当前连接」下拉，尽量保住原选中。"""
+        combo = getattr(self, '_active_channel_combo', None)
+        if combo is None:
+            return
+        if keep_id is None and combo.count():
+            keep_id = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for ch in self.channels:
+            combo.addItem(ch.name, userData=ch.id)
+        idx = next((i for i in range(combo.count())
+                    if combo.itemData(i) == keep_id), 0)
+        if combo.count():
+            combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+        # 选中项可能变了（删除了原选中通道）：同步一次控件显示
+        self._sync_adc_controls(self._active_channel_obj())
+
+    def _on_active_channel_changed(self, index):
+        """「当前连接」切换：把控件值同步为所选路的参数。"""
+        self._sync_adc_controls(self._active_channel_obj())
+
+    def _sync_adc_controls(self, ch):
+        """把 ADC 参数卡控件同步为通道 ch 的值（blockSignals 防递归）。"""
+        if ch is None:
+            return
+        src = self._adc_param_source(ch)
+        combo = self._active_channel_combo
+        combo.blockSignals(True)
+        idx = next((i for i in range(combo.count())
+                    if combo.itemData(i) == ch.id), None)
+        if idx is not None:
+            combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
+        self.adc_bits_combo.blockSignals(True)
+        self.adc_bits_combo.setCurrentIndex(
+            self.ADC_BITS_INDEX.get(src['adc_bits'], 2))
+        self.adc_bits_combo.blockSignals(False)
+
+        self.hx711_check.blockSignals(True)
+        self.hx711_check.setChecked(src['hx711_mode'])
+        self.hx711_check.blockSignals(False)
+        self.hx711_avdd_spin.blockSignals(True)
+        self.hx711_avdd_spin.setValue(src['hx711_avdd'])
+        self.hx711_avdd_spin.blockSignals(False)
+        self.hx711_channel_combo.blockSignals(True)
+        self.hx711_channel_combo.setCurrentIndex(
+            0 if src['hx711_channel'] == 'B' else 1)
+        self.hx711_channel_combo.blockSignals(False)
+
+        self.ads1115_check.blockSignals(True)
+        self.ads1115_check.setChecked(src['ads1115_mode'])
+        self.ads1115_check.blockSignals(False)
+        self.ads1115_pga_combo.blockSignals(True)
+        self.ads1115_pga_combo.setCurrentText(src['ads1115_pga'])
+        self.ads1115_pga_combo.blockSignals(False)
+        self.ads1115_channel_combo.blockSignals(True)
+        self.ads1115_channel_combo.setCurrentText(src['ads1115_channel'])
+        self.ads1115_channel_combo.blockSignals(False)
+
+        self.divider_spin.blockSignals(True)
+        self.divider_spin.setValue(src['divider_ratio'])
+        self.divider_spin.blockSignals(False)
+        self.amp_spin.blockSignals(True)
+        self.amp_spin.setValue(src['amp_ratio'])
+        self.amp_spin.blockSignals(False)
+
+        self._sync_adc_mode_panels(src)
+        self.update_range_display()
+
+    def _sync_adc_mode_panels(self, src):
+        """按所选路的 ADC 位数同步 HX711 / ADS1115 面板可见与可用态。"""
+        is_24 = src['adc_bits'] == 24
+        is_16 = src['adc_bits'] == 16
+        self.hx711_panel.setVisible(is_24)
+        self.hx711_avdd_spin.setEnabled(src['hx711_mode'])
+        self.hx711_channel_combo.setEnabled(src['hx711_mode'])
+        self.ads1115_panel.setVisible(is_16)
+        self.ads1115_pga_combo.setEnabled(src['ads1115_mode'])
+        self.ads1115_channel_combo.setEnabled(src['ads1115_mode'])
+
     def on_adc_bits_changed(self, index):
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16, 5: 18, 6: 20, 7: 22, 8: 24}
-        self.adc_bits = bits_map.get(index, 12)
+        ch = self._active_channel_obj()
+        self._write_adc_param('adc_bits', bits_map.get(index, 12))
         # HX711 选项仅 24 位时显示；切到非 24 位时自动取消 HX711 模式
-        is_24bit = (self.adc_bits == 24)
-        self.hx711_panel.setVisible(is_24bit)
-        if not is_24bit and self.hx711_mode:
-            self.hx711_check.setChecked(False)
+        src = self._adc_param_source(ch)
+        if src['adc_bits'] != 24 and src['hx711_mode']:
+            self.hx711_check.setChecked(False)   # 触发 on_hx711_mode_changed 写回
         # ADS1115 选项仅 16 位时显示；切到非 16 位时自动取消 ADS1115 模式
-        is_16bit = (self.adc_bits == 16)
-        self.ads1115_panel.setVisible(is_16bit)
-        if not is_16bit and self.ads1115_mode:
+        if src['adc_bits'] != 16 and src['ads1115_mode']:
             self.ads1115_check.setChecked(False)
+        self._sync_adc_mode_panels(self._adc_param_source(ch))
         self.save_config()
         self.update_range_display()
 
     def on_divider_changed(self, value):
-        self.divider_ratio = value
+        self._write_adc_param('divider_ratio', value)
         self.save_config()
         self.update_range_display()
 
     def on_amp_changed(self, value):
-        self.amp_ratio = value
+        self._write_adc_param('amp_ratio', value)
         self.save_config()
         self.update_range_display()
 
     def on_hx711_mode_changed(self, checked):
         """HX711 模式开关：启用后强制 ADC 位数=24，并切换至有符号换算"""
-        self.hx711_mode = checked
+        ch = self._active_channel_obj()
+        self._write_adc_param('hx711_mode', checked)
         self.hx711_avdd_spin.setEnabled(checked)
         self.hx711_channel_combo.setEnabled(checked)
         if checked:
-            # 强制切到 24 位选项
+            # 强制切到 24 位选项（触发 on_adc_bits_changed 写回当前路）
             self.adc_bits_combo.setCurrentIndex(8)
-            self.adc_bits = 24
+            self._write_adc_param('adc_bits', 24)
+        self._sync_adc_mode_panels(self._adc_param_source(ch))
         self.save_config()
         self.update_range_display()
 
     def on_hx711_avdd_changed(self, value):
-        self.hx711_avdd = value
+        self._write_adc_param('hx711_avdd', value)
         self.save_config()
         self.update_range_display()
 
     def on_hx711_channel_changed(self, index):
-        self.hx711_channel = 'B' if index == 0 else 'A'
+        self._write_adc_param('hx711_channel', 'B' if index == 0 else 'A')
         self.save_config()
         self.update_range_display()
 
     def on_ads1115_mode_changed(self, checked):
         """ADS1115 模式开关：启用后强制 ADC 位数=16"""
-        self.ads1115_mode = checked
+        ch = self._active_channel_obj()
+        self._write_adc_param('ads1115_mode', checked)
         self.ads1115_pga_combo.setEnabled(checked)
         self.ads1115_channel_combo.setEnabled(checked)
         if checked:
-            self.adc_bits_combo.setCurrentIndex(4)  # 16 位
-            self.adc_bits = 16
+            self.adc_bits_combo.setCurrentIndex(4)  # 16 位（触发 on_adc_bits_changed 写回）
+        self._sync_adc_mode_panels(self._adc_param_source(ch))
         self.save_config()
         self.update_range_display()
 
     def on_ads1115_pga_changed(self, index):
         """切换 ADS1115 PGA 量程"""
-        self.ads1115_pga = self.ads1115_pga_combo.itemText(index)
+        self._write_adc_param('ads1115_pga', self.ads1115_pga_combo.itemText(index))
         self.save_config()
         self.update_range_display()
 
     def on_ads1115_channel_changed(self, index):
         """切换 ADS1115 输入通道（MUX）"""
-        self.ads1115_channel = self.ads1115_channel_combo.itemText(index)
+        self._write_adc_param('ads1115_channel', self.ads1115_channel_combo.itemText(index))
         self.save_config()
         self.update_range_display()
 
@@ -767,7 +923,8 @@ class VoltageSensorWidget(QWidget):
         parts = []
         for ch in targets:
             # 取最近 10 个采样点（去皮前的电压）平均值作为新零点
-            pre_tare = [self.adc_to_voltage(r, apply_tare=False) for r in ch.live_window]
+            pre_tare = [self.adc_to_voltage(r, apply_tare=False, channel=ch)
+                        for r in ch.live_window]
             ch.tare_offset_v = float(np.mean(pre_tare))
             ch.tare_active = True
             parts.append(f"{ch.name} 零点={ch.tare_offset_v:.6g}V")
@@ -809,22 +966,24 @@ class VoltageSensorWidget(QWidget):
                 break
 
     def update_range_display(self):
-        if self.hx711_mode:
-            gain = 128 if self.hx711_channel == 'A' else 32
-            fs = self.hx711_avdd / gain / 2  # 满量程差分电压 = ±0.5×(AVDD/Gain)
-            self.range_label.setText(f"量程: ±{fs*1000:.1f}mV (HX711 通道{self.hx711_channel}, Gain{gain})")
-            actual_max = fs * self.divider_ratio / self.amp_ratio
+        """量程标签按「当前连接」下拉所选路的参数刷新。"""
+        src = self._adc_param_source()
+        if src['hx711_mode']:
+            gain = 128 if src['hx711_channel'] == 'A' else 32
+            fs = src['hx711_avdd'] / gain / 2  # 满量程差分电压 = ±0.5×(AVDD/Gain)
+            self.range_label.setText(f"量程: ±{fs*1000:.1f}mV (HX711 通道{src['hx711_channel']}, Gain{gain})")
+            actual_max = fs * src['divider_ratio'] / src['amp_ratio']
             self.actual_range_label.setText(f"实际量程: ±{actual_max*1000:.2f}mV")
-        elif self.ads1115_mode:
-            fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
-            self.range_label.setText(f"量程: ±{fsr:.3f}V (ADS1115 PGA={self.ads1115_pga}, 通道{self.ads1115_channel})")
-            actual_max = fsr * self.divider_ratio / self.amp_ratio
+        elif src['ads1115_mode']:
+            fsr = self.ADS1115_PGA_RANGES.get(src['ads1115_pga'], 2.048)
+            self.range_label.setText(f"量程: ±{fsr:.3f}V (ADS1115 PGA={src['ads1115_pga']}, 通道{src['ads1115_channel']})")
+            actual_max = fsr * src['divider_ratio'] / src['amp_ratio']
             self.actual_range_label.setText(f"实际量程: ±{actual_max:.3f}V")
         else:
-            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+            max_adc = self.ADC_BITS_OPTIONS.get(src['adc_bits'], 4095)
             full = self.VREF
             self.range_label.setText(f"量程: -{full:.2f}V~+{full:.2f}V (ADC -{max_adc}~+{max_adc})")
-            actual_full = full * self.divider_ratio / self.amp_ratio
+            actual_full = full * src['divider_ratio'] / src['amp_ratio']
             self.actual_range_label.setText(f"实际量程: -{actual_full:.2f}V~+{actual_full:.2f}V")
 
     # ============================================================
@@ -842,21 +1001,41 @@ class VoltageSensorWidget(QWidget):
                     name=item.get('name') or None,
                     color=item.get('color') or None,
                     mode=mode, port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'))
+                    sample_interval_ms=item.get('sample_interval_ms'),
+                    # 缺字段用模块级顶层值补齐（旧版多通道配置迁移）
+                    adc_params={**self._adc_param_source(), **item})
                 ch.tare_offset_v = float(item.get('tare_offset_v', 0.0) or 0.0)
                 ch.tare_active = bool(item.get('tare_active', False))
         else:
-            # 旧版单通道配置迁移：顶层采样间隔/去皮字段作为第 1 路初值
+            # 旧版单通道配置迁移：顶层采样间隔/去皮/ADC 字段作为第 1 路初值
             ch = self._make_channel(
                 mode='serial' if SERIAL_AVAILABLE else 'simulator')
             ch.tare_offset_v = float((self.config or {}).get('tare_offset_v', 0.0) or 0.0)
             ch.tare_active = bool((self.config or {}).get('tare_active', False))
+        self._refresh_active_channel_combo()
+        self._sync_adc_controls(self.channels[0] if self.channels else None)
+        # 顶层镜像字段刷新为第 1 路实际值（旧版顶层配置可能滞后于各路参数）
+        if self.channels:
+            first = self.channels[0]
+            self.adc_bits = first.adc_bits
+            self.divider_ratio = first.divider_ratio
+            self.amp_ratio = first.amp_ratio
+            self.hx711_mode = first.hx711_mode
+            self.hx711_avdd = first.hx711_avdd
+            self.hx711_channel = first.hx711_channel
+            self.ads1115_mode = first.ads1115_mode
+            self.ads1115_pga = first.ads1115_pga
+            self.ads1115_channel = first.ads1115_channel
+            self.sample_interval_ms = first.sample_interval_ms
         self._sync_compat_aliases()
         self.update_tare_status_label()
 
     def _make_channel(self, color=None, mode='serial', port='', name=None,
-                      sample_interval_ms=None):
-        """创建通道对象 + 对应 UI 行（不重复使用已删除通道的 id/name）。"""
+                      sample_interval_ms=None, adc_params=None):
+        """创建通道对象 + 对应 UI 行（不重复使用已删除通道的 id/name）。
+
+        新建通道的 ADC 参数缺省继承「ADC 卡当前选中路 / 第 1 路 / 模块级」。
+        """
         cid = self._next_channel_id
         self._next_channel_id += 1
         seq = self._next_channel_seq
@@ -865,8 +1044,11 @@ class VoltageSensorWidget(QWidget):
             used = {ch.color for ch in self.channels}
             color = next((c for c in CHANNEL_COLORS if c not in used),
                          CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
+        if adc_params is None:
+            adc_params = self._adc_param_source()
         ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port,
-                      sample_interval_ms=sample_interval_ms or self.sample_interval_ms)
+                      sample_interval_ms=sample_interval_ms or self.sample_interval_ms,
+                      adc_params=adc_params)
         self.channels.append(ch)
         self._build_channel_card(ch)
         self._update_delete_btns()
@@ -877,6 +1059,7 @@ class VoltageSensorWidget(QWidget):
         """「新建连接」按钮：增加一路连接（默认有线串口，缺 pyserial 时为模拟器）。"""
         self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
         self._sync_compat_aliases()
+        self._refresh_active_channel_combo()
         self.save_config()
 
     def _delete_channel(self, ch):
@@ -891,6 +1074,7 @@ class VoltageSensorWidget(QWidget):
         self.channels.remove(ch)
         self._update_delete_btns()
         self._sync_compat_aliases()
+        self._refresh_active_channel_combo()
         self.save_config()
         self._sync_conn_card_height()
 
@@ -1093,6 +1277,7 @@ class VoltageSensorWidget(QWidget):
                 refs['card'].titleLabel.setText(ch.name)
             except Exception:
                 pass
+        self._refresh_active_channel_combo()
         self.save_config()
         self.update_chart()
 
@@ -1149,8 +1334,8 @@ class VoltageSensorWidget(QWidget):
         """连接单路：串口或模拟器（其余通道不受影响）。"""
         try:
             if ch.mode == 'simulator':
-                # 模拟器产生有符号 ADC 范围的原始值，中点为 0V
-                max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
+                # 模拟器产生有符号 ADC 范围的原始值，中点为 0V（按本路位数）
+                max_adc = self.ADC_BITS_OPTIONS.get(ch.adc_bits, 4095)
                 th = SimulatorThread(value_min=-max_adc, value_max=max_adc,
                                      interval_ms=ch.sample_interval_ms)
             else:
@@ -1288,7 +1473,7 @@ class VoltageSensorWidget(QWidget):
         # 实时显示 + 去皮滚动窗口（未采集时也持续刷新）
         ch.live_window.append(raw_value)
         voltage = self.adc_to_voltage(raw_value, channel=ch)
-        v_adc = self.adc_to_vadc(raw_value)
+        v_adc = self.adc_to_vadc(raw_value, ch)
         self.current_raw_label.setText(f"{ch.name} ADC: {raw_value}")
         self.current_voltage_label.setText(
             f"{self.format_voltage(voltage)} {self.current_unit}（{ch.name}）")
@@ -1424,17 +1609,17 @@ class VoltageSensorWidget(QWidget):
         if not active:
             return None
         main = max(active, key=lambda c: len(c.voltage_data))
-        # 电路参数：ADC 端满量程、实际量程与理论分辨率（随模式变化）
-        if self.ads1115_mode:
-            fs = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 2.048)
+        # 电路参数：ADC 端满量程、实际量程与理论分辨率（按主分析通道的模式/参数）
+        if main.ads1115_mode:
+            fs = self.ADS1115_PGA_RANGES.get(main.ads1115_pga, 2.048)
             counts = 32768.0
-        elif self.hx711_mode:
-            gain = 128 if self.hx711_channel == 'A' else 32
-            fs, counts = self.hx711_avdd / gain / 2, 8388608.0  # 满量程 = ±0.5×(AVDD/Gain)
+        elif main.hx711_mode:
+            gain = 128 if main.hx711_channel == 'A' else 32
+            fs, counts = main.hx711_avdd / gain / 2, 8388608.0  # 满量程 = ±0.5×(AVDD/Gain)
         else:
             fs = self.VREF
-            counts = float(self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095))
-        actual = fs * self.divider_ratio / self.amp_ratio
+            counts = float(self.ADC_BITS_OPTIONS.get(main.adc_bits, 4095))
+        actual = fs * main.divider_ratio / main.amp_ratio
         res = actual / counts
         channels_desc = "、".join(
             f"{ch.name}[{len(ch.voltage_data)}点]"
@@ -1447,15 +1632,15 @@ class VoltageSensorWidget(QWidget):
             'points': list(zip(main.time_data,
                                [self.to_current_unit(v) for v in main.voltage_data])),
             'params': (
-                f"采样方式={'ADS1115 16位' if self.ads1115_mode else ('HX711 24位' if self.hx711_mode else f'ESP32 内置 ADC {self.adc_bits}位')}, "
-                f"参考电压=3.3V, 分压比={self.divider_ratio}, 放大倍数={self.amp_ratio}, "
+                f"采样方式={'ADS1115 16位' if main.ads1115_mode else ('HX711 24位' if main.hx711_mode else f'ESP32 内置 ADC {main.adc_bits}位')}, "
+                f"参考电压=3.3V, 分压比={main.divider_ratio}, 放大倍数={main.amp_ratio}, "
                 f"ADC端满量程=±{fs:.6g}V, 实际量程=±{actual:.6g}V, "
                 f"理论分辨率={res:.3g}V/计数, "
-                f"ADS1115 PGA={self.ads1115_pga}/通道={self.ads1115_channel}, "
-                f"HX711 AVDD={self.hx711_avdd}V/通道={self.hx711_channel}"
-                f"(增益{128 if self.hx711_channel == 'A' else 32}), "
+                f"ADS1115 PGA={main.ads1115_pga}/通道={main.ads1115_channel}, "
+                f"HX711 AVDD={main.hx711_avdd}V/通道={main.hx711_channel}"
+                f"(增益{128 if main.hx711_channel == 'A' else 32}), "
                 f"多路连接: 共{len(active)}路（{channels_desc}），"
-                f"主分析通道={main.name}, 各路零点独立, "
+                f"主分析通道={main.name}, 各路ADC参数与零点独立, "
                 f"显示单位={self.current_unit}, "
                 f"采样间隔={main.sample_interval_ms}ms（各路独立）"),
             'system_prompt': AI_SYSTEM_PROMPT,
