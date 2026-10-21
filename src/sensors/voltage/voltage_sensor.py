@@ -25,7 +25,7 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
     BodyLabel, CaptionLabel, DoubleSpinBox, SwitchButton, FluentIcon as FIF,
-    AdaptiveFlowLayout, FlowLayout, LineEdit, ToolButton,
+    AdaptiveFlowLayout, FlowLayout, LineEdit, ToolButton, CheckBox,
 )
 from qfluentwidgets.components.dialog_box import ColorDialog
 import numpy as np
@@ -118,6 +118,7 @@ class _Channel:
         self.ads1115_mode = p.get('ads1115_mode', False)
         self.ads1115_pga = p.get('ads1115_pga', '±2.048V')
         self.ads1115_channel = p.get('ads1115_channel', 'AIN0')
+        self.visible = p.get('visible', True)   # 图表显示开关（勾选框控制）
         # 采集数据（内部电压单位：伏特）
         self.time_data = []
         self.raw_data = []
@@ -227,7 +228,7 @@ class VoltageSensorWidget(QWidget):
             'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
             'tare_offset_v': first.tare_offset_v if first else 0.0,
             'tare_active': first.tare_active if first else False,
-            # 多路连接：每路的模式/串口/颜色/采样间隔/去皮/ADC 换算参数
+            # 多路连接：每路的模式/串口/颜色/采样间隔/去皮/ADC 换算参数/图表显示
             'channels': [
                 {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
                  'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
@@ -236,6 +237,7 @@ class VoltageSensorWidget(QWidget):
                  'hx711_avdd': ch.hx711_avdd, 'hx711_channel': ch.hx711_channel,
                  'ads1115_mode': ch.ads1115_mode, 'ads1115_pga': ch.ads1115_pga,
                  'ads1115_channel': ch.ads1115_channel,
+                 'visible': ch.visible,
                  'tare_offset_v': ch.tare_offset_v,
                  'tare_active': ch.tare_active}
                 for ch in self.channels
@@ -580,32 +582,28 @@ class VoltageSensorWidget(QWidget):
         card_adc.add_header_widget(self._active_channel_combo)
         layout.addWidget(card_adc)
 
-        # ========== 卡片3：实时数据（可折叠） ==========
+        # ========== 卡片3：实时数据（可折叠，每路一行同屏显示） ==========
         card_data_content = QWidget()
         card_data_content.setObjectName("card")
         card_data_content.setStyleSheet(card_style())
         data_card_layout = QVBoxLayout(card_data_content)
         data_card_layout.setContentsMargins(20, 4, 20, 16)
-        data_card_layout.setSpacing(12)
+        data_card_layout.setSpacing(8)
 
+        # 汇总标签：显示最新收到数据的一路（多路时的快速概览；
+        # 全屏浮动面板折叠态摘要也用它——FloatingDataPanel 依赖 .text()）
         self.current_voltage_label = BodyLabel("--.- V")
-        self.current_voltage_label.setFont(QFont("Cascadia Code", 24, QFont.Weight.Bold))
+        self.current_voltage_label.setFont(QFont("Cascadia Code", 14, QFont.Weight.Bold))
         self.current_voltage_label.setStyleSheet("color: #0078d4;")
         data_card_layout.addWidget(self.current_voltage_label)
 
-        raw_row = QHBoxLayout()
-        raw_row.setSpacing(20)
-        self.current_raw_label = BodyLabel("原始ADC: ------")
-        self.current_raw_label.setFont(QFont("Cascadia Code", 11))
-        self.current_raw_label.setStyleSheet("color: #444444;")
-        raw_row.addWidget(self.current_raw_label)
-
-        self.current_vadc_label = BodyLabel("ADC端电压: --.- V")
-        self.current_vadc_label.setFont(QFont("Cascadia Code", 11))
-        self.current_vadc_label.setStyleSheet("color: #444444;")
-        raw_row.addWidget(self.current_vadc_label)
-        raw_row.addStretch()
-        data_card_layout.addLayout(raw_row)
+        # 每路一行实时明细（通道增删时动态重建，见 _build_live_row）
+        self._live_rows = {}          # channel.id -> {row, voltage_label, raw_label, vadc_label}
+        self._live_container = QWidget()
+        self._live_layout = QVBoxLayout(self._live_container)
+        self._live_layout.setContentsMargins(0, 0, 0, 0)
+        self._live_layout.setSpacing(4)
+        data_card_layout.addWidget(self._live_container)
 
         self.stats_label = CaptionLabel("暂无数据")
         data_card_layout.addWidget(self.stats_label)
@@ -620,6 +618,15 @@ class VoltageSensorWidget(QWidget):
         chart_card_layout = QVBoxLayout(card_chart_content)
         chart_card_layout.setContentsMargins(20, 4, 20, 16)
         chart_card_layout.setSpacing(12)
+
+        # 通道显示勾选行：勾选的通道画进图表，不勾选的隐藏
+        # （只影响图表显示，采集/统计/保存不受影响；通道增删/改名时重建）
+        self._visibility_container = QWidget()
+        self._visibility_flow = FlowLayout(isTight=True)
+        self._visibility_flow.setHorizontalSpacing(14)
+        self._visibility_flow.setVerticalSpacing(4)
+        self._visibility_container.setLayout(self._visibility_flow)
+        chart_card_layout.addWidget(self._visibility_container)
 
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
@@ -888,12 +895,17 @@ class VoltageSensorWidget(QWidget):
         self.update_chart()
         # 刷新去皮状态标签（单位变了显示值要跟着变）
         self.update_tare_status_label()
-        # 刷新当前电压大字显示（取最近一路有数据的通道）
-        for ch in reversed(self.channels):
+        # 单位切换后逐路刷新实时行（内部电压值不变，只换显示单位）
+        for ch in self.channels:
+            live = self._live_rows.get(ch.id)
+            if not live:
+                continue
             if ch.voltage_data:
-                self.current_voltage_label.setText(
+                live['voltage_label'].setText(
                     f"{self.format_voltage(ch.voltage_data[-1])} {self.current_unit}")
-                break
+            else:
+                live['voltage_label'].setText(f"--.- {self.current_unit}")
+        self._refresh_summary_text()
 
     def update_tare_status_label(self):
         """刷新去皮状态标签：多路时逐路显示零点（各路独立）。"""
@@ -958,12 +970,13 @@ class VoltageSensorWidget(QWidget):
             ch.voltage_data = [self.adc_to_voltage(r, channel=ch) for r in ch.raw_data]
         self.update_stats()
         self.update_chart()
-        # 大字显示最近一路有数据的最新值
-        for ch in reversed(self.channels):
-            if ch.voltage_data:
-                self.current_voltage_label.setText(
+        # 逐路刷新实时行 + 汇总标签（去皮后显示值归零）
+        for ch in self.channels:
+            live = self._live_rows.get(ch.id)
+            if live and ch.voltage_data:
+                live['voltage_label'].setText(
                     f"{self.format_voltage(ch.voltage_data[-1])} {self.current_unit}")
-                break
+        self._refresh_summary_text()
 
     def update_range_display(self):
         """量程标签按「当前连接」下拉所选路的参数刷新。"""
@@ -1029,6 +1042,7 @@ class VoltageSensorWidget(QWidget):
             self.sample_interval_ms = first.sample_interval_ms
         self._sync_compat_aliases()
         self.update_tare_status_label()
+        self._refresh_summary_text()
 
     def _make_channel(self, color=None, mode='serial', port='', name=None,
                       sample_interval_ms=None, adc_params=None):
@@ -1051,6 +1065,8 @@ class VoltageSensorWidget(QWidget):
                       adc_params=adc_params)
         self.channels.append(ch)
         self._build_channel_card(ch)
+        self._build_live_row(ch)
+        self._refresh_chart_visibility_row()
         self._update_delete_btns()
         self._sync_conn_card_height()
         return ch
@@ -1072,11 +1088,95 @@ class VoltageSensorWidget(QWidget):
             self.channels_layout.removeWidget(refs['card'])
             refs['card'].deleteLater()
         self.channels.remove(ch)
+        self._remove_live_row(ch)
+        self._refresh_chart_visibility_row()
         self._update_delete_btns()
         self._sync_compat_aliases()
         self._refresh_active_channel_combo()
         self.save_config()
         self._sync_conn_card_height()
+
+    def _build_live_row(self, ch):
+        """为通道创建一行实时明细：名称+大字电压（通道色） | 原始ADC | ADC端电压。
+
+        多路同屏各占一行，不再互相覆盖；单路时隐藏顶部汇总标签避免重复。
+        """
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(16)
+
+        name_label = CaptionLabel(ch.name)
+        h.addWidget(name_label)
+
+        voltage_label = BodyLabel(f"--.- {self.current_unit}")
+        voltage_label.setFont(QFont("Cascadia Code", 20, QFont.Weight.Bold))
+        voltage_label.setStyleSheet(f"color: {ch.color};")
+        h.addWidget(voltage_label)
+
+        h.addStretch()
+
+        raw_label = CaptionLabel(f"{ch.name} ADC: ------")
+        raw_label.setFont(QFont("Cascadia Code", 11))
+        h.addWidget(raw_label)
+
+        vadc_label = CaptionLabel("ADC端电压: --.- V")
+        vadc_label.setFont(QFont("Cascadia Code", 11))
+        h.addWidget(vadc_label)
+
+        self._live_layout.addWidget(row)
+        self._live_rows[ch.id] = {
+            'row': row, 'name_label': name_label, 'voltage_label': voltage_label,
+            'raw_label': raw_label, 'vadc_label': vadc_label,
+        }
+        self._refresh_summary_visibility()
+
+    def _remove_live_row(self, ch):
+        """删除通道的实时明细行（断开/删除通道时调用）。"""
+        refs = self._live_rows.pop(ch.id, None)
+        if refs:
+            self._live_layout.removeWidget(refs['row'])
+            refs['row'].deleteLater()
+        self._refresh_summary_visibility()
+        # 该路被删后汇总标签可能指着它的旧值，刷成还有数据的最后一口
+        self._refresh_summary_text()
+
+    def _refresh_summary_visibility(self):
+        """汇总大字标签仅多路时显示（单路时每路行已完整，避免重复）。"""
+        self.current_voltage_label.setVisible(len(self.channels) > 1)
+
+    def _refresh_summary_text(self):
+        """汇总标签取「最近一路有数据的通道」最新值。"""
+        for ch in reversed(self.channels):
+            if ch.voltage_data:
+                self.current_voltage_label.setText(
+                    f"{ch.name}: {self.format_voltage(ch.voltage_data[-1])} {self.current_unit}")
+                return
+        self.current_voltage_label.setText(f"--.- {self.current_unit}")
+
+    def _refresh_chart_visibility_row(self):
+        """重建图表卡顶部的通道显示勾选行（通道增删/改名后调用）。"""
+        # 清旧行（FlowLayout 没有清空 API，逐个移除子控件）
+        while self._visibility_flow.count():
+            item = self._visibility_flow.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.deleteLater()
+        for ch in self.channels:
+            cb = CheckBox(ch.name)
+            cb.setChecked(ch.visible)
+            cb.setToolTip(f"勾选后「{ch.name}」的曲线显示在图表上，取消则隐藏\n"
+                          f"（仅影响图表显示，采集/统计/保存不受影响）")
+            cb.toggled.connect(
+                lambda on, c=ch: self._on_channel_visible_toggled(c, on))
+            self._visibility_flow.addWidget(cb)
+        self._visibility_container.setVisible(bool(self.channels))
+
+    def _on_channel_visible_toggled(self, ch, checked):
+        """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
+        ch.visible = bool(checked)
+        self.save_config()
+        self.update_chart()
 
     def _sync_conn_card_height(self):
         """连接控制卡高度随子卡实际高度自适应。
@@ -1277,7 +1377,12 @@ class VoltageSensorWidget(QWidget):
                 refs['card'].titleLabel.setText(ch.name)
             except Exception:
                 pass
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['name_label'].setText(ch.name)
+            live['raw_label'].setText(f"{ch.name} ADC: ------")
         self._refresh_active_channel_combo()
+        self._refresh_chart_visibility_row()
         self.save_config()
         self.update_chart()
 
@@ -1362,9 +1467,11 @@ class VoltageSensorWidget(QWidget):
                  '模拟器' if ch.mode == 'simulator' else ch.port)
         self._set_collect_enabled(True)
         self.tare_btn.setEnabled(True)   # 连接后即可去皮，不必先开始采集
-        self.current_voltage_label.setText("--.- V")
-        self.current_raw_label.setText(f"{ch.name}: 连接中...")
-        self.current_vadc_label.setText("ADC端电压: --.- V")
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['voltage_label'].setText(f"--.- {self.current_unit}")
+            live['raw_label'].setText(f"{ch.name}: 连接中...")
+            live['vadc_label'].setText(f"ADC端电压: --.- {self.current_unit}")
 
     def _disconnect_channel(self, ch):
         """断开单路（其余通道不受影响）。"""
@@ -1375,12 +1482,16 @@ class VoltageSensorWidget(QWidget):
         if refs:
             refs['connect_btn'].setText("连接")
         log.info("%s 已断开", ch.name)
+        # 本路实时行复位，其余路的显示保留
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['voltage_label'].setText(f"--.- {self.current_unit}")
+            live['raw_label'].setText(f"{ch.name} ADC: 已断开")
+            live['vadc_label'].setText(f"ADC端电压: --.- {self.current_unit}")
+        self._refresh_summary_text()
         if not any(c.thread for c in self.channels):
             self._set_collect_enabled(False)
             self.tare_btn.setEnabled(False)
-            self.current_voltage_label.setText(f"--.- {self.current_unit}")
-            self.current_raw_label.setText("原始ADC: 已断开")
-            self.current_vadc_label.setText("ADC端电压: --.- V")
 
     def connect_device(self):
         """连接全部未连接的通道（网页端 set_connection connect=true 走这里）。"""
@@ -1425,7 +1536,10 @@ class VoltageSensorWidget(QWidget):
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
         self.current_voltage_label.setText("电压: 采集中...")
-        self.current_raw_label.setText("原始ADC: 采集中...")
+        for ch in self.channels:
+            live = self._live_rows.get(ch.id)
+            if live:
+                live['raw_label'].setText(f"{ch.name} ADC: 采集中...")
 
     def stop_collection(self):
         self._collecting = False
@@ -1434,12 +1548,12 @@ class VoltageSensorWidget(QWidget):
         self.save_btn.setEnabled(total > 0)
         log.info("停止采集，共 %d 个数据点", total)
         if total > 0:
-            # 大字显示数据最多通道的均值
+            # 汇总标签显示数据最多通道的均值
             main = max(self.channels, key=lambda c: len(c.voltage_data))
             if main.voltage_data:
                 avg_v = np.mean(main.voltage_data)
                 self.current_voltage_label.setText(
-                    f"{self.format_voltage(avg_v)} {self.current_unit}")
+                    f"{main.name} 均值: {self.format_voltage(avg_v)} {self.current_unit}")
 
     def handle_data(self, data, ch):
         """一路连接的数据回调（SerialThread / SimulatorThread → 本模块）。
@@ -1457,7 +1571,9 @@ class VoltageSensorWidget(QWidget):
             return
 
         if data == "START":
-            self.current_raw_label.setText(f"{ch.name}: 设备就绪，等待数据...")
+            live = self._live_rows.get(ch.id)
+            if live:
+                live['raw_label'].setText(f"{ch.name}: 设备就绪，等待数据...")
             return
 
         try:
@@ -1470,15 +1586,20 @@ class VoltageSensorWidget(QWidget):
         except ValueError:
             return
 
-        # 实时显示 + 去皮滚动窗口（未采集时也持续刷新）
+        # 实时显示 + 去皮滚动窗口（未采集时也持续刷新）——只更新本路行
         ch.live_window.append(raw_value)
         voltage = self.adc_to_voltage(raw_value, channel=ch)
         v_adc = self.adc_to_vadc(raw_value, ch)
-        self.current_raw_label.setText(f"{ch.name} ADC: {raw_value}")
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['raw_label'].setText(f"{ch.name} ADC: {raw_value}")
+            live['voltage_label'].setText(
+                f"{self.format_voltage(voltage)} {self.current_unit}")
+            live['vadc_label'].setText(
+                f"ADC端电压: {self.format_voltage(v_adc)} {self.current_unit}")
+        # 汇总标签显示最新活动的一路（全屏浮动面板折叠摘要亦用此值）
         self.current_voltage_label.setText(
-            f"{self.format_voltage(voltage)} {self.current_unit}（{ch.name}）")
-        self.current_vadc_label.setText(
-            f"ADC端电压: {self.format_voltage(v_adc)} {self.current_unit}")
+            f"{ch.name}: {self.format_voltage(voltage)} {self.current_unit}")
 
         if not self._collecting:
             return
@@ -1532,8 +1653,13 @@ class VoltageSensorWidget(QWidget):
     def update_chart(self):
         if not self.isVisible():
             return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
-        active = [ch for ch in self.channels if ch.voltage_data]
+        # 只画勾选显示的通道（图表卡顶部勾选行控制）；勾选不影响采集与统计
+        active = [ch for ch in self.channels
+                  if ch.voltage_data and ch.visible]
         if not active:
+            # 有数据但全部取消勾选 → 清空图表；本来就没数据 → 保持原样
+            if any(ch.voltage_data for ch in self.channels):
+                self.chart.clear_chart()
             return
         c = self.chart
         c.begin()
@@ -1592,9 +1718,13 @@ class VoltageSensorWidget(QWidget):
         self._t0_mono = None
         self.data_text.clear()
         log.info("已清除数据")
+        for ch in self.channels:
+            live = self._live_rows.get(ch.id)
+            if live:
+                live['voltage_label'].setText(f"--.- {self.current_unit}")
+                live['raw_label'].setText(f"{ch.name} ADC: ------")
+                live['vadc_label'].setText(f"ADC端电压: --.- {self.current_unit}")
         self.current_voltage_label.setText(f"--.- {self.current_unit}")
-        self.current_raw_label.setText("原始ADC: ------")
-        self.current_vadc_label.setText(f"ADC端电压: --.- {self.current_unit}")
         self.stats_label.setText("统计信息: 暂无数据")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
