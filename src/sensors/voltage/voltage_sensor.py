@@ -1156,10 +1156,12 @@ class VoltageSensorWidget(QWidget):
 
     def _refresh_chart_visibility_row(self):
         """重建图表卡顶部的通道显示勾选行（通道增删/改名后调用）。"""
-        # 清旧行（FlowLayout 没有清空 API，逐个移除子控件）
+        # 清旧行：qfluentwidgets FlowLayout.takeAt 返回控件本身
+        # （非标准 QLayoutItem——源码 return self._items.pop(index).widget()），
+        # 不能再对其调 .widget()；用 isinstance 兼容旧版本可能返回的 QLayoutItem
         while self._visibility_flow.count():
             item = self._visibility_flow.takeAt(0)
-            w = item.widget() if item else None
+            w = item if isinstance(item, QWidget) else (item.widget() if item else None)
             if w is not None:
                 w.deleteLater()
         for ch in self.channels:
