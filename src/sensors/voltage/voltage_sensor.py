@@ -89,6 +89,25 @@ def _make_color_icon(hex_color, size=24):
     return QIcon(pm)
 
 
+class _FlowFixedWidth(QWidget):
+    """FlowLayout 按控件 sizeHint() 排版，setFixedWidth 不会改变排版宽度。
+
+    该容器把内部控件宽度锁定为 width，并让 sizeHint 返回这个宽度，
+    使 FlowLayout 按紧凑宽度排列（参数行数字框用）。
+    """
+
+    def __init__(self, inner, width, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(inner)
+        self._width = int(width)
+
+    def sizeHint(self):
+        return QSize(self._width, super().sizeHint().height())
+
+
 class _Channel:
     """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
 
@@ -520,11 +539,13 @@ class VoltageSensorWidget(QWidget):
         self.divider_spin.setSingleStep(0.1)
         self.divider_spin.setValue(self.divider_ratio)
         self.divider_spin.setSuffix(" x")
-        self.divider_spin.setMinimumWidth(120)
+        # 固定窄宽度：分压比/放大倍数的数字最长 1000.00，无需默认的宽输入框，
+        # 否则两个数字框占掉一整行，把后面的「显示单位/去皮」挤换行
+        self.divider_spin.setFixedWidth(112)
         self.divider_spin.setFixedHeight(36)
         self.divider_spin.setToolTip(params_hint_text)
         self.divider_spin.valueChanged.connect(self.on_divider_changed)
-        params_row.addWidget(self.divider_spin)
+        params_row.addWidget(_FlowFixedWidth(self.divider_spin, 112))
 
         amp_label = BodyLabel("放大倍数:")
         amp_label.setToolTip(params_hint_text)
@@ -535,11 +556,12 @@ class VoltageSensorWidget(QWidget):
         self.amp_spin.setSingleStep(0.1)
         self.amp_spin.setValue(self.amp_ratio)
         self.amp_spin.setSuffix(" x")
-        self.amp_spin.setMinimumWidth(120)
+        # 同上：固定窄宽度，避免与分压比一起把参数行撑爆导致换行
+        self.amp_spin.setFixedWidth(112)
         self.amp_spin.setFixedHeight(36)
         self.amp_spin.setToolTip(params_hint_text)
         self.amp_spin.valueChanged.connect(self.on_amp_changed)
-        params_row.addWidget(self.amp_spin)
+        params_row.addWidget(_FlowFixedWidth(self.amp_spin, 112))
 
         self.actual_range_label = BodyLabel(f"实际量程: -{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V~+{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V")
         self.actual_range_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
@@ -1156,11 +1178,14 @@ class VoltageSensorWidget(QWidget):
 
     def _refresh_chart_visibility_row(self):
         """重建图表卡顶部的通道显示勾选行（通道增删/改名后调用）。"""
-        # 清旧行（FlowLayout 没有清空 API，逐个移除子控件）
+        # 清旧行：qfluentwidgets 的 FlowLayout.takeAt() 直接返回 widget 本身
+        # （不是 QLayoutItem），不能再调 item.widget()；同时兼容标准 QLayoutItem
         while self._visibility_flow.count():
             item = self._visibility_flow.takeAt(0)
-            w = item.widget() if item else None
+            w = item if isinstance(item, QWidget) else (
+                item.widget() if item is not None else None)
             if w is not None:
+                w.setParent(None)
                 w.deleteLater()
         for ch in self.channels:
             cb = CheckBox(ch.name)
