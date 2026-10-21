@@ -96,7 +96,8 @@ class _Channel:
     UI 行控件引用由模块统一保管在 _rows[channel.id] 里。
     """
 
-    def __init__(self, cid, name, color, mode='serial', port=''):
+    def __init__(self, cid, name, color, mode='serial', port='',
+                 sample_interval_ms=100):
         self.id = cid                      # 稳定 id（信号绑定用，删除后不复用）
         self.name = name                    # 显示名（可自定义，留空回退默认名）
         self.default_name = name            # 默认名（通道N，创建时定序）
@@ -104,6 +105,7 @@ class _Channel:
         self.mode = mode                    # 'serial' | 'simulator'
         self.port = port                    # 串口模式下选中的端口
         self.thread = None                  # SerialThread / SimulatorThread
+        self.sample_interval_ms = sample_interval_ms  # 本路采样间隔（每路独立）
         # 采集数据（内部电压单位：伏特）
         self.time_data = []
         self.raw_data = []
@@ -202,7 +204,6 @@ class VoltageSensorWidget(QWidget):
             'adc_bits': self.adc_bits,
             'divider_ratio': self.divider_ratio,
             'amp_ratio': self.amp_ratio,
-            'sample_interval_ms': self.sample_interval_ms,
             'hx711_mode': self.hx711_mode,
             'hx711_avdd': self.hx711_avdd,
             'hx711_channel': self.hx711_channel,
@@ -210,13 +211,15 @@ class VoltageSensorWidget(QWidget):
             'ads1115_pga': self.ads1115_pga,
             'ads1115_channel': self.ads1115_channel,
             'current_unit': self.current_unit,
-            # 兼容旧版单通道上位机：顶层去皮字段取第 1 路的值
+            # 兼容旧版单通道上位机：顶层采样间隔/去皮字段取第 1 路的值
+            'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
             'tare_offset_v': first.tare_offset_v if first else 0.0,
             'tare_active': first.tare_active if first else False,
-            # 多路连接：每路的模式/串口/颜色/去皮
+            # 多路连接：每路的模式/串口/颜色/采样间隔/去皮
             'channels': [
                 {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color, 'tare_offset_v': ch.tare_offset_v,
+                 'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
+                 'tare_offset_v': ch.tare_offset_v,
                  'tare_active': ch.tare_active}
                 for ch in self.channels
             ],
@@ -303,24 +306,12 @@ class VoltageSensorWidget(QWidget):
         card_layout.addWidget(CaptionLabel(
             "每路连接可单独选择串口/模拟器与曲线颜色，多路数据同图叠加对比"))
 
-        # 通道子卡容器：每路连接一张子卡（独立模式/串口/颜色/连接按钮）
+        # 通道子卡容器：每路连接一张子卡（独立模式/串口/颜色/采样频率/连接按钮）
         self.channels_container = QWidget()
         self.channels_layout = QVBoxLayout(self.channels_container)
         self.channels_layout.setContentsMargins(0, 0, 0, 0)
         self.channels_layout.setSpacing(8)
         card_layout.addWidget(self.channels_container)
-
-        # 采样频率行（全部通道共用同一采样间隔）
-        row1 = QHBoxLayout()
-        row1.setSpacing(10)
-        row1.addWidget(BodyLabel("采样频率:"))
-        self.sample_rate_combo = SampleRateComboBox()
-        self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
-        self.sample_rate_combo.setMaximumWidth(120)
-        self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
-        row1.addWidget(self.sample_rate_combo)
-        row1.addStretch()
-        card_layout.addLayout(row1)
 
         self.card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
         # header 右侧：＋ 新建连接（原生按钮，随主题自适应）
@@ -849,11 +840,12 @@ class VoltageSensorWidget(QWidget):
                 ch = self._make_channel(
                     name=item.get('name') or None,
                     color=item.get('color') or None,
-                    mode=mode, port=item.get('port', ''))
+                    mode=mode, port=item.get('port', ''),
+                    sample_interval_ms=item.get('sample_interval_ms'))
                 ch.tare_offset_v = float(item.get('tare_offset_v', 0.0) or 0.0)
                 ch.tare_active = bool(item.get('tare_active', False))
         else:
-            # 旧版单通道配置迁移：保留顶层去皮字段作为第 1 路零点
+            # 旧版单通道配置迁移：顶层采样间隔/去皮字段作为第 1 路初值
             ch = self._make_channel(
                 mode='serial' if SERIAL_AVAILABLE else 'simulator')
             ch.tare_offset_v = float((self.config or {}).get('tare_offset_v', 0.0) or 0.0)
@@ -861,7 +853,8 @@ class VoltageSensorWidget(QWidget):
         self._sync_compat_aliases()
         self.update_tare_status_label()
 
-    def _make_channel(self, color=None, mode='serial', port='', name=None):
+    def _make_channel(self, color=None, mode='serial', port='', name=None,
+                      sample_interval_ms=None):
         """创建通道对象 + 对应 UI 行（不重复使用已删除通道的 id/name）。"""
         cid = self._next_channel_id
         self._next_channel_id += 1
@@ -871,7 +864,8 @@ class VoltageSensorWidget(QWidget):
             used = {ch.color for ch in self.channels}
             color = next((c for c in CHANNEL_COLORS if c not in used),
                          CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
-        ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port)
+        ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port,
+                      sample_interval_ms=sample_interval_ms or self.sample_interval_ms)
         self.channels.append(ch)
         self._build_channel_card(ch)
         self._update_delete_btns()
@@ -946,8 +940,9 @@ class VoltageSensorWidget(QWidget):
         """为通道创建一张连接子卡（参考电学综合单元卡样式）。
 
         header：名称编辑 / 图线颜色下拉 / 删除按钮；
-        body：连接方式 + 连接按钮；串口行（串口 + 刷新，模拟器下整行隐藏）。
-        每路独立：模式选择、串口刷新、连接/断开。
+        body：连接方式 + 串口 + 刷新 + 连接按钮同一行（紧凑），
+        采样频率独立一行；模拟器模式下串口部分隐藏。
+        每路独立：模式选择、串口刷新、采样频率、连接/断开。
         """
         card = FluentCard(ch.default_name, None, True, self)
 
@@ -977,7 +972,7 @@ class VoltageSensorWidget(QWidget):
         delete_btn.clicked.connect(lambda _=False, c=ch: self._delete_channel(c))
         card.add_header_widget(delete_btn)
 
-        # ---- body 第 1 行：连接方式 + 连接/断开（每路独立） ----
+        # ---- body 第 1 行：连接方式 + 串口 + 刷新 + 连接按钮（紧凑单行） ----
         row1 = QHBoxLayout()
         row1.setSpacing(8)
         row1.addWidget(BodyLabel("连接方式"))
@@ -987,7 +982,22 @@ class VoltageSensorWidget(QWidget):
         mode_combo.currentIndexChanged.connect(
             lambda i, c=ch: self._on_channel_mode_changed(c, i))
         row1.addWidget(mode_combo)
-        row1.addStretch()
+
+        port_combo = ComboBox()
+        port_combo.setMinimumWidth(110)
+        self._fill_channel_ports(ch, port_combo)
+        port_combo.currentTextChanged.connect(lambda t, c=ch: setattr(c, 'port', t))
+        port_label = BodyLabel("串口")
+        row1.addWidget(port_label)
+        row1.addWidget(port_combo, 1)
+
+        refresh_btn = PushButton("刷新")
+        refresh_btn.setFixedHeight(30)
+        refresh_btn.setToolTip("重新枚举本路的串口列表")
+        refresh_btn.clicked.connect(
+            lambda _=False, c=ch: self._refresh_channel_ports(c))
+        row1.addWidget(refresh_btn)
+
         connect_btn = PrimaryPushButton("连接")
         connect_btn.setFixedHeight(30)
         connect_btn.clicked.connect(
@@ -997,24 +1007,20 @@ class VoltageSensorWidget(QWidget):
         w1.setLayout(row1)
         card.add_widget(w1)
 
-        # ---- body 第 2 行：串口 + 刷新（模拟器模式整行隐藏） ----
-        port_row = QHBoxLayout()
-        port_row.setSpacing(8)
-        port_row.addWidget(BodyLabel("串口"))
-        port_combo = ComboBox()
-        port_combo.setMinimumWidth(130)
-        self._fill_channel_ports(ch, port_combo)
-        port_combo.currentTextChanged.connect(lambda t, c=ch: setattr(c, 'port', t))
-        port_row.addWidget(port_combo, 1)
-        refresh_btn = PushButton("刷新")
-        refresh_btn.setFixedHeight(30)
-        refresh_btn.setToolTip("重新枚举本路的串口列表")
-        refresh_btn.clicked.connect(
-            lambda _=False, c=ch: self._refresh_channel_ports(c))
-        port_row.addWidget(refresh_btn)
-        port_row_w = QWidget()
-        port_row_w.setLayout(port_row)
-        card.add_widget(port_row_w)
+        # ---- body 第 2 行：采样频率（每路独立） ----
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        row2.addWidget(BodyLabel("采样频率"))
+        sample_rate_combo = SampleRateComboBox()
+        sample_rate_combo.setSampleInterval(ch.sample_interval_ms)
+        sample_rate_combo.setMaximumWidth(120)
+        sample_rate_combo.sampleIntervalChanged.connect(
+            lambda ms, c=ch: self._on_channel_sample_interval_changed(c, ms))
+        row2.addWidget(sample_rate_combo)
+        row2.addStretch()
+        w2 = QWidget()
+        w2.setLayout(row2)
+        card.add_widget(w2)
 
         # 子卡折叠动画期间逐帧同步主卡高度（子卡折叠后 sizeHint 不缩）
         card.expandAni.valueChanged.connect(self._sync_conn_card_height)
@@ -1024,8 +1030,9 @@ class VoltageSensorWidget(QWidget):
         self._rows[ch.id] = {
             'card': card, 'name_edit': name_edit, 'color_combo': color_combo,
             'delete_btn': delete_btn, 'mode_combo': mode_combo,
-            'port_combo': port_combo, 'port_row': port_row_w,
-            'refresh_btn': refresh_btn, 'connect_btn': connect_btn,
+            'port_combo': port_combo, 'port_label': port_label,
+            'refresh_btn': refresh_btn,
+            'connect_btn': connect_btn, 'sample_rate_combo': sample_rate_combo,
         }
         self._init_channel_color_combo(ch)
         self._apply_channel_mode_visibility(ch)
@@ -1115,11 +1122,13 @@ class VoltageSensorWidget(QWidget):
         self.save_config()
 
     def _apply_channel_mode_visibility(self, ch):
-        """模拟器模式下隐藏本路的串口行（标签 + 下拉 + 刷新按钮）。"""
+        """模拟器模式下隐藏本路的串口标签/下拉与刷新按钮。"""
         refs = self._rows.get(ch.id)
         if refs:
             is_sim = ch.mode == 'simulator'
-            refs['port_row'].setVisible(not is_sim)
+            refs['port_label'].setVisible(not is_sim)
+            refs['port_combo'].setVisible(not is_sim)
+            refs['refresh_btn'].setVisible(not is_sim)
             try:
                 refs['card']._adjustViewSize()
             except Exception:
@@ -1140,7 +1149,7 @@ class VoltageSensorWidget(QWidget):
                 # 模拟器产生有符号 ADC 范围的原始值，中点为 0V
                 max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
                 th = SimulatorThread(value_min=-max_adc, value_max=max_adc,
-                                     interval_ms=self.sample_interval_ms)
+                                     interval_ms=ch.sample_interval_ms)
             else:
                 if not SERIAL_AVAILABLE:
                     fluent_message_box(self, "提示", serial_unavailable_hint())
@@ -1292,9 +1301,9 @@ class VoltageSensorWidget(QWidget):
             self._t0_mono = now
         t_rel = now - self._t0_mono
 
-        # 采样频率控制（每路独立过滤）
+        # 采样频率控制（每路独立过滤，按本路设定的间隔）
         if ch.last_sample_s is not None and \
-                (t_rel - ch.last_sample_s) * 1000 < self.sample_interval_ms:
+                (t_rel - ch.last_sample_s) * 1000 < ch.sample_interval_ms:
             return
         ch.last_sample_s = t_rel
 
@@ -1355,9 +1364,12 @@ class VoltageSensorWidget(QWidget):
             c.set_xlim(min(all_t), max(all_t))
         c.end()
 
-    def on_sample_interval_changed(self, interval_ms):
-        """采样频率改变时更新间隔并保存配置（内联下拉框触发）"""
-        self.sample_interval_ms = interval_ms
+    def _on_channel_sample_interval_changed(self, ch, interval_ms):
+        """本路采样频率改变：更新该路间隔并保存配置（对该路过滤即时生效；
+        模拟器线程按创建时间隔发数，重连后按新频率运行）。"""
+        ch.sample_interval_ms = interval_ms
+        if self.channels and ch is self.channels[0]:
+            self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
         self.save_config()
 
     def save_data(self):
@@ -1441,7 +1453,8 @@ class VoltageSensorWidget(QWidget):
                 f"(增益{128 if self.hx711_channel == 'A' else 32}), "
                 f"多路连接: 共{len(active)}路（{channels_desc}），"
                 f"主分析通道={main.name}, 各路零点独立, "
-                f"显示单位={self.current_unit}, 采样间隔={self.sample_interval_ms}ms"),
+                f"显示单位={self.current_unit}, "
+                f"采样间隔={main.sample_interval_ms}ms（各路独立）"),
             'system_prompt': AI_SYSTEM_PROMPT,
         }
 
