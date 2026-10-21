@@ -25,7 +25,7 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
     BodyLabel, CaptionLabel, DoubleSpinBox, SwitchButton, FluentIcon as FIF,
-    AdaptiveFlowLayout, FlowLayout,
+    AdaptiveFlowLayout, FlowLayout, LineEdit, ToolButton,
 )
 import numpy as np
 
@@ -71,6 +71,22 @@ AI_SYSTEM_PROMPT = (
 CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
                   '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
 
+# 颜色下拉中「自定义…」项的 userData 标记（选中后弹 QColorDialog）
+CUSTOM_COLOR_KEY = '__custom__'
+
+
+def _make_color_icon(hex_color, size=24):
+    """生成实心圆色块 QIcon（颜色下拉项的预览图标）。"""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(hex_color))
+    p.drawEllipse(2, 2, size - 4, size - 4)
+    p.end()
+    return QIcon(pm)
+
 
 class _Channel:
     """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
@@ -82,7 +98,8 @@ class _Channel:
 
     def __init__(self, cid, name, color, mode='serial', port=''):
         self.id = cid                      # 稳定 id（信号绑定用，删除后不复用）
-        self.name = name                    # 显示名（通道N，创建时定序）
+        self.name = name                    # 显示名（可自定义，留空回退默认名）
+        self.default_name = name            # 默认名（通道N，创建时定序）
         self.color = color                  # 曲线颜色
         self.mode = mode                    # 'serial' | 'simulator'
         self.port = port                    # 串口模式下选中的端口
@@ -119,29 +136,6 @@ class VoltageSensorWidget(QWidget):
     }
     # ADS1115 输入通道（MUX）：4 单端 + 2 差分
     ADS1115_CHANNELS = ['AIN0', 'AIN1', 'AIN2', 'AIN3', 'AIN0-AIN1', 'AIN2-AIN3']
-
-    # 连接控制卡片内按钮统一样式：白底黑字
-    CARD_BTN_STYLE = """
-        QPushButton {
-            background-color: #ffffff;
-            border: 1px solid #d0d0d0;
-            color: #1a1a1a;
-            border-radius: 6px;
-            padding: 0 16px;
-            font-size: 13px;
-        }
-        QPushButton:hover {
-            background-color: #f5f5f5;
-            border: 1px solid #0078d4;
-            color: #0078d4;
-        }
-        QPushButton:pressed { background-color: #e5e5e5; }
-        QPushButton:disabled {
-            background-color: #f5f5f5;
-            color: #aaaaaa;
-            border: 1px solid #e5e5e5;
-        }
-    """
 
     def __init__(self):
         super().__init__()
@@ -300,32 +294,16 @@ class VoltageSensorWidget(QWidget):
         title = TitleLabel("电压")
         layout.addWidget(title)
 
-        # ========== 卡片1：连接控制（可折叠） ==========
+        # ========== 卡片1：连接控制（可折叠，参考电学综合多连接面板样式） ==========
         card_conn_content = QWidget()
-        card_conn_content.setObjectName("card")
-        card_conn_content.setStyleSheet(card_style())
         card_layout = QVBoxLayout(card_conn_content)
-        card_layout.setContentsMargins(20, 4, 20, 16)
-        card_layout.setSpacing(12)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(10)
 
-        # 通道工具行：「新建连接」+ 使用说明
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(10)
-        self.add_channel_btn = PushButton("＋ 新建连接")
-        self.add_channel_btn.setFixedHeight(36)
-        self.add_channel_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.add_channel_btn.setToolTip(
-            "增加一路 ESP32 连接：\n"
-            "每路可单独选择「有线串口 / 模拟器」，单独连接/断开，\n"
-            "单独点色块换曲线颜色；多路数据叠加画在同一张图上")
-        self.add_channel_btn.clicked.connect(lambda: self.add_channel())
-        toolbar.addWidget(self.add_channel_btn)
-        toolbar.addWidget(CaptionLabel(
+        card_layout.addWidget(CaptionLabel(
             "每路连接可单独选择串口/模拟器与曲线颜色，多路数据同图叠加对比"))
-        toolbar.addStretch()
-        card_layout.addLayout(toolbar)
 
-        # 通道行容器：每路连接一行控件
+        # 通道子卡容器：每路连接一张子卡（独立模式/串口/颜色/连接按钮）
         self.channels_container = QWidget()
         self.channels_layout = QVBoxLayout(self.channels_container)
         self.channels_layout.setContentsMargins(0, 0, 0, 0)
@@ -344,8 +322,19 @@ class VoltageSensorWidget(QWidget):
         row1.addStretch()
         card_layout.addLayout(row1)
 
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
-        layout.addWidget(card_conn)
+        self.card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
+        # header 右侧：＋ 新建连接（原生按钮，随主题自适应）
+        self.add_channel_btn = PushButton("＋ 新建连接")
+        self.add_channel_btn.setFixedHeight(30)
+        self.add_channel_btn.setToolTip(
+            "增加一路 ESP32 连接：\n"
+            "每路可单独选择「有线串口 / 模拟器」，单独连接/断开，\n"
+            "单独换曲线颜色；多路数据叠加画在同一张图上")
+        self.add_channel_btn.clicked.connect(lambda: self.add_channel())
+        self.card_conn.add_header_widget(self.add_channel_btn)
+        # 主卡展开动画结束后按子卡实际高度收敛（子卡折叠后 sizeHint 不缩）
+        self.card_conn.expandAni.finished.connect(self._sync_conn_card_height)
+        layout.addWidget(self.card_conn)
 
         # ========== 卡片2：ADC 与电路参数（可折叠） ==========
         card_adc_content = QWidget()
@@ -884,8 +873,9 @@ class VoltageSensorWidget(QWidget):
                          CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
         ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port)
         self.channels.append(ch)
-        self._build_channel_row(ch)
+        self._build_channel_card(ch)
         self._update_delete_btns()
+        self._sync_conn_card_height()
         return ch
 
     def add_channel(self):
@@ -901,12 +891,36 @@ class VoltageSensorWidget(QWidget):
             return
         refs = self._rows.pop(ch.id, None)
         if refs:
-            self.channels_layout.removeWidget(refs['row'])
-            refs['row'].deleteLater()
+            self.channels_layout.removeWidget(refs['card'])
+            refs['card'].deleteLater()
         self.channels.remove(ch)
         self._update_delete_btns()
         self._sync_compat_aliases()
         self.save_config()
+        self._sync_conn_card_height()
+
+    def _sync_conn_card_height(self):
+        """连接控制卡高度随子卡实际高度自适应。
+
+        子卡折叠后其 sizeHint() 仍返回全展开高度，主卡 body 的
+        sizeHint() 因此高估（折叠后残留空白）；这里把 channels_container
+        的贡献替换为各子卡实际 height() 之和 + 间距后重算。
+        """
+        try:
+            card = self.card_conn
+            h = card.body.sizeHint().height()
+            cont = self.channels_container
+            cards = [self._rows[ch.id]['card']
+                     for ch in self.channels if ch.id in self._rows]
+            if cont is not None and cards:
+                actual = sum(c.height() for c in cards) + 8 * (len(cards) - 1)
+                h = h - cont.sizeHint().height() + actual
+            h = max(int(h), 1)
+            card.spaceWidget.setFixedHeight(h)
+            if card.isExpand:
+                card.setFixedHeight(card.card.height() + h)
+        except Exception:
+            pass
 
     def _update_delete_btns(self):
         """仅剩一路时禁用其删除按钮（至少保留一路连接行）。"""
@@ -928,61 +942,149 @@ class VoltageSensorWidget(QWidget):
             self.mode_combo = refs['mode_combo']
             self.port_combo = refs['port_combo']
 
-    def _build_channel_row(self, ch):
-        """为通道创建一行连接控件：色块 | 名称 | 模式 | 串口+刷新 | 连接 | 删除。"""
-        row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(8)
+    def _build_channel_card(self, ch):
+        """为通道创建一张连接子卡（参考电学综合单元卡样式）。
 
-        color_btn = PushButton()
-        color_btn.setFixedSize(32, 32)
-        color_btn.clicked.connect(lambda _=False, c=ch: self._pick_channel_color(c))
-        h.addWidget(color_btn)
+        header：名称编辑 / 图线颜色下拉 / 删除按钮；
+        body：连接方式 + 连接按钮；串口行（串口 + 刷新，模拟器下整行隐藏）。
+        每路独立：模式选择、串口刷新、连接/断开。
+        """
+        card = FluentCard(ch.default_name, None, True, self)
 
-        h.addWidget(BodyLabel(ch.name))
+        # ---- header：自定义名称 ----
+        name_edit = LineEdit(card)
+        name_edit.setText(ch.name)
+        name_edit.setPlaceholderText("自定义名称")
+        name_edit.setFixedWidth(112)
+        name_edit.setToolTip("图表图例/实时数据中显示的名称（留空恢复默认「通道N」）")
+        name_edit.editingFinished.connect(
+            lambda c=ch, e=name_edit: self._on_channel_name_edited(c, e.text()))
+        card.add_header_widget(name_edit)
 
+        # ---- header：图线颜色下拉（预设色 + 自定义…） ----
+        color_combo = ComboBox(card)
+        color_combo.setMinimumWidth(96)
+        color_combo.setToolTip("该连接的图线颜色")
+        color_combo.currentIndexChanged.connect(
+            lambda i, c=ch: self._on_channel_color_changed(c, i))
+        card.add_header_widget(color_combo)
+
+        # ---- header：删除按钮 ----
+        delete_btn = ToolButton(FluentIcon.DELETE, card)
+        delete_btn.setFixedSize(28, 28)
+        delete_btn.setToolTip("删除这一路连接（需先断开）")
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.clicked.connect(lambda _=False, c=ch: self._delete_channel(c))
+        card.add_header_widget(delete_btn)
+
+        # ---- body 第 1 行：连接方式 + 连接/断开（每路独立） ----
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row1.addWidget(BodyLabel("连接方式"))
         mode_combo = ComboBox()
         mode_combo.addItems(["有线串口", "模拟器"])
         mode_combo.setCurrentIndex(1 if ch.mode == 'simulator' else 0)
         mode_combo.currentIndexChanged.connect(
             lambda i, c=ch: self._on_channel_mode_changed(c, i))
-        h.addWidget(mode_combo)
+        row1.addWidget(mode_combo)
+        row1.addStretch()
+        connect_btn = PrimaryPushButton("连接")
+        connect_btn.setFixedHeight(30)
+        connect_btn.clicked.connect(
+            lambda _=False, c=ch: self._toggle_channel_connection(c))
+        row1.addWidget(connect_btn)
+        w1 = QWidget()
+        w1.setLayout(row1)
+        card.add_widget(w1)
 
+        # ---- body 第 2 行：串口 + 刷新（模拟器模式整行隐藏） ----
+        port_row = QHBoxLayout()
+        port_row.setSpacing(8)
+        port_row.addWidget(BodyLabel("串口"))
         port_combo = ComboBox()
-        port_combo.setMinimumWidth(140)
+        port_combo.setMinimumWidth(130)
         self._fill_channel_ports(ch, port_combo)
         port_combo.currentTextChanged.connect(lambda t, c=ch: setattr(c, 'port', t))
-        h.addWidget(port_combo)
-
+        port_row.addWidget(port_combo, 1)
         refresh_btn = PushButton("刷新")
-        refresh_btn.setFixedHeight(32)
-        refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        refresh_btn.clicked.connect(lambda _=False, c=ch: self._refresh_channel_ports(c))
-        h.addWidget(refresh_btn)
+        refresh_btn.setFixedHeight(30)
+        refresh_btn.setToolTip("重新枚举本路的串口列表")
+        refresh_btn.clicked.connect(
+            lambda _=False, c=ch: self._refresh_channel_ports(c))
+        port_row.addWidget(refresh_btn)
+        port_row_w = QWidget()
+        port_row_w.setLayout(port_row)
+        card.add_widget(port_row_w)
 
-        connect_btn = PushButton("连接")
-        connect_btn.setFixedHeight(32)
-        connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        connect_btn.clicked.connect(lambda _=False, c=ch: self._toggle_channel_connection(c))
-        h.addWidget(connect_btn)
+        # 子卡折叠动画期间逐帧同步主卡高度（子卡折叠后 sizeHint 不缩）
+        card.expandAni.valueChanged.connect(self._sync_conn_card_height)
+        card.expandAni.finished.connect(self._sync_conn_card_height)
 
-        delete_btn = PushButton("删除")
-        delete_btn.setFixedHeight(32)
-        delete_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        delete_btn.setToolTip("删除这一路连接（需先断开）")
-        delete_btn.clicked.connect(lambda _=False, c=ch: self._delete_channel(c))
-        h.addWidget(delete_btn)
-
-        h.addStretch()
-        self.channels_layout.addWidget(row)
+        self.channels_layout.addWidget(card)
         self._rows[ch.id] = {
-            'row': row, 'color_btn': color_btn, 'mode_combo': mode_combo,
-            'port_combo': port_combo, 'refresh_btn': refresh_btn,
-            'connect_btn': connect_btn, 'delete_btn': delete_btn,
+            'card': card, 'name_edit': name_edit, 'color_combo': color_combo,
+            'delete_btn': delete_btn, 'mode_combo': mode_combo,
+            'port_combo': port_combo, 'port_row': port_row_w,
+            'refresh_btn': refresh_btn, 'connect_btn': connect_btn,
         }
-        self._apply_channel_color(ch)
+        self._init_channel_color_combo(ch)
         self._apply_channel_mode_visibility(ch)
+
+    def _init_channel_color_combo(self, ch):
+        """（重建）填充颜色下拉：预设色 + 已存自定义色 + 「自定义…」项。"""
+        refs = self._rows.get(ch.id)
+        if not refs:
+            return
+        combo = refs['color_combo']
+        combo.blockSignals(True)
+        combo.clear()
+        for c in CHANNEL_COLORS:
+            combo.addItem(c, _make_color_icon(c), userData=c)
+        if ch.color and combo.findData(ch.color) < 0:
+            combo.addItem(ch.color, _make_color_icon(ch.color), userData=ch.color)
+        combo.addItem("自定义…", QIcon(), userData=CUSTOM_COLOR_KEY)
+        idx = combo.findData(ch.color)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _on_channel_color_changed(self, ch, index):
+        """颜色下拉选中：预设色直接生效；「自定义…」弹 QColorDialog。"""
+        refs = self._rows.get(ch.id)
+        if not refs:
+            return
+        combo = refs['color_combo']
+        data = combo.itemData(index)
+        if data == CUSTOM_COLOR_KEY:
+            color = QColorDialog.getColor(
+                QColor(ch.color), self, f"选择 {ch.name} 的曲线颜色")
+            if not color.isValid():
+                self._init_channel_color_combo(ch)
+                return
+            ch.color = color.name()
+            # 该项定格为选定的颜色，尾部再补一个「自定义…」常驻入口
+            combo.blockSignals(True)
+            combo.setItemText(index, ch.color)
+            combo.setItemIcon(index, _make_color_icon(ch.color))
+            combo.setItemData(index, ch.color)
+            combo.addItem("自定义…", QIcon(), userData=CUSTOM_COLOR_KEY)
+            combo.blockSignals(False)
+        else:
+            ch.color = data
+        self.save_config()
+        self.update_chart()
+
+    def _on_channel_name_edited(self, ch, text):
+        """名称编辑完成：写回通道名（留空恢复默认「通道N」）。"""
+        t = text.strip()
+        ch.name = t or ch.default_name
+        refs = self._rows.get(ch.id)
+        if refs:
+            try:
+                refs['card'].setTitle(ch.name)
+            except Exception:
+                pass
+        self.save_config()
+        self.update_chart()
 
     def _fill_channel_ports(self, ch, combo):
         """重填串口列表，尽量保住该通道上次选中的端口。"""
@@ -1007,36 +1109,22 @@ class VoltageSensorWidget(QWidget):
         if refs:
             self._fill_channel_ports(ch, refs['port_combo'])
 
-    def _apply_channel_color(self, ch):
-        """把通道颜色刷到行内色块按钮上。"""
-        refs = self._rows.get(ch.id)
-        if refs:
-            refs['color_btn'].setStyleSheet(
-                f"background-color: {ch.color}; border: 1px solid rgba(0,0,0,0.15);"
-                f" border-radius: 4px;")
-            refs['color_btn'].setToolTip(f"曲线颜色: {ch.color}（点击更换）")
-
-    def _pick_channel_color(self, ch):
-        """点击色块：弹 QColorDialog 为本路选曲线颜色。"""
-        color = QColorDialog.getColor(QColor(ch.color), self, f"选择 {ch.name} 的曲线颜色")
-        if color.isValid():
-            ch.color = color.name()
-            self._apply_channel_color(ch)
-            self.save_config()
-            self.update_chart()
-
     def _on_channel_mode_changed(self, ch, index):
         ch.mode = 'simulator' if index == 1 else 'serial'
         self._apply_channel_mode_visibility(ch)
         self.save_config()
 
     def _apply_channel_mode_visibility(self, ch):
-        """模拟器模式下隐藏本路的串口下拉与刷新按钮。"""
+        """模拟器模式下隐藏本路的串口行（标签 + 下拉 + 刷新按钮）。"""
         refs = self._rows.get(ch.id)
         if refs:
             is_sim = ch.mode == 'simulator'
-            refs['port_combo'].setVisible(not is_sim)
-            refs['refresh_btn'].setVisible(not is_sim)
+            refs['port_row'].setVisible(not is_sim)
+            try:
+                refs['card']._adjustViewSize()
+            except Exception:
+                pass
+            self._sync_conn_card_height()
 
     def _toggle_channel_connection(self, ch):
         """单路的连接/断开按钮：按本路线程状态切换。"""
@@ -1389,6 +1477,11 @@ class VoltageSensorWidget(QWidget):
                 for ch in self.channels
             ],
         }
+
+    def showEvent(self, e):
+        """首次显示后按子卡真实高度收敛连接控制卡（构建期 height() 不可靠）。"""
+        super().showEvent(e)
+        self._sync_conn_card_height()
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
