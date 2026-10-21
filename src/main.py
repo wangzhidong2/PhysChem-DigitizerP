@@ -3050,8 +3050,10 @@ class MainWindow(FluentWindow):
         )
         box.yesButton.setText("确认退出")
         box.cancelButton.setText("取消")
-        # 标题行右上角 ×：等效「取消」（reject 后 exec() 返回假，不退出）
-        add_titlebar_close_button(box, box.textLayout, box.titleLabel)
+        # × 与 windowTitleLabel（vBoxLayout[0]，弹窗真正的顶部标题行）同行，
+        # 等效「取消」（reject 后 exec() 返回假，不退出）。Dialog 的
+        # textLayout 里还有个 titleLabel（库的既有双标题设计），不动它
+        add_titlebar_close_button(box, box.vBoxLayout, box.windowTitleLabel)
         box.raise_()
         box.activateWindow()
         if box.exec():
