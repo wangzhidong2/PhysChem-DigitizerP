@@ -590,12 +590,15 @@ class VoltageSensorWidget(QWidget):
         data_card_layout.setContentsMargins(20, 4, 20, 16)
         data_card_layout.setSpacing(8)
 
-        # 汇总标签：显示最新收到数据的一路（多路时的快速概览；
-        # 全屏浮动面板折叠态摘要也用它——FloatingDataPanel 依赖 .text()）
+        # 隐藏摘要标签：**不加入可见布局**——多路时单一汇总位会被各路
+        # 数据轮流抢占（用户实测反馈），可见区只保留每路一行的实时明细。
+        # 它的唯一职责是全屏浮动面板折叠态摘要（FloatingDataPanel 依赖
+        # .text() 读文本，不 reparent 不要求可见），内容 = 最新活动一路。
         self.current_voltage_label = BodyLabel("--.- V")
         self.current_voltage_label.setFont(QFont("Cascadia Code", 14, QFont.Weight.Bold))
         self.current_voltage_label.setStyleSheet("color: #0078d4;")
-        data_card_layout.addWidget(self.current_voltage_label)
+        self.current_voltage_label.setParent(self)
+        self.current_voltage_label.hide()
 
         # 每路一行实时明细（通道增删时动态重建，见 _build_live_row）
         self._live_rows = {}          # channel.id -> {row, voltage_label, raw_label, vadc_label}
@@ -1099,7 +1102,7 @@ class VoltageSensorWidget(QWidget):
     def _build_live_row(self, ch):
         """为通道创建一行实时明细：名称+大字电压（通道色） | 原始ADC | ADC端电压。
 
-        多路同屏各占一行，不再互相覆盖；单路时隐藏顶部汇总标签避免重复。
+        多路同屏各占一行，不再互相覆盖；顶部不再有共享汇总位。
         """
         row = QWidget()
         h = QHBoxLayout(row)
@@ -1129,7 +1132,6 @@ class VoltageSensorWidget(QWidget):
             'row': row, 'name_label': name_label, 'voltage_label': voltage_label,
             'raw_label': raw_label, 'vadc_label': vadc_label,
         }
-        self._refresh_summary_visibility()
 
     def _remove_live_row(self, ch):
         """删除通道的实时明细行（断开/删除通道时调用）。"""
@@ -1137,16 +1139,11 @@ class VoltageSensorWidget(QWidget):
         if refs:
             self._live_layout.removeWidget(refs['row'])
             refs['row'].deleteLater()
-        self._refresh_summary_visibility()
-        # 该路被删后汇总标签可能指着它的旧值，刷成还有数据的最后一口
+        # 该路被删后摘要标签可能指着它的旧值，刷成还有数据的最后一口
         self._refresh_summary_text()
 
-    def _refresh_summary_visibility(self):
-        """汇总大字标签仅多路时显示（单路时每路行已完整，避免重复）。"""
-        self.current_voltage_label.setVisible(len(self.channels) > 1)
-
     def _refresh_summary_text(self):
-        """汇总标签取「最近一路有数据的通道」最新值。"""
+        """隐藏摘要标签取「最近一路有数据的通道」最新值（供全屏折叠摘要）。"""
         for ch in reversed(self.channels):
             if ch.voltage_data:
                 self.current_voltage_label.setText(
@@ -1599,7 +1596,7 @@ class VoltageSensorWidget(QWidget):
                 f"{self.format_voltage(voltage)} {self.current_unit}")
             live['vadc_label'].setText(
                 f"ADC端电压: {self.format_voltage(v_adc)} {self.current_unit}")
-        # 汇总标签显示最新活动的一路（全屏浮动面板折叠摘要亦用此值）
+        # 隐藏摘要标签记最新活动的一路（仅供全屏浮动面板折叠态摘要读取）
         self.current_voltage_label.setText(
             f"{ch.name}: {self.format_voltage(voltage)} {self.current_unit}")
 

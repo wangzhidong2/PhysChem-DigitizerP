@@ -110,10 +110,12 @@ SimulatorThread   ──┘                          │
 - 每路一行（`_live_rows[ch.id]`）：通道名 + 大字电压（20px，
   **颜色 = 通道色**，多路一眼可辨） + 原始ADC + ADC端电压，
   通道增删时动态增删行；断开单路只复位该路行，其余路保留；
-- 顶部保留**汇总标签**（`current_voltage_label`）：显示最新收到
-  数据的一路「名称: 值」；**仅多路时显示**（单路时与该路行重复，
-  隐藏）；全屏浮动面板折叠态摘要取它的 `.text()`
-  （`FloatingDataPanel._update_summary` 依赖标签控件，故不能传容器）。
+- 顶部**不再有共享汇总位**（实测多路时单一汇总标签仍被各路数据
+  轮流抢占，已删）：`current_voltage_label` 转为**隐藏控件**
+  （`setParent(self)` + `hide()`，不加入可见布局），内容 = 最新
+  活动一路「名称: 值」，仅供全屏浮动面板折叠态摘要读取
+  （`FloatingDataPanel._update_summary` 依赖标签控件的 `.text()`，
+  不 reparent 也不要求可见，故隐藏即可）。
 
 ### 3.4 图表
 
