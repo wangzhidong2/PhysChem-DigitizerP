@@ -970,7 +970,7 @@ class VoltageSensorWidget(QWidget):
         card.add_header_widget(color_combo)
 
         # ---- header：删除按钮 ----
-        delete_btn = ToolButton(FluentIcon.DELETE, card)
+        delete_btn = ToolButton(FIF.DELETE, card)
         delete_btn.setFixedSize(28, 28)
         delete_btn.setToolTip("删除这一路连接（需先断开）")
         delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1080,7 +1080,7 @@ class VoltageSensorWidget(QWidget):
         refs = self._rows.get(ch.id)
         if refs:
             try:
-                refs['card'].setTitle(ch.name)
+                refs['card'].titleLabel.setText(ch.name)
             except Exception:
                 pass
         self.save_config()
