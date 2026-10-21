@@ -18,7 +18,7 @@ from collections import deque
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QSizePolicy, QColorDialog,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
@@ -27,6 +27,7 @@ from qfluentwidgets import (
     BodyLabel, CaptionLabel, DoubleSpinBox, SwitchButton, FluentIcon as FIF,
     AdaptiveFlowLayout, FlowLayout, LineEdit, ToolButton,
 )
+from qfluentwidgets.components.dialog_box import ColorDialog
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -71,7 +72,7 @@ AI_SYSTEM_PROMPT = (
 CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
                   '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
 
-# 颜色下拉中「自定义…」项的 userData 标记（选中后弹 QColorDialog）
+# 颜色下拉中「自定义…」项的 userData 标记（选中后弹 Fluent 取色对话框）
 CUSTOM_COLOR_KEY = '__custom__'
 
 
@@ -972,7 +973,7 @@ class VoltageSensorWidget(QWidget):
         delete_btn.clicked.connect(lambda _=False, c=ch: self._delete_channel(c))
         card.add_header_widget(delete_btn)
 
-        # ---- body 第 1 行：连接方式 + 串口 + 刷新 + 连接按钮（紧凑单行） ----
+        # ---- body 单行：连接方式 + 串口 + 刷新 + 采样频率 + 连接（紧凑） ----
         row1 = QHBoxLayout()
         row1.setSpacing(8)
         row1.addWidget(BodyLabel("连接方式"))
@@ -984,12 +985,12 @@ class VoltageSensorWidget(QWidget):
         row1.addWidget(mode_combo)
 
         port_combo = ComboBox()
-        port_combo.setMinimumWidth(110)
+        port_combo.setMinimumWidth(80)
         self._fill_channel_ports(ch, port_combo)
         port_combo.currentTextChanged.connect(lambda t, c=ch: setattr(c, 'port', t))
         port_label = BodyLabel("串口")
         row1.addWidget(port_label)
-        row1.addWidget(port_combo, 1)
+        row1.addWidget(port_combo)
 
         refresh_btn = PushButton("刷新")
         refresh_btn.setFixedHeight(30)
@@ -997,6 +998,16 @@ class VoltageSensorWidget(QWidget):
         refresh_btn.clicked.connect(
             lambda _=False, c=ch: self._refresh_channel_ports(c))
         row1.addWidget(refresh_btn)
+
+        row1.addWidget(BodyLabel("采样频率"))
+        sample_rate_combo = SampleRateComboBox()
+        sample_rate_combo.setSampleInterval(ch.sample_interval_ms)
+        sample_rate_combo.setMaximumWidth(110)
+        sample_rate_combo.sampleIntervalChanged.connect(
+            lambda ms, c=ch: self._on_channel_sample_interval_changed(c, ms))
+        row1.addWidget(sample_rate_combo)
+
+        row1.addStretch()
 
         connect_btn = PrimaryPushButton("连接")
         connect_btn.setFixedHeight(30)
@@ -1006,21 +1017,6 @@ class VoltageSensorWidget(QWidget):
         w1 = QWidget()
         w1.setLayout(row1)
         card.add_widget(w1)
-
-        # ---- body 第 2 行：采样频率（每路独立） ----
-        row2 = QHBoxLayout()
-        row2.setSpacing(8)
-        row2.addWidget(BodyLabel("采样频率"))
-        sample_rate_combo = SampleRateComboBox()
-        sample_rate_combo.setSampleInterval(ch.sample_interval_ms)
-        sample_rate_combo.setMaximumWidth(120)
-        sample_rate_combo.sampleIntervalChanged.connect(
-            lambda ms, c=ch: self._on_channel_sample_interval_changed(c, ms))
-        row2.addWidget(sample_rate_combo)
-        row2.addStretch()
-        w2 = QWidget()
-        w2.setLayout(row2)
-        card.add_widget(w2)
 
         # 子卡折叠动画期间逐帧同步主卡高度（子卡折叠后 sizeHint 不缩）
         card.expandAni.valueChanged.connect(self._sync_conn_card_height)
@@ -1055,17 +1051,24 @@ class VoltageSensorWidget(QWidget):
         combo.blockSignals(False)
 
     def _on_channel_color_changed(self, ch, index):
-        """颜色下拉选中：预设色直接生效；「自定义…」弹 QColorDialog。"""
+        """颜色下拉选中：预设色直接生效；「自定义…」弹 Fluent 取色对话框。"""
         refs = self._rows.get(ch.id)
         if not refs:
             return
         combo = refs['color_combo']
         data = combo.itemData(index)
         if data == CUSTOM_COLOR_KEY:
-            color = QColorDialog.getColor(
-                QColor(ch.color), self, f"选择 {ch.name} 的曲线颜色")
-            if not color.isValid():
-                self._init_channel_color_combo(ch)
+            state = {'ok': False, 'color': None}
+            dialog = ColorDialog(QColor(ch.color),
+                                 f"选择 {ch.name} 的曲线颜色", self)
+            dialog.colorChanged.connect(
+                lambda c: state.__setitem__('color', c))
+            dialog.yesButton.clicked.connect(
+                lambda: state.__setitem__('ok', True))
+            dialog.exec()
+            color = state['color'] or getattr(dialog, 'color', None)
+            if not (state['ok'] and color is not None and color.isValid()):
+                self._init_channel_color_combo(ch)   # 取消：下拉回显当前色
                 return
             ch.color = color.name()
             # 该项定格为选定的颜色，尾部再补一个「自定义…」常驻入口
