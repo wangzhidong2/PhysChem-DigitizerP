@@ -161,6 +161,59 @@ python ./src/main.py
 ##### 3.2.6.1.下载代码
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/e776925b-b898-4fe4-82b9-1b01bd4260e2/image.png 'image.png')
 ##### 3.2.6.2.解压，双击 `./src/main.py` 打开
+#### 3.2.7.Linux 服务器 / AI 沙盒：缺少系统库怎么办
+
+`pip install` 只装 Python 包，**不会装 Qt 依赖的系统图形库**。在纯净的 Linux
+服务器、Docker 镜像或 AI 沙盒里直接运行，常见报错：
+
+```text
+ImportError: libGL.so.1: cannot open shared object file: No such file or directory
+ImportError: libEGL.so.1: cannot open shared object file: No such file or directory
+qt.qpa.plugin: Could not load the Qt platform plugin "xcb" in "" even though it was found.
+ImportError: libxkbcommon-x11.so.0: cannot open shared object file
+```
+
+按报错补对应系统包即可（Debian / Ubuntu）：
+
+```bash
+sudo apt-get update
+# 最小集：解决 libGL / libEGL / 字体 / D-Bus
+sudo apt-get install -y libgl1 libegl1 libxkbcommon0 libdbus-1-3 \
+    libfontconfig1 libglib2.0-0
+# 若报 xcb 平台插件加载失败，再补 xcb 系列（Ubuntu 24.04 必须含 libxcb-cursor0）
+sudo apt-get install -y libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 \
+    libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+    libxcb-shape0 libxcb-xfixes0 libxkbcommon-x11-0
+```
+
+Fedora / CentOS / RHEL 系：
+
+```bash
+sudo dnf install -y mesa-libGL mesa-libEGL libxkbcommon \
+    fontconfig dbus-libs glib2 xcb-util-cursor xcb-util-wm \
+    xcb-util-image xcb-util-keysyms xcb-util-renderutil
+```
+
+**无显示器 / 无图形会话（服务器、AI 沙盒）**：Qt 默认要连显示服务，纯命令行
+环境请显式使用 offscreen 平台，可正常启动做冒烟测试与逻辑验证，但**不会显示
+窗口**：
+
+```bash
+QT_QPA_PLATFORM=offscreen python ./src/main.py
+```
+
+需要真实界面时，用 X11 转发（`ssh -X`）、VNC，或在本地图形桌面运行；无头
+环境还要截图/看界面，可套一层 `xvfb-run`：
+
+```bash
+xvfb-run -a python ./src/main.py
+```
+
+> 如果 `apt-get install` 报 `Depends: mesa-libgallium (= x.y.z-...) but ... is to be installed`
+> 之类的「held broken packages」，通常是镜像里预装的 Mesa 小版本与索引不一致。
+> 用 `apt-get install -y --allow-downgrades <包>=<索引里的版本> ...` 对齐版本，
+> 或先 `apt-get update` 后再装；这类冲突属于系统源问题，与本项目无关。
+
 ### 3.3.功能模块
 
 项目采用**模块化架构**——主程序 `./src/main.py` 启动时扫描 `./src/sensors/` 目录，自动加载每个传感器的上位机模块。每个模块的 BOM 物料清单、接线指南、校准方法、计算原理和常见问题均在各自的 README 中。
