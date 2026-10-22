@@ -89,6 +89,64 @@ def _make_color_icon(hex_color, size=24):
     return QIcon(pm)
 
 
+class _FlowFixedWidth(QWidget):
+    """FlowLayout 按控件 sizeHint() 排版，setFixedWidth 不会改变排版宽度。
+
+    该容器把内部控件宽度锁定为 width，并让 sizeHint 返回这个宽度，
+    使 FlowLayout 按紧凑宽度排列（参数行数字框用）。
+    """
+
+    def __init__(self, inner, width, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(inner)
+        self._width = int(width)
+
+    def sizeHint(self):
+        return QSize(self._width, super().sizeHint().height())
+
+
+class _FlowWrapBox(QWidget):
+    """承载 FlowLayout 的容器：按可用宽度返回换行后的真实高度。
+
+    FlowLayout.sizeHint() 只返回「单项最大尺寸」，不含换行后的总高度；
+    QWidget 默认的 heightForWidth 也不会委托给布局。因此首次显示时父布局
+    按过小的高度分配，勾选行被压扁（折叠再展开才恢复）。这里显式实现
+    heightForWidth，让父布局按实际宽度算高度。
+    """
+
+    def __init__(self, flow, parent=None):
+        super().__init__(parent)
+        self._flow = flow
+        self.setLayout(flow)
+        sp = self.sizePolicy()
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        if width <= 0:
+            width = 600
+        return self._flow.heightForWidth(width)
+
+    def sizeHint(self):
+        width = self.width() if self.width() > 0 else 600
+        return QSize(self._flow.sizeHint().width(), self.heightForWidth(width))
+
+    def minimumSizeHint(self):
+        m = self._flow.minimumSize()
+        return QSize(m.width(), m.height())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # 宽度变化会改变换行行数，需让父布局重新按 heightForWidth 分配
+        self.updateGeometry()
+
+
 class _Channel:
     """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
 
@@ -520,11 +578,14 @@ class VoltageSensorWidget(QWidget):
         self.divider_spin.setSingleStep(0.1)
         self.divider_spin.setValue(self.divider_ratio)
         self.divider_spin.setSuffix(" x")
-        self.divider_spin.setMinimumWidth(120)
+        # 固定窄宽度：分压比最长 1000.00，无需默认的宽输入框，否则两个
+        # 数字框占掉整行，把后面的「显示单位/去皮」挤换行。FlowLayout 按
+        # sizeHint 排版，故用 _FlowFixedWidth 容器锁定排版宽度
+        self.divider_spin.setFixedWidth(136)
         self.divider_spin.setFixedHeight(36)
         self.divider_spin.setToolTip(params_hint_text)
         self.divider_spin.valueChanged.connect(self.on_divider_changed)
-        params_row.addWidget(self.divider_spin)
+        params_row.addWidget(_FlowFixedWidth(self.divider_spin, 136))
 
         amp_label = BodyLabel("放大倍数:")
         amp_label.setToolTip(params_hint_text)
@@ -535,11 +596,12 @@ class VoltageSensorWidget(QWidget):
         self.amp_spin.setSingleStep(0.1)
         self.amp_spin.setValue(self.amp_ratio)
         self.amp_spin.setSuffix(" x")
-        self.amp_spin.setMinimumWidth(120)
+        # 同上：固定窄宽度，避免与分压比一起把参数行撑爆导致换行
+        self.amp_spin.setFixedWidth(136)
         self.amp_spin.setFixedHeight(36)
         self.amp_spin.setToolTip(params_hint_text)
         self.amp_spin.valueChanged.connect(self.on_amp_changed)
-        params_row.addWidget(self.amp_spin)
+        params_row.addWidget(_FlowFixedWidth(self.amp_spin, 136))
 
         self.actual_range_label = BodyLabel(f"实际量程: -{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V~+{self.VREF * self.divider_ratio / self.amp_ratio:.2f}V")
         self.actual_range_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
@@ -624,11 +686,11 @@ class VoltageSensorWidget(QWidget):
 
         # 通道显示勾选行：勾选的通道画进图表，不勾选的隐藏
         # （只影响图表显示，采集/统计/保存不受影响；通道增删/改名时重建）
-        self._visibility_container = QWidget()
         self._visibility_flow = FlowLayout(isTight=True)
         self._visibility_flow.setHorizontalSpacing(14)
         self._visibility_flow.setVerticalSpacing(4)
-        self._visibility_container.setLayout(self._visibility_flow)
+        # 用按宽度算高度的容器，避免首次显示时被压扁（折叠展开后才正常）
+        self._visibility_container = _FlowWrapBox(self._visibility_flow)
         chart_card_layout.addWidget(self._visibility_container)
 
         content_row = QHBoxLayout()
@@ -1170,6 +1232,9 @@ class VoltageSensorWidget(QWidget):
                 lambda on, c=ch: self._on_channel_visible_toggled(c, on))
             self._visibility_flow.addWidget(cb)
         self._visibility_container.setVisible(bool(self.channels))
+        # FlowLayout 增删子项不会自动把几何变化冒泡到父布局：
+        # 主动 updateGeometry，首次显示即可拿到正确高度（不必折叠再展开）
+        self._visibility_container.updateGeometry()
 
     def _on_channel_visible_toggled(self, ch, checked):
         """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
