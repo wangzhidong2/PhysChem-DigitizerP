@@ -632,8 +632,12 @@ class VoltageSensorWidget(QWidget):
         self.tare_btn.setEnabled(False)
         params_row.addWidget(self.tare_btn)
         adc_card_layout.addLayout(params_row)
+        # 供 _reflow_adc_params 在文案变化后立即重排（FlowLayout 不会
+        # 因子控件 sizeHint 变化自动重排）
+        self.params_flow = params_row
 
         card_adc = FluentCard("ADC 与电路参数", card_adc_content, expanded=True, icon=FIF.SETTING)
+        self.card_adc = card_adc
         # header 右侧：「当前连接」下拉——ADC 参数按路独立，切换后编辑所选路
         self._active_channel_combo = ComboBox()
         self._active_channel_combo.setMinimumWidth(110)
@@ -984,6 +988,7 @@ class VoltageSensorWidget(QWidget):
         else:
             self.tare_status_label.setText("未启用")
             self.tare_status_label.setStyleSheet("color: #888; font-weight: bold;")
+        self._reflow_adc_params()
 
     def tare_now(self):
         """去皮：取最近若干个采样点的平均值作为零点，从测量值中扣除。
@@ -1063,6 +1068,37 @@ class VoltageSensorWidget(QWidget):
             self.range_label.setText(f"量程: -{full:.2f}V~+{full:.2f}V (ADC -{max_adc}~+{max_adc})")
             actual_full = full * src['divider_ratio'] / src['amp_ratio']
             self.actual_range_label.setText(f"实际量程: -{actual_full:.2f}V~+{actual_full:.2f}V")
+        self._reflow_adc_params()
+
+    def _reflow_adc_params(self):
+        """ADC 参数行文案/面板显隐变化后立即重排，并重算卡片高度。
+
+        - FlowLayout 不会因子标签文字变化（sizeHint 变化）自动重排，
+          量程文案变长后会叠在一起；
+        - FluentCard 高度是构造时按 body.sizeHint 固定的，ADS1115 /
+          HX711 面板显隐后不重算就会被裁切，表现为要折叠再展开才正常。
+        """
+        flow = getattr(self, 'params_flow', None)
+        if flow is not None:
+            flow.invalidate()
+            # 同 _refresh_chart_visibility_row：FlowLayout.activate() 不会
+            # 重排子项，必须显式按当前几何 setGeometry
+            geo = flow.geometry()
+            if geo.width() > 0 and geo.height() > 0:
+                flow.setGeometry(geo)
+        card = getattr(self, 'card_adc', None)
+        if card is not None:
+            card.refresh_height()
+            # 面板显示/隐藏引起的布局失效要到事件循环才结算：
+            # 立即量到的高度可能仍是上一个状态（切回 12 位时会停在
+            # 16 位的高度）。下一拍再量一次，保证能增也能缩。
+            QTimer.singleShot(0, self._refresh_adc_card_height)
+
+    def _refresh_adc_card_height(self):
+        """事件循环结算布局后，再按真实内容高度收敛 ADC 卡高度。"""
+        card = getattr(self, 'card_adc', None)
+        if card is not None:
+            card.refresh_height()
 
     # ============================================================
     # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
@@ -1222,6 +1258,7 @@ class VoltageSensorWidget(QWidget):
             item = self._visibility_flow.takeAt(0)
             w = item if isinstance(item, QWidget) else (item.widget() if item else None)
             if w is not None:
+                w.hide()   # 先隐藏，避免 deleteLater 延迟销毁期间与新建勾选框重叠
                 w.deleteLater()
         for ch in self.channels:
             cb = CheckBox(ch.name)
@@ -1231,9 +1268,17 @@ class VoltageSensorWidget(QWidget):
             cb.toggled.connect(
                 lambda on, c=ch: self._on_channel_visible_toggled(c, on))
             self._visibility_flow.addWidget(cb)
+            # 新建控件默认不可见，而 FlowLayout(isTight) 的 _doLayout 会
+            # 跳过不可见子项——不先 show() 就会漏排，停在 640x480 默认尺寸
+            cb.show()
         self._visibility_container.setVisible(bool(self.channels))
-        # FlowLayout 增删子项不会自动把几何变化冒泡到父布局：
-        # 主动 updateGeometry，首次显示即可拿到正确高度（不必折叠再展开）
+        # FlowLayout 在子项增删后不会自行重排（尺寸未变时父布局也不会
+        # 重新调用 setGeometry），新建的勾选框会停在 (0,0) 且保持
+        # 640x480 默认尺寸，表现为「要折叠再展开才刷新」。
+        # FlowLayout.activate() 实测无效（其 addItem 不触发 invalidate），
+        # 必须显式 setGeometry，才会对所有子项重跑 _doLayout。
+        self._visibility_flow.invalidate()
+        self._visibility_flow.setGeometry(self._visibility_container.contentsRect())
         self._visibility_container.updateGeometry()
 
     def _on_channel_visible_toggled(self, ch, checked):
