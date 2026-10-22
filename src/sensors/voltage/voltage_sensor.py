@@ -108,6 +108,45 @@ class _FlowFixedWidth(QWidget):
         return QSize(self._width, super().sizeHint().height())
 
 
+class _FlowWrapBox(QWidget):
+    """承载 FlowLayout 的容器：按可用宽度返回换行后的真实高度。
+
+    FlowLayout.sizeHint() 只返回「单项最大尺寸」，不含换行后的总高度；
+    QWidget 默认的 heightForWidth 也不会委托给布局。因此首次显示时父布局
+    按过小的高度分配，勾选行被压扁（折叠再展开才恢复）。这里显式实现
+    heightForWidth，让父布局按实际宽度算高度。
+    """
+
+    def __init__(self, flow, parent=None):
+        super().__init__(parent)
+        self._flow = flow
+        self.setLayout(flow)
+        sp = self.sizePolicy()
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        if width <= 0:
+            width = 600
+        return self._flow.heightForWidth(width)
+
+    def sizeHint(self):
+        width = self.width() if self.width() > 0 else 600
+        return QSize(self._flow.sizeHint().width(), self.heightForWidth(width))
+
+    def minimumSizeHint(self):
+        m = self._flow.minimumSize()
+        return QSize(m.width(), m.height())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # 宽度变化会改变换行行数，需让父布局重新按 heightForWidth 分配
+        self.updateGeometry()
+
+
 class _Channel:
     """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
 
@@ -647,11 +686,11 @@ class VoltageSensorWidget(QWidget):
 
         # 通道显示勾选行：勾选的通道画进图表，不勾选的隐藏
         # （只影响图表显示，采集/统计/保存不受影响；通道增删/改名时重建）
-        self._visibility_container = QWidget()
         self._visibility_flow = FlowLayout(isTight=True)
         self._visibility_flow.setHorizontalSpacing(14)
         self._visibility_flow.setVerticalSpacing(4)
-        self._visibility_container.setLayout(self._visibility_flow)
+        # 用按宽度算高度的容器，避免首次显示时被压扁（折叠展开后才正常）
+        self._visibility_container = _FlowWrapBox(self._visibility_flow)
         chart_card_layout.addWidget(self._visibility_container)
 
         content_row = QHBoxLayout()
@@ -1193,6 +1232,9 @@ class VoltageSensorWidget(QWidget):
                 lambda on, c=ch: self._on_channel_visible_toggled(c, on))
             self._visibility_flow.addWidget(cb)
         self._visibility_container.setVisible(bool(self.channels))
+        # FlowLayout 增删子项不会自动把几何变化冒泡到父布局：
+        # 主动 updateGeometry，首次显示即可拿到正确高度（不必折叠再展开）
+        self._visibility_container.updateGeometry()
 
     def _on_channel_visible_toggled(self, ch, checked):
         """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
