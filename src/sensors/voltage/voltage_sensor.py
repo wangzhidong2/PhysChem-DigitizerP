@@ -678,6 +678,7 @@ class VoltageSensorWidget(QWidget):
         data_card_layout.addWidget(self.stats_label)
 
         card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
+        self.card_data = card_data
         layout.addWidget(card_data)
 
         # ========== 卡片4：图表 + 数据记录（可折叠） ==========
@@ -1230,6 +1231,7 @@ class VoltageSensorWidget(QWidget):
             'row': row, 'name_label': name_label, 'voltage_label': voltage_label,
             'raw_label': raw_label, 'vadc_label': vadc_label,
         }
+        self._refresh_data_card_height()
 
     def _remove_live_row(self, ch):
         """删除通道的实时明细行（断开/删除通道时调用）。"""
@@ -1239,6 +1241,29 @@ class VoltageSensorWidget(QWidget):
             refs['row'].deleteLater()
         # 该路被删后摘要标签可能指着它的旧值，刷成还有数据的最后一口
         self._refresh_summary_text()
+        self._refresh_data_card_height()
+
+    def _refresh_data_card_height(self):
+        """实时数据卡行数变化后重算高度。
+
+        FluentCard 高度只在构造时按 body.sizeHint 固定，新建连接增加
+        实时明细行后不重算，后面的通道行会被裁掉（表现为只显示前两路）。
+        """
+        card = getattr(self, 'card_data', None)
+        if card is not None:
+            # 先激活实时行内层布局，否则外层 body 量到的仍是旧行数
+            live = getattr(self, '_live_layout', None)
+            if live is not None:
+                live.invalidate()
+                live.activate()
+            card.refresh_height()
+            # 新行加入布局要到下一拍才结算，再量一次才能包含全部行
+            QTimer.singleShot(0, self._refresh_data_card_height_deferred)
+
+    def _refresh_data_card_height_deferred(self):
+        card = getattr(self, 'card_data', None)
+        if card is not None:
+            card.refresh_height()
 
     def _refresh_summary_text(self):
         """隐藏摘要标签取「最近一路有数据的通道」最新值（供全屏折叠摘要）。"""
