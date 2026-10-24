@@ -4417,6 +4417,19 @@ class FluentCard(ExpandGroupSettingCard):
         if self.isExpand:
             self.setFixedHeight(self.card.height() + h)
 
+    def refresh_height(self):
+        """内容显隐或文字变化后重算卡片高度。
+
+        默认只在构造与展开动画结束时算一次；子面板显隐（如 16 位时的
+        ADS1115 参数行）、标签文案变长后不会自动重算，内容会被裁切，
+        需折叠再展开才恢复。模块在内容变化后调用本方法即可。
+        """
+        # 子面板刚 setVisible 时，body.sizeHint() 仍可能按旧状态缓存，
+        # 必须先强制失效并激活一次，才能量到真实高度
+        self.body.invalidate()
+        self.body.activate()
+        self._adjustViewSize()
+
     # ---------- 滚动透传 ----------
     def wheelEvent(self, e):
         p = self.parentWidget()
