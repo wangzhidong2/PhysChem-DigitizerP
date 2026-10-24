@@ -1,7 +1,7 @@
-# 多路 ESP32 连接 —— 设计文档（电压模块试点）
+# 多路 ESP32 连接 —— 设计文档（电压模块试点 → 全模块推广）
 
 > 分支：`feat/multi-channel-voltage`
-> 状态：电压模块已实现，其余 5 个模块待推广（见「后续计划」）
+> 状态：**已推广至全部 6 个模块**（电压试点 + 电流 / 力 / pH / 超声波位移 / 超声波速度，见「推广实录」）
 
 ## 1. 背景与目标
 
@@ -176,7 +176,23 @@ channel,timestamp_s,raw_adc,voltage_v
 | MCP 工具 | 同上，`get_snapshot` 可读到 `channels` 明细 |
 | 旧版配置迁移 | 无 `channels` 键的旧 `sensor_config.json` 自动迁移为一路通道，顶层 `tare_offset_v / tare_active / sample_interval_ms / ADC 参数` 迁入该通道；保存时仍写顶层字段（取第 1 路）供旧版回退。旧版多通道配置缺 ADC 字段时用顶层值补齐 |
 | `refresh_ports` / `disconnect_all` / `connect_device` | 方法名保留：刷新全部通道端口列表 / 断开全部 / 连接全部（通用动作表与退出清理不破） |
-| 其余 5 个模块 | 完全未动，行为与主分支一致 |
+
+## 4.1 推广实录（其余 5 个模块）
+
+试点架构（`_Channel` 数据模型 / 连接子卡 / 主机时间戳 / 每路一行实时明细 /
+图表勾选行 / 兼容别名）**原样复制**，各模块按物理特性差异化：
+
+| 模块 | 按路独立的参数 | 模块级共享 | 模块特有处理 |
+|---|---|---|---|
+| 电流 `current_sensor` | ACS712 量程 / VCC / 零点电压 / 分压比 / ADC 位数 / 零点校准（「ACS712 参数」卡 header「当前连接」下拉切换编辑） | DC/AC 模式、A/mA 单位、AC RMS 窗口 | AC 参考线仅单路可见时画（多路各路 RMS 不同）；去皮对全部有数据流入的通道分别校零 |
+| 力 `force_sensor` | 去皮 offset / 标定 scale / calibrated（「校准与去皮」卡 header「当前连接」下拉；校准流程作用于所选路，换路即复位流程） | g/kg/N 单位、砝码默认值 | `tare_now` 对各路分别取零点并**逐路**向真串口发 TARE；`TARE_DONE,offset` 只覆盖发出那一路；校准取值用 `live_window`（修复旧版未采集时 `raw_data` 无限增长） |
+| pH `ph_sensor` | 校准点 / 拟合系数 / 理论斜率（「校准参数」卡 header「当前连接」下拉；编辑对话框作用于所选路） | — | `_calc_coeffs_for(ch)` 按路重建单点/两点/三点拟合；`adc_to_ph` 按路系数换算 |
+| 超声波位移 `ultrasonic_displacement` | —（无换算参数卡） | — | 单通道固件，多路 = 多个 ESP32；新增 `channels` 配置持久化（旧版无配置文件，自动建一路）；回波 100~60000µs 过滤保留 |
+| 超声波速度 `ultrasonic_velocity` | —（无换算参数卡） | 采样窗口（点数） | 双子图（距离/速度）各自多曲线 + 各自图例；差分速度按**该路**相邻回波计算；新增 `channels` 配置持久化 |
+
+推广后各模块统一获得：每路连接子卡（名称/颜色/模式/串口/采样频率/连接）、
+每路一行实时明细（大字 = 通道色）、图表通道勾选行、CSV 长表（`channel` 列 +
+主机时间戳）、`api_snapshot().channels` 明细、配置持久化与旧版单通道配置迁移。
 
 ## 5. 已知限制（试点的边界）
 
@@ -194,6 +210,8 @@ channel,timestamp_s,raw_adc,voltage_v
 
 ## 6. 验证记录
 
+### 电压试点
+
 - `py_compile` 通过；残留属性引用清零；
 - offscreen 冒烟：默认建 1 路 → 新建第 2 路 → 双模拟器并行采集
   （各 14+ 点、主机时间轴共享）→ 图表 `spec` 出现两条曲线且颜色
@@ -206,13 +224,33 @@ channel,timestamp_s,raw_adc,voltage_v
   满码 ±4.096V / 两路参数互不影响）9 项全过；
 - `pyflakes` 无未定义名。
 
+### 全模块推广
+
+- 全部 6 个模块 `py_compile` 通过；
+- 残留引用清零：旧单通道字段/方法（`serial_thread` /
+  `last_sample_time_ms` / `start_timestamp_ms` / `sim_panel` /
+  `on_mode_changed` / `connect_simulator` 等）在 5 个改造模块中
+  grep 零命中；AGENTS.md 硬性禁令（`print` / 原生 Qt 控件 /
+  直接 `import serial`）检查干净；
+- 伪 Qt 桩纯逻辑走查 **74 项全过**（每模块约 15 项）：
+  - 通用链路：默认建 1 路（缺 pyserial 自动模拟器）→ 新建/删除通道 →
+    兼容别名存在 → 双路并行采集（各 10+ 点、首样本 t=0、双路时间轴
+    对齐）→ 图表两条曲线（颜色 = 通道色、图例含通道名）→ 单路断开
+    隔离 → `api_snapshot` 含 `channels` 明细 → CSV 长表落盘（通道行数
+    与数据一致）→ 配置持久化 round-trip（路数/颜色/参数恢复）→
+    `connect_device` / `disconnect_all` / `refresh_ports` 兼容入口；
+  - 模块特有：电流逐路去皮归零且零点独立；力两路 offset 独立、
+    `TARE_DONE` 只覆盖发出路、按路 scale 换算克值；pH 两路校准独立
+    （同一 ADC → 不同 pH）、ADC 越界过滤；超声波回波窗口过滤、
+    差分速度公式数值核对、双子图各两条曲线。
+
 ## 7. 后续计划
 
-1. **推广**：把 `_Channel` 模式复制到电流 / 力 / pH / 超声波×2
-   （力模块需考虑固件 TARE 只对串口有效；超声波双模块为单通道固件，
-   多路 = 多个 ESP32）；
+1. ~~**推广**：把 `_Channel` 模式复制到电流 / 力 / pH / 超声波×2~~
+   **已完成**（见 4.1 推广实录）；
 2. **网页端多曲线**：`app.js` 按 `channels` 明细渲染 N 条 echarts
-   series（颜色用快照里的 `color` 字段）；
+   series（颜色用快照里的 `color` 字段）——现在全部模块的快照都带
+   `channels` 明细，前端可统一升级；
 3. **AI 多序列协议**：`_ai_data` 支持 `series: [{name, color, points}]`，
    ChartPanel 的 AI 弹窗同步升级；
 4. **端口去重提示**：同端口被两路选中时在 UI 上即时提醒。

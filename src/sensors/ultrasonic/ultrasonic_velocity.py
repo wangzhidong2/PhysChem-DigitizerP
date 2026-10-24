@@ -9,21 +9,29 @@
 # ===================
 
 # -*- coding: utf-8 -*-
-"""超声波速度传感器模块 — 回声定位法测量物体速度"""
+"""超声波速度传感器模块 — 回声定位法测量物体速度。
+
+多路连接：每路独立选择串口/模拟器、独立采样频率，多路距离/速度数据以
+主机统一时间戳叠加画在同一张图上（架构与电压模块一致，
+见 docs/multi-channel-design.md；超声波为单通道固件，多路 = 多个 ESP32）。
+"""
 
 import sys
 import os
+import time
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
     BodyLabel, CaptionLabel, SpinBox, FluentIcon as FIF,
+    FlowLayout, LineEdit, ToolButton, CheckBox,
 )
+from qfluentwidgets.components.dialog_box import ColorDialog
 import numpy as np
 
 # 从公共模块导入共享代码
@@ -33,6 +41,7 @@ from core import (
     fluent_message_box, ChartPanel,
     SerialThread, SampleRateComboBox, SimulatorThread,
     stop_thread,
+    load_sensor_config, save_sensor_config,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, FluentCard, ExpandableTextEdit,
@@ -51,7 +60,8 @@ AI_SYSTEM_PROMPT = (
     "测量原理：由相邻两次回波时间 t0、t1（µs）差分得到速度 "
     "v = (t0 − t1)/2 × v_s / [(t1 + t0)/2 + Δt]，其中 v_s ≈ 34000 cm/s（声速），"
     "Δt 为两次发射间隔（s，由相邻时间戳差得到）。距离量化误差会被时间差放大，"
-    "速度噪声通常明显大于距离噪声。"
+    "速度噪声通常明显大于距离噪声。多路连接时各路时间轴以主机统一时间戳对齐"
+    "（不同 ESP32 开机时刻不同，固件毫秒数不可跨路比较），可做多目标速度同步对比。"
     "数据特征：匀速运动的速度应围绕真值随机波动；加速/减速过程应呈单调变化；"
     "野值多来自丢波、多径反射或目标姿态突变，常表现为单点大跳变。"
     "常见误差来源：回波时间测量抖动、目标非匀速、反射面角度变化、温度对声速的"
@@ -62,51 +72,142 @@ AI_SYSTEM_PROMPT = (
     "采样间隔、多周期平均或温度修正等改进措施。"
 )
 
+# 多路连接的默认曲线配色（按新建顺序轮换取未用色，界面上可单独改色）
+CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
+                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
+
+# 颜色下拉中「自定义…」项的 userData 标记（选中后弹 Fluent 取色对话框）
+CUSTOM_COLOR_KEY = '__custom__'
+
+
+def _make_color_icon(hex_color, size=24):
+    """生成实心圆色块 QIcon（颜色下拉项的预览图标）。"""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(hex_color))
+    p.drawEllipse(2, 2, size - 4, size - 4)
+    p.end()
+    return QIcon(pm)
+
+
+class _FlowWrapBox(QWidget):
+    """承载 FlowLayout 的容器：按可用宽度返回换行后的真实高度。
+
+    FlowLayout.sizeHint() 只返回「单项最大尺寸」，不含换行后的总高度；
+    QWidget 默认的 heightForWidth 也不会委托给布局。因此首次显示时父布局
+    按过小的高度分配，勾选行被压扁（折叠再展开才恢复）。这里显式实现
+    heightForWidth，让父布局按实际宽度算高度。
+    """
+
+    def __init__(self, flow, parent=None):
+        super().__init__(parent)
+        self._flow = flow
+        self.setLayout(flow)
+        sp = self.sizePolicy()
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        if width <= 0:
+            width = 600
+        return self._flow.heightForWidth(width)
+
+    def sizeHint(self):
+        width = self.width() if self.width() > 0 else 600
+        return QSize(self._flow.sizeHint().width(), self.heightForWidth(width))
+
+    def minimumSizeHint(self):
+        m = self._flow.minimumSize()
+        return QSize(m.width(), m.height())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # 宽度变化会改变换行行数，需让父布局重新按 heightForWidth 分配
+        self.updateGeometry()
+
+
+class _Channel:
+    """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
+
+    每路连接独立选择「有线串口 / 模拟器」、独立串口、独立曲线颜色；
+    距离与速度数据按主机统一时间戳记录（见 handle_data）。
+    超声波为单通道固件，多路 = 多个 ESP32。
+    UI 行控件引用由模块统一保管在 _rows[channel.id] 里。
+    """
+
+    def __init__(self, cid, name, color, mode='serial', port='',
+                 sample_interval_ms=100):
+        self.id = cid                      # 稳定 id（信号绑定用，删除后不复用）
+        self.name = name                    # 显示名（可自定义，留空回退默认名）
+        self.default_name = name            # 默认名（通道N，创建时定序）
+        self.color = color                  # 曲线颜色
+        self.mode = mode                    # 'serial' | 'simulator'
+        self.port = port                    # 串口模式下选中的端口
+        self.thread = None                  # SerialThread / SimulatorThread
+        self.sample_interval_ms = sample_interval_ms  # 本路采样间隔（每路独立）
+        self.visible = True                 # 图表显示开关（勾选框控制）
+        # 采集数据
+        self.time_data = []                 # 相对时间（秒，主机统一时间戳）
+        self.distance_data = []             # 距离（厘米）
+        self.echo_time_data = []            # 原始回波时间（µs）
+        self.velocity_data = []             # 速度（cm/s，差分得到，比距离少 1 点）
+        # 上次记录样本的主机相对秒（采样间隔过滤，每路独立）
+        self.last_sample_s = None
+
 
 class UltrasonicVelocityWidget(QWidget):
-    """超声波速度模块界面 - 回声定位法"""
-
-    # 连接控制卡片内按钮统一样式：白底黑字
-    CARD_BTN_STYLE = """
-        QPushButton {
-            background-color: #ffffff;
-            border: 1px solid #d0d0d0;
-            color: #1a1a1a;
-            border-radius: 6px;
-            padding: 0 16px;
-            font-size: 13px;
-        }
-        QPushButton:hover {
-            background-color: #f5f5f5;
-            border: 1px solid #0078d4;
-            color: #0078d4;
-        }
-        QPushButton:pressed { background-color: #e5e5e5; }
-        QPushButton:disabled {
-            background-color: #f5f5f5;
-            color: #aaaaaa;
-            border: 1px solid #e5e5e5;
-        }
-    """
+    """超声波速度模块界面 - 回声定位法（多路连接）"""
 
     def __init__(self):
         super().__init__()
-        self.serial_thread = None
         self._collecting = False  # 当前是否在采集（合并开始/停止按钮状态）
-        self.distance_data = []    # 距离数据
-        self.time_data = []        # 时间数据
-        self.velocity_data = []    # 速度数据
-        self.echo_time_data = []   # 原始回波时间数据 (µs)
-        self.start_timestamp_us = 0
+        # 多路连接：每路一个 _Channel（独立模式/串口/颜色/数据）
+        self.channels = []
+        self._rows = {}              # channel.id -> 行控件引用 dict
+        self._next_channel_id = 1   # 稳定 id 分配器（删除后不复用）
+        self._next_channel_seq = 1  # 显示名序号（通道N）
+        self._t0_mono = None        # 采集期主机统一时间基准（首个样本时刻）
 
-        # 采样频率设置（毫秒）
+        # 采样频率设置（毫秒）—— 模块级镜像字段（始终与第 1 路一致）
         self.sample_interval_ms = 100  # 默认 100ms (10Hz)
-        self.last_sample_time_ms = 0   # 上次采样时间
+        # 采样窗口（点数，全部通道共用；差分速度的提示窗口）
+        self.window_size = 10
 
+        self.config = self.load_config()
         self.init_ui()
-        # pyserial 未安装：自动切换到模拟器模式（串口连接优雅降级）
-        if not SERIAL_AVAILABLE:
-            self.mode_combo.setCurrentIndex(self.mode_combo.findText("模拟器"))
+        # 恢复上次的通道列表（含模式/串口/颜色）；无记录时建一路默认通道
+        self._restore_channels()
+
+    # ------------------------------------------------------------------
+    # 配置读写
+    # ------------------------------------------------------------------
+    def load_config(self):
+        config = load_sensor_config('ultrasonic_velocity')
+        if config:
+            self.sample_interval_ms = config.get('sample_interval_ms', 100)
+            self.window_size = config.get('window_size', 10)
+        return config
+
+    def save_config(self):
+        first = self.channels[0] if self.channels else None
+        config = {
+            'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
+            'window_size': self.window_size,
+            # 多路连接：每路的模式/串口/颜色/采样间隔/图表显示
+            'channels': [
+                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
+                 'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
+                 'visible': ch.visible}
+                for ch in self.channels
+            ],
+        }
+        return save_sensor_config('ultrasonic_velocity', config)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -128,106 +229,100 @@ class UltrasonicVelocityWidget(QWidget):
         title = TitleLabel("速度")
         layout.addWidget(title)
 
-        # ========== 卡片1：连接控制（可折叠） ==========
+        # ========== 卡片1：连接控制（可折叠，多路子卡布局） ==========
         card_conn_content = QWidget()
-        card_conn_content.setObjectName("card")
-        card_conn_content.setStyleSheet(card_style())
         card_layout = QVBoxLayout(card_conn_content)
-        card_layout.setContentsMargins(20, 4, 20, 16)
-        card_layout.setSpacing(12)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(10)
 
-        row1 = QHBoxLayout()
-        row1.setSpacing(10)
+        card_layout.addWidget(CaptionLabel(
+            "每路连接可单独选择串口/模拟器与曲线颜色，多路数据同图叠加对比"))
 
-        row1.addWidget(BodyLabel("连接方式:"))
-        self.mode_combo = ComboBox()
-        self.mode_combo.addItems(["有线串口", "模拟器"])
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        row1.addWidget(self.mode_combo)
+        # 通道子卡容器：每路连接一张子卡（独立模式/串口/颜色/采样频率/连接按钮）
+        self.channels_container = QWidget()
+        self.channels_layout = QVBoxLayout(self.channels_container)
+        self.channels_layout.setContentsMargins(0, 0, 0, 0)
+        self.channels_layout.setSpacing(8)
+        card_layout.addWidget(self.channels_container)
 
-        # 串口面板
-        self.serial_panel = QWidget()
-        serial_layout = QHBoxLayout(self.serial_panel)
-        serial_layout.setContentsMargins(0, 0, 0, 0)
-        serial_layout.setSpacing(8)
-        serial_layout.addWidget(BodyLabel("串口:"))
-        self.port_combo = ComboBox()
-        self.refresh_ports()
-        self.port_combo.setMinimumWidth(140)
-        serial_layout.addWidget(self.port_combo)
-        self.refresh_btn = PushButton("刷新")
-        self.refresh_btn.setFixedHeight(36)
-        self.refresh_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.refresh_btn.clicked.connect(self.refresh_ports)
-        serial_layout.addWidget(self.refresh_btn)
-        row1.addWidget(self.serial_panel)
+        self.card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
+        # header 右侧：＋ 新建连接（原生按钮，随主题自适应）
+        self.add_channel_btn = PushButton("＋ 新建连接")
+        self.add_channel_btn.setFixedHeight(30)
+        self.add_channel_btn.setToolTip(
+            "增加一路 HC-SR04 连接：\n"
+            "每路可单独选择「有线串口 / 模拟器」，单独连接/断开，\n"
+            "单独换曲线颜色；多路距离/速度数据叠加画在同一张图上\n"
+            "（超声波为单通道固件，多路 = 多个 ESP32）")
+        self.add_channel_btn.clicked.connect(lambda: self.add_channel())
+        self.card_conn.add_header_widget(self.add_channel_btn)
+        # 主卡展开动画结束后按子卡实际高度收敛（子卡折叠后 sizeHint 不缩）
+        self.card_conn.expandAni.finished.connect(self._sync_conn_card_height)
+        layout.addWidget(self.card_conn)
 
-        # 模拟器面板：无需选择端口
-        self.sim_panel = QWidget()
-        sim_layout = QHBoxLayout(self.sim_panel)
-        sim_layout.setContentsMargins(0, 0, 0, 0)
-        sim_layout.setSpacing(8)
-        sim_hint = CaptionLabel("无需硬件，生成随机数据用于调试")
-        sim_layout.addWidget(sim_hint)
-        sim_layout.addStretch()
-        row1.addWidget(self.sim_panel)
-        self.sim_panel.hide()
-
-        row1.addSpacing(16)
-        self.connect_btn = PushButton("连接")
-        self.connect_btn.setFixedHeight(36)
-        self.connect_btn.setStyleSheet(self.CARD_BTN_STYLE)
-        self.connect_btn.clicked.connect(self.toggle_connection)
-        row1.addWidget(self.connect_btn)
-
-        row1.addSpacing(16)
-        row1.addWidget(BodyLabel("采样频率:"))
-        self.sample_rate_combo = SampleRateComboBox()
-        self.sample_rate_combo.setSampleInterval(self.sample_interval_ms)
-        self.sample_rate_combo.setMaximumWidth(120)
-        self.sample_rate_combo.sampleIntervalChanged.connect(self.on_sample_interval_changed)
-        row1.addWidget(self.sample_rate_combo)
-
-        row1.addSpacing(16)
-        row1.addWidget(BodyLabel("采样窗口:"))
+        # 采样窗口（全部通道共用）：放连接控制卡下方一行说明 + 数字框
+        window_row = QHBoxLayout()
+        window_row.setSpacing(10)
+        window_row.addWidget(BodyLabel("采样窗口:"))
         self.window_size_spin = SpinBox()
         self.window_size_spin.setRange(5, 100)
-        self.window_size_spin.setValue(10)
+        self.window_size_spin.setValue(self.window_size)
         self.window_size_spin.setSuffix(" 点")
-        row1.addWidget(self.window_size_spin)
+        self.window_size_spin.setToolTip("速度平滑/统计提示窗口大小（采样点数，全部通道共用）")
+        self.window_size_spin.valueChanged.connect(self.on_window_size_changed)
+        window_row.addWidget(self.window_size_spin)
+        window_row.addStretch()
+        card_layout.addLayout(window_row)
 
-        row1.addStretch()
-        card_layout.addLayout(row1)
-
-        card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
-        layout.addWidget(card_conn)
-
-        # ========== 卡片2：实时数据（可折叠） ==========
+        # ========== 卡片2：实时数据（可折叠，每路一行同屏） ==========
         card_data_content = QWidget()
         card_data_content.setObjectName("card")
         card_data_content.setStyleSheet(card_style())
         data_card_layout = QVBoxLayout(card_data_content)
         data_card_layout.setContentsMargins(20, 4, 20, 16)
-        data_card_layout.setSpacing(12)
+        data_card_layout.setSpacing(8)
 
+        # 隐藏摘要标签：**不加入可见布局**——多路时单一汇总位会被各路
+        # 数据轮流抢占，可见区只保留每路一行的实时明细。
+        # 它的唯一职责是全屏浮动面板折叠态摘要（FloatingDataPanel 依赖
+        # .text() 读文本，不 reparent 不要求可见），内容 = 最新活动一路。
         self.current_data_label = BodyLabel("当前数据: 等待连接...")
-        self.current_data_label.setFont(QFont("Cascadia Code", 24, QFont.Weight.Bold))
+        self.current_data_label.setFont(QFont("Cascadia Code", 14, QFont.Weight.Bold))
         self.current_data_label.setStyleSheet("color: #1a1a1a;")
-        data_card_layout.addWidget(self.current_data_label)
+        self.current_data_label.setParent(self)
+        self.current_data_label.hide()
+
+        # 每路一行实时明细（通道增删时动态重建，见 _build_live_row）
+        self._live_rows = {}          # channel.id -> {row, name_label, vel_label, dist_label, echo_label}
+        self._live_container = QWidget()
+        self._live_layout = QVBoxLayout(self._live_container)
+        self._live_layout.setContentsMargins(0, 0, 0, 0)
+        self._live_layout.setSpacing(4)
+        data_card_layout.addWidget(self._live_container)
 
         self.velocity_stats_label = CaptionLabel("速度统计: 暂无数据")
         data_card_layout.addWidget(self.velocity_stats_label)
 
         card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
+        self.card_data = card_data
         layout.addWidget(card_data)
 
-        # ========== 卡片3：速度-时间曲线（可全屏） ==========
+        # ========== 卡片3：速度-时间曲线（可全屏，双子图） ==========
         card_chart_content = QWidget()
         card_chart_content.setObjectName("card")
         card_chart_content.setStyleSheet(card_style())
         chart_card_layout = QVBoxLayout(card_chart_content)
         chart_card_layout.setContentsMargins(20, 4, 20, 16)
         chart_card_layout.setSpacing(12)
+
+        # 通道显示勾选行：勾选的通道画进图表，不勾选的隐藏
+        # （只影响图表显示，采集/统计/保存不受影响；通道增删/改名时重建）
+        self._visibility_flow = FlowLayout(isTight=True)
+        self._visibility_flow.setHorizontalSpacing(14)
+        self._visibility_flow.setVerticalSpacing(4)
+        # 用按宽度算高度的容器，避免首次显示时被压扁（折叠展开后才正常）
+        self._visibility_container = _FlowWrapBox(self._visibility_flow)
+        chart_card_layout.addWidget(self._visibility_container)
 
         content_row = QHBoxLayout()
         content_row.setSpacing(16)
@@ -279,8 +374,6 @@ class UltrasonicVelocityWidget(QWidget):
         self.collect_btn.setEnabled(False)
         actions_layout.addWidget(self.collect_btn)
 
-        
-
         self.save_btn = PushButton("保存数据")
         self.save_btn.setFixedHeight(38)
         set_action_button_width(self.save_btn)
@@ -307,83 +400,521 @@ class UltrasonicVelocityWidget(QWidget):
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)  # 每100ms更新一次图表
 
-    def refresh_ports(self):
-        """刷新可用串口列表（pyserial 未安装时显示占位提示）"""
-        self.port_combo.clear()
+    def on_window_size_changed(self, value):
+        self.window_size = value
+        self.save_config()
+
+    # ============================================================
+    # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
+    # ============================================================
+    def _restore_channels(self):
+        """按配置重建通道行；无记录时建一路默认通道。"""
+        saved = (self.config or {}).get('channels') or []
+        if saved:
+            for item in saved:
+                mode = item.get('mode', 'serial')
+                if mode != 'simulator' and not SERIAL_AVAILABLE:
+                    mode = 'simulator'   # pyserial 缺失时优雅降级
+                self._make_channel(
+                    name=item.get('name') or None,
+                    color=item.get('color') or None,
+                    mode=mode, port=item.get('port', ''),
+                    sample_interval_ms=item.get('sample_interval_ms'),
+                    visible=item.get('visible', True))
+        else:
+            self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
+        if self.channels:
+            self.sample_interval_ms = self.channels[0].sample_interval_ms
+        self._sync_compat_aliases()
+        self._refresh_summary_text()
+
+    def _make_channel(self, color=None, mode='serial', port='', name=None,
+                      sample_interval_ms=None, visible=True):
+        """创建通道对象 + 对应 UI 行（不重复使用已删除通道的 id/name）。"""
+        cid = self._next_channel_id
+        self._next_channel_id += 1
+        seq = self._next_channel_seq
+        self._next_channel_seq += 1
+        if not color:
+            used = {ch.color for ch in self.channels}
+            color = next((c for c in CHANNEL_COLORS if c not in used),
+                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
+        ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port,
+                      sample_interval_ms=sample_interval_ms or self.sample_interval_ms)
+        ch.visible = bool(visible)
+        self.channels.append(ch)
+        self._build_channel_card(ch)
+        self._build_live_row(ch)
+        self._refresh_chart_visibility_row()
+        self._update_delete_btns()
+        self._sync_conn_card_height()
+        return ch
+
+    def add_channel(self):
+        """「新建连接」按钮：增加一路连接（默认有线串口，缺 pyserial 时为模拟器）。"""
+        self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
+        self._sync_compat_aliases()
+        self.save_config()
+
+    def _delete_channel(self, ch):
+        """删除一路连接（正在连接的通道须先断开；至少保留一路）。"""
+        if ch.thread and ch.thread.isRunning():
+            fluent_message_box(self, "提示", f"{ch.name} 正在连接，请先断开再删除")
+            return
+        refs = self._rows.pop(ch.id, None)
+        if refs:
+            self.channels_layout.removeWidget(refs['card'])
+            refs['card'].deleteLater()
+        self.channels.remove(ch)
+        self._remove_live_row(ch)
+        self._refresh_chart_visibility_row()
+        self._update_delete_btns()
+        self._sync_compat_aliases()
+        self.save_config()
+        self._sync_conn_card_height()
+
+    def _build_live_row(self, ch):
+        """为通道创建一行实时明细：名称+大字速度（通道色） | 距离 | 回波时间。
+
+        多路同屏各占一行，不再互相覆盖；顶部不再有共享汇总位。
+        """
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(16)
+
+        name_label = CaptionLabel(ch.name)
+        h.addWidget(name_label)
+
+        vel_label = BodyLabel("--.-- cm/s")
+        vel_label.setFont(QFont("Cascadia Code", 20, QFont.Weight.Bold))
+        vel_label.setStyleSheet(f"color: {ch.color};")
+        h.addWidget(vel_label)
+
+        h.addStretch()
+
+        dist_label = CaptionLabel(f"{ch.name} 距离: ---- cm")
+        dist_label.setFont(QFont("Cascadia Code", 11))
+        h.addWidget(dist_label)
+
+        echo_label = CaptionLabel("回波: ---- µs")
+        echo_label.setFont(QFont("Cascadia Code", 11))
+        h.addWidget(echo_label)
+
+        self._live_layout.addWidget(row)
+        self._live_rows[ch.id] = {
+            'row': row, 'name_label': name_label, 'vel_label': vel_label,
+            'dist_label': dist_label, 'echo_label': echo_label,
+        }
+        self._refresh_data_card_height()
+
+    def _remove_live_row(self, ch):
+        """删除通道的实时明细行（断开/删除通道时调用）。"""
+        refs = self._live_rows.pop(ch.id, None)
+        if refs:
+            self._live_layout.removeWidget(refs['row'])
+            refs['row'].deleteLater()
+        # 该路被删后摘要标签可能指着它的旧值，刷成还有数据的最后一口
+        self._refresh_summary_text()
+        self._refresh_data_card_height()
+
+    def _refresh_data_card_height(self):
+        """实时数据卡行数变化后重算高度。
+
+        FluentCard 高度只在构造时按 body.sizeHint 固定，新建连接增加
+        实时明细行后不重算，后面的通道行会被裁掉（表现为只显示前两路）。
+        """
+        card = getattr(self, 'card_data', None)
+        if card is not None:
+            live = getattr(self, '_live_layout', None)
+            if live is not None:
+                live.invalidate()
+                live.activate()
+            card.refresh_height()
+            QTimer.singleShot(0, self._refresh_data_card_height_deferred)
+
+    def _refresh_data_card_height_deferred(self):
+        card = getattr(self, 'card_data', None)
+        if card is not None:
+            card.refresh_height()
+
+    def _refresh_summary_text(self):
+        """隐藏摘要标签取「最近一路有数据的通道」最新值（供全屏折叠摘要）。"""
+        for ch in reversed(self.channels):
+            if ch.velocity_data:
+                self.current_data_label.setText(
+                    f"{ch.name}: {ch.velocity_data[-1]:.2f}cm/s")
+                return
+        for ch in reversed(self.channels):
+            if ch.distance_data:
+                self.current_data_label.setText(
+                    f"{ch.name}: {ch.distance_data[-1]:.2f}cm")
+                return
+        self.current_data_label.setText("当前数据: 等待连接...")
+
+    def _refresh_chart_visibility_row(self):
+        """重建图表卡顶部的通道显示勾选行（通道增删/改名后调用）。"""
+        # 清旧行：qfluentwidgets FlowLayout.takeAt 返回控件本身
+        # （非标准 QLayoutItem——源码 return self._items.pop(index).widget()），
+        # 不能再对其调 .widget()；用 isinstance 兼容旧版本可能返回的 QLayoutItem
+        while self._visibility_flow.count():
+            item = self._visibility_flow.takeAt(0)
+            w = item if isinstance(item, QWidget) else (item.widget() if item else None)
+            if w is not None:
+                w.hide()   # 先隐藏，避免 deleteLater 延迟销毁期间与新建勾选框重叠
+                w.deleteLater()
+        for ch in self.channels:
+            cb = CheckBox(ch.name)
+            cb.setChecked(ch.visible)
+            cb.setToolTip(f"勾选后「{ch.name}」的曲线显示在图表上，取消则隐藏\n"
+                          f"（仅影响图表显示，采集/统计/保存不受影响）")
+            cb.toggled.connect(
+                lambda on, c=ch: self._on_channel_visible_toggled(c, on))
+            self._visibility_flow.addWidget(cb)
+            # 新建控件默认不可见，而 FlowLayout(isTight) 的 _doLayout 会
+            # 跳过不可见子项——不先 show() 就会漏排，停在 640x480 默认尺寸
+            cb.show()
+        self._visibility_container.setVisible(bool(self.channels))
+        # FlowLayout 在子项增删后不会自行重排（尺寸未变时父布局也不会
+        # 重新调用 setGeometry），新建的勾选框会停在 (0,0) 且保持
+        # 640x480 默认尺寸，表现为「要折叠再展开才刷新」。
+        # FlowLayout.activate() 实测无效（其 addItem 不触发 invalidate），
+        # 必须显式 setGeometry，才会对所有子项重跑 _doLayout。
+        self._visibility_flow.invalidate()
+        self._visibility_flow.setGeometry(self._visibility_container.contentsRect())
+        self._visibility_container.updateGeometry()
+
+    def _on_channel_visible_toggled(self, ch, checked):
+        """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
+        ch.visible = bool(checked)
+        self.save_config()
+        self.update_chart()
+
+    def _sync_conn_card_height(self):
+        """连接控制卡高度随子卡实际高度自适应。
+
+        子卡折叠后其 sizeHint() 仍返回全展开高度，主卡 body 的
+        sizeHint() 因此高估（折叠后残留空白）；这里把 channels_container
+        的贡献替换为各子卡实际 height() 之和 + 间距后重算。
+        """
+        try:
+            card = self.card_conn
+            h = card.body.sizeHint().height()
+            cont = self.channels_container
+            cards = [self._rows[ch.id]['card']
+                     for ch in self.channels if ch.id in self._rows]
+            if cont is not None and cards:
+                actual = sum(c.height() for c in cards) + 8 * (len(cards) - 1)
+                h = h - cont.sizeHint().height() + actual
+            h = max(int(h), 1)
+            card.spaceWidget.setFixedHeight(h)
+            if card.isExpand:
+                card.setFixedHeight(card.card.height() + h)
+        except Exception:
+            pass
+
+    def _update_delete_btns(self):
+        """仅剩一路时禁用其删除按钮（至少保留一路连接行）。"""
+        single = len(self.channels) <= 1
+        for ch in self.channels:
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['delete_btn'].setEnabled(not single)
+
+    def _sync_compat_aliases(self):
+        """DataService / 网页端兼容：对外仍暴露单一 mode_combo/port_combo。
+
+        core.DataService.connection_info / _apply_connection 依赖这两个属性
+        读写连接方式与端口；多路化后让它们指向第 1 路的行控件，
+        set_connection('模拟器'/.../串口端口) 即作用于第 1 路，
+        connect=true 连接全部、断开连接全部，网页端不破。
+        """
+        if self.channels:
+            refs = self._rows[self.channels[0].id]
+            self.mode_combo = refs['mode_combo']
+            self.port_combo = refs['port_combo']
+
+    def _build_channel_card(self, ch):
+        """为通道创建一张连接子卡（参考电压模块多路连接的子卡样式）。
+
+        header：名称编辑 / 图线颜色下拉 / 删除按钮；
+        body：连接方式 + 串口 + 刷新 + 采样频率 + 连接按钮同一行（紧凑）。
+        每路独立：模式选择、串口刷新、采样频率、连接/断开。
+        """
+        card = FluentCard(ch.default_name, None, True, self)
+
+        # ---- header：自定义名称 ----
+        name_edit = LineEdit(card)
+        name_edit.setText(ch.name)
+        name_edit.setPlaceholderText("自定义名称")
+        name_edit.setFixedWidth(112)
+        name_edit.setToolTip("图表图例/实时数据中显示的名称（留空恢复默认「通道N」）")
+        name_edit.editingFinished.connect(
+            lambda c=ch, e=name_edit: self._on_channel_name_edited(c, e.text()))
+        card.add_header_widget(name_edit)
+
+        # ---- header：图线颜色下拉（预设色 + 自定义…） ----
+        color_combo = ComboBox(card)
+        color_combo.setMinimumWidth(96)
+        color_combo.setToolTip("该连接的图线颜色")
+        color_combo.currentIndexChanged.connect(
+            lambda i, c=ch: self._on_channel_color_changed(c, i))
+        card.add_header_widget(color_combo)
+
+        # ---- header：删除按钮 ----
+        delete_btn = ToolButton(FIF.DELETE, card)
+        delete_btn.setFixedSize(28, 28)
+        delete_btn.setToolTip("删除这一路连接（需先断开）")
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.clicked.connect(lambda _=False, c=ch: self._delete_channel(c))
+        card.add_header_widget(delete_btn)
+
+        # ---- body 单行：连接方式 + 串口 + 刷新 + 采样频率 + 连接（紧凑） ----
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row1.addWidget(BodyLabel("连接方式"))
+        mode_combo = ComboBox()
+        mode_combo.addItems(["有线串口", "模拟器"])
+        mode_combo.setCurrentIndex(1 if ch.mode == 'simulator' else 0)
+        mode_combo.currentIndexChanged.connect(
+            lambda i, c=ch: self._on_channel_mode_changed(c, i))
+        row1.addWidget(mode_combo)
+
+        port_combo = ComboBox()
+        port_combo.setMinimumWidth(80)
+        self._fill_channel_ports(ch, port_combo)
+        port_combo.currentTextChanged.connect(lambda t, c=ch: setattr(c, 'port', t))
+        port_label = BodyLabel("串口")
+        row1.addWidget(port_label)
+        row1.addWidget(port_combo)
+
+        refresh_btn = PushButton("刷新")
+        refresh_btn.setFixedHeight(30)
+        refresh_btn.setToolTip("重新枚举本路的串口列表")
+        refresh_btn.clicked.connect(
+            lambda _=False, c=ch: self._refresh_channel_ports(c))
+        row1.addWidget(refresh_btn)
+
+        row1.addWidget(BodyLabel("采样频率"))
+        sample_rate_combo = SampleRateComboBox()
+        sample_rate_combo.setSampleInterval(ch.sample_interval_ms)
+        sample_rate_combo.setMaximumWidth(110)
+        sample_rate_combo.sampleIntervalChanged.connect(
+            lambda ms, c=ch: self._on_channel_sample_interval_changed(c, ms))
+        row1.addWidget(sample_rate_combo)
+
+        row1.addStretch()
+
+        connect_btn = PrimaryPushButton("连接")
+        connect_btn.setFixedHeight(30)
+        connect_btn.clicked.connect(
+            lambda _=False, c=ch: self._toggle_channel_connection(c))
+        row1.addWidget(connect_btn)
+        w1 = QWidget()
+        w1.setLayout(row1)
+        card.add_widget(w1)
+
+        # 子卡折叠动画期间逐帧同步主卡高度（子卡折叠后 sizeHint 不缩）
+        card.expandAni.valueChanged.connect(self._sync_conn_card_height)
+        card.expandAni.finished.connect(self._sync_conn_card_height)
+
+        self.channels_layout.addWidget(card)
+        self._rows[ch.id] = {
+            'card': card, 'name_edit': name_edit, 'color_combo': color_combo,
+            'delete_btn': delete_btn, 'mode_combo': mode_combo,
+            'port_combo': port_combo, 'port_label': port_label,
+            'refresh_btn': refresh_btn,
+            'connect_btn': connect_btn, 'sample_rate_combo': sample_rate_combo,
+        }
+        self._init_channel_color_combo(ch)
+        self._apply_channel_mode_visibility(ch)
+
+    def _init_channel_color_combo(self, ch):
+        """（重建）填充颜色下拉：预设色 + 已存自定义色 + 「自定义…」项。"""
+        refs = self._rows.get(ch.id)
+        if not refs:
+            return
+        combo = refs['color_combo']
+        combo.blockSignals(True)
+        combo.clear()
+        for c in CHANNEL_COLORS:
+            combo.addItem(c, _make_color_icon(c), userData=c)
+        if ch.color and combo.findData(ch.color) < 0:
+            combo.addItem(ch.color, _make_color_icon(ch.color), userData=ch.color)
+        combo.addItem("自定义…", QIcon(), userData=CUSTOM_COLOR_KEY)
+        idx = combo.findData(ch.color)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _on_channel_color_changed(self, ch, index):
+        """颜色下拉选中：预设色直接生效；「自定义…」弹 Fluent 取色对话框。"""
+        refs = self._rows.get(ch.id)
+        if not refs:
+            return
+        combo = refs['color_combo']
+        data = combo.itemData(index)
+        if data == CUSTOM_COLOR_KEY:
+            state = {'ok': False, 'color': None}
+            dialog = ColorDialog(QColor(ch.color),
+                                 f"选择 {ch.name} 的曲线颜色", self)
+            dialog.colorChanged.connect(
+                lambda c: state.__setitem__('color', c))
+            dialog.yesButton.clicked.connect(
+                lambda: state.__setitem__('ok', True))
+            dialog.exec()
+            color = state['color'] or getattr(dialog, 'color', None)
+            if not (state['ok'] and color is not None and color.isValid()):
+                self._init_channel_color_combo(ch)   # 取消：下拉回显当前色
+                return
+            ch.color = color.name()
+            # 该项定格为选定的颜色，尾部再补一个「自定义…」常驻入口
+            combo.blockSignals(True)
+            combo.setItemText(index, ch.color)
+            combo.setItemIcon(index, _make_color_icon(ch.color))
+            combo.setItemData(index, ch.color)
+            combo.addItem("自定义…", QIcon(), userData=CUSTOM_COLOR_KEY)
+            combo.blockSignals(False)
+        else:
+            ch.color = data
+        self.save_config()
+        self.update_chart()
+        # 实时行大字颜色同步为新通道色
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['vel_label'].setStyleSheet(f"color: {ch.color};")
+
+    def _on_channel_name_edited(self, ch, text):
+        """名称编辑完成：写回通道名（留空恢复默认「通道N」）。"""
+        t = text.strip()
+        ch.name = t or ch.default_name
+        refs = self._rows.get(ch.id)
+        if refs:
+            try:
+                refs['card'].titleLabel.setText(ch.name)
+            except Exception:
+                pass
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['name_label'].setText(ch.name)
+            live['dist_label'].setText(f"{ch.name} 距离: ---- cm")
+        self._refresh_chart_visibility_row()
+        self.save_config()
+        self.update_chart()
+
+    def _fill_channel_ports(self, ch, combo):
+        """重填串口列表，尽量保住该通道上次选中的端口。"""
+        want = ch.port
+        combo.clear()
         ports = list_serial_ports()
         for device, _desc in ports:
-            self.port_combo.addItem(device)
+            combo.addItem(device)
         if not ports:
-            self.port_combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
+            combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
+        if want and combo.findText(want) >= 0:
+            combo.setCurrentText(want)
+        ch.port = combo.currentText()
 
-    def on_mode_changed(self, index):
-        if index == 0:
-            self.serial_panel.show()
-            self.sim_panel.hide()
+    def refresh_ports(self):
+        """刷新所有通道的串口列表（网页端 refresh_ports 命令也走这里）。"""
+        for ch in self.channels:
+            self._refresh_channel_ports(ch)
+
+    def _refresh_channel_ports(self, ch):
+        refs = self._rows.get(ch.id)
+        if refs:
+            self._fill_channel_ports(ch, refs['port_combo'])
+
+    def _on_channel_mode_changed(self, ch, index):
+        ch.mode = 'simulator' if index == 1 else 'serial'
+        self._apply_channel_mode_visibility(ch)
+        self.save_config()
+
+    def _apply_channel_mode_visibility(self, ch):
+        """模拟器模式下隐藏本路的串口标签/下拉与刷新按钮。"""
+        refs = self._rows.get(ch.id)
+        if refs:
+            is_sim = ch.mode == 'simulator'
+            refs['port_label'].setVisible(not is_sim)
+            refs['port_combo'].setVisible(not is_sim)
+            refs['refresh_btn'].setVisible(not is_sim)
+            try:
+                refs['card']._adjustViewSize()
+            except Exception:
+                pass
+            self._sync_conn_card_height()
+
+    def _toggle_channel_connection(self, ch):
+        """单路的连接/断开按钮：按本路线程状态切换。"""
+        if ch.thread and ch.thread.isRunning():
+            self._disconnect_channel(ch)
         else:
-            self.serial_panel.hide()
-            self.sim_panel.show()
+            self._connect_channel(ch)
 
-    def toggle_connection(self):
-        """切换连接状态"""
-        if self.serial_thread and self.serial_thread.isRunning():
-            self.disconnect_serial()
-        elif self.mode_combo.currentIndex() == 0:
-            self.connect_serial()
-        else:
-            self.connect_simulator()
-
-    def connect_simulator(self):
-        """连接模拟器：随机生成回波时间（µs），无需硬件。时间戳以微秒计。"""
+    def _connect_channel(self, ch):
+        """连接单路：串口或模拟器（其余通道不受影响）。"""
         try:
-            self.serial_thread = SimulatorThread(
-                value_min=100, value_max=60000,
-                interval_ms=self.sample_interval_ms,
-                start_value=11600, timestamp_scale=1000)
-            self.serial_thread.data_received.connect(self.handle_data)
-            self.serial_thread.start()
-
-            log.info("模拟器已连接")
-            self.connect_btn.setText("断开")
-            self._set_collect_enabled(True)
-            self.current_data_label.setText("当前数据: 模拟器已连接，等待数据...")
-
+            if ch.mode == 'simulator':
+                # echo_time 100~60000µs（约 1.7cm~1m），在 11600µs(约20cm)附近漂移
+                th = SimulatorThread(
+                    value_min=100, value_max=60000,
+                    interval_ms=ch.sample_interval_ms,
+                    start_value=11600, timestamp_scale=1000)
+            else:
+                if not SERIAL_AVAILABLE:
+                    fluent_message_box(self, "提示", serial_unavailable_hint())
+                    return
+                port = self._rows[ch.id]['port_combo'].currentText()
+                if not port or "未安装" in port or "无可用" in port:
+                    fluent_message_box(self, "错误", f"{ch.name}: 请选择串口")
+                    return
+                ch.port = port
+                th = SerialThread(port)
+            th.data_received.connect(lambda d, c=ch: self.handle_data(d, c))
+            ch.thread = th
+            th.start()
         except Exception as e:
-            fluent_message_box(self, "连接错误", f"模拟器启动失败: {e}")
-
-    def connect_serial(self):
-        """连接串口"""
-        if not SERIAL_AVAILABLE:
-            fluent_message_box(self, "提示", serial_unavailable_hint())
+            ch.thread = None
+            fluent_message_box(self, "连接错误", f"{ch.name} 连接失败: {e}")
             return
-        port = self.port_combo.currentText()
-        if not port:
-            fluent_message_box(self, "错误", "请选择串口")
-            return
+        refs = self._rows.get(ch.id)
+        if refs:
+            refs['connect_btn'].setText("断开")
+        log.info("%s 已连接（%s）", ch.name,
+                 '模拟器' if ch.mode == 'simulator' else ch.port)
+        self._set_collect_enabled(True)
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['vel_label'].setText("--.-- cm/s")
+            live['echo_label'].setText(f"{ch.name}: 连接中...")
 
-        try:
-            self.serial_thread = SerialThread(port)
-            self.serial_thread.data_received.connect(self.handle_data)
-            self.serial_thread.start()
+    def _disconnect_channel(self, ch):
+        """断开单路（其余通道不受影响）。"""
+        if ch.thread:
+            stop_thread(ch.thread, name=f"超声波速度{ch.name}线程")
+            ch.thread = None
+        refs = self._rows.get(ch.id)
+        if refs:
+            refs['connect_btn'].setText("连接")
+        log.info("%s 已断开", ch.name)
+        # 本路实时行复位，其余路的显示保留
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['vel_label'].setText("--.-- cm/s")
+            live['echo_label'].setText(f"{ch.name} 回波: 已断开")
+        self._refresh_summary_text()
+        if not any(c.thread for c in self.channels):
+            self._set_collect_enabled(False)
 
-            log.info("串口已连接: %s", port)
-            self.connect_btn.setText("断开")
-            self._set_collect_enabled(True)
-            self.current_data_label.setText("当前数据: 已连接，等待数据...")
+    def connect_device(self):
+        """连接全部未连接的通道（网页端 set_connection connect=true 走这里）。"""
+        for ch in self.channels:
+            if not (ch.thread and ch.thread.isRunning()):
+                self._connect_channel(ch)
 
-        except Exception as e:
-            fluent_message_box(self, "连接错误", f"无法连接串口: {e}")
-
-    def disconnect_serial(self):
-        """断开串口连接"""
-        if self.serial_thread:
-            stop_thread(self.serial_thread, name="超声波速度串口线程")
-            self.serial_thread = None
-
-        log.info("已断开连接")
-        self.connect_btn.setText("连接")
-        self._set_collect_enabled(False)
-        self.current_data_label.setText("当前数据: 已断开")
+    def disconnect_all(self):
+        """断开全部通道（退出清理 / 网页端命令也走这里）。"""
+        for ch in list(self.channels):
+            self._disconnect_channel(ch)
 
     def toggle_collection(self):
         """合并的开始/停止按钮：按当前采集状态切换。"""
@@ -404,134 +935,158 @@ class UltrasonicVelocityWidget(QWidget):
 
     def start_collection(self):
         """开始数据采集"""
-        self.distance_data.clear()
-        self.time_data.clear()
-        self.velocity_data.clear()
-        self.echo_time_data.clear()  # 清除回波时间数据
+        for ch in self.channels:
+            ch.distance_data.clear()
+            ch.time_data.clear()
+            ch.velocity_data.clear()
+            ch.echo_time_data.clear()
+            ch.last_sample_s = None
         self.data_text.clear()
-        self.last_sample_time_ms = 0  # 重置采样时间
+        # 主机统一时间基准：以采集期收到的**首个样本**为 t=0（各路共享）
+        self._t0_mono = None
 
         self._collecting = True
-        log.info("开始采集")
+        log.info("开始采集（已连接 %d 路）",
+                 sum(1 for ch in self.channels if ch.thread))
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
 
         self.current_data_label.setText("当前数据: 采集进行中...")
+        for ch in self.channels:
+            live = self._live_rows.get(ch.id)
+            if live:
+                live['echo_label'].setText(f"{ch.name} 回波: 采集中...")
 
     def stop_collection(self):
         """停止数据采集"""
         self._collecting = False
         self._refresh_collect_btn()
-        self.save_btn.setEnabled(len(self.distance_data) > 0)
+        total = sum(len(ch.distance_data) for ch in self.channels)
+        self.save_btn.setEnabled(total > 0)
         log.info("停止采集，共 %d 个距离点 / %d 个速度点",
-                 len(self.distance_data), len(self.velocity_data))
+                 total, sum(len(ch.velocity_data) for ch in self.channels))
 
         self.current_data_label.setText("当前数据: 采集已停止")
 
-    def handle_data(self, data):
-        """处理接收到的数据 - 回声定位法计算速度"""
+    def handle_data(self, data, ch):
+        """一路连接的数据回调（SerialThread / SimulatorThread → 本模块）。
+
+        多路连接下的约定：
+        - ERROR / START 按通道处理，出错只断开这一路；
+        - 记录用**主机统一时间戳**（time.monotonic），各路天然对齐在同一
+          时间轴（不同 ESP32 开机时刻不同，固件时间戳不可跨路比较）；
+        - 固件的 timestamp 字段只做格式解析，不参与记录。
+        """
         # 检查是否是错误信息
         if data.startswith("ERROR:"):
-            log.error("设备错误: %s", data[6:])
-            fluent_message_box(self, "串口错误", data[6:])
-            self.disconnect_serial()
+            log.error("%s 设备错误: %s", ch.name, data[6:])
+            fluent_message_box(self, "串口错误", f"{ch.name}: {data[6:]}")
+            self._disconnect_channel(ch)
             return
 
         # 检查是否是启动信号
         if data == "START":
-            self.current_data_label.setText("当前数据: 设备已启动，等待数据...")
-            return
-
-        if not self._collecting:  # 如果没有在采集状态，忽略数据
+            live = self._live_rows.get(ch.id)
+            if live:
+                live['echo_label'].setText(f"{ch.name}: 设备已启动，等待数据...")
             return
 
         try:
             # 解析数据格式: timestamp,echo_time
-            if "," in data:
-                parts = data.split(",")
-                if len(parts) == 2:
-                    timestamp_us = int(parts[0])  # 微秒时间戳
-                    echo_time = int(parts[1])
-
-                    # 过滤无效数据
-                    if echo_time < 100 or echo_time > 60000:
-                        return
-
-                    # 采样频率控制：检查是否达到采样间隔
-                    timestamp_ms = timestamp_us // 1000  # 转换为毫秒
-                    if timestamp_ms - self.last_sample_time_ms < self.sample_interval_ms:
-                        return  # 未达到采样间隔，跳过此数据
-
-                    # 更新上次采样时间
-                    self.last_sample_time_ms = timestamp_ms
-
-                    # 计算距离（厘米）
-                    distance_cm = echo_time / 58.0
-
-                    # 如果是第一个数据点，记录起始时间
-                    if len(self.time_data) == 0:
-                        self.start_timestamp_us = timestamp_us
-
-                    # 计算相对于起始时间的秒数
-                    relative_time_s = (timestamp_us - self.start_timestamp_us) / 1000000.0
-
-                    # 记录距离、时间和原始回波时间数据
-                    self.distance_data.append(distance_cm)
-                    self.time_data.append(relative_time_s)
-                    self.echo_time_data.append(echo_time)  # 保存原始回波时间
-
-                    # 回声定位法计算速度
-                    velocity = self.calculate_velocity()
-                    if velocity is not None:
-                        self.velocity_data.append(velocity)
-
-                    # 更新显示
-                    current_time = datetime.now()
-                    time_str = current_time.strftime("%H:%M:%S.%f")[:-3]
-
-                    if velocity is not None:
-                        display_text = f"时间: {time_str} | 距离: {distance_cm:.2f}cm | 速度: {velocity:.2f}cm/s"
-                        self.current_data_label.setText(display_text)
-
-                        # 添加到数据记录
-                        self.data_text.append(display_text)
-
-                        # 自动滚动到底部
-                        self.data_text.verticalScrollBar().setValue(
-                            self.data_text.verticalScrollBar().maximum()
-                        )
-
-                    # 更新统计信息
-                    self.update_stats()
-
+            if "," not in data:
+                return
+            parts = data.split(",")
+            if len(parts) != 2:
+                return
+            echo_time = int(parts[1])
         except ValueError:
-            pass  # 忽略无法解析的数据
+            return  # 忽略无法解析的数据
 
-    def calculate_velocity(self):
-        """回声定位法计算速度 - 基于两次测量的时间差
+        # 过滤无效数据
+        if echo_time < 100 or echo_time > 60000:
+            return
+
+        # 计算距离（厘米）
+        distance_cm = echo_time / 58.0
+
+        if not self._collecting:
+            # 未采集：仅刷新本路实时行（距离与回波，速度需两点差分）
+            live = self._live_rows.get(ch.id)
+            if live:
+                live['dist_label'].setText(f"{ch.name} 距离: {distance_cm:.2f}cm")
+                live['echo_label'].setText(f"{ch.name} 回波: {echo_time}µs")
+            return
+
+        # 主机统一时间戳：采集期首个到达样本定为 t=0
+        now = time.monotonic()
+        if self._t0_mono is None:
+            self._t0_mono = now
+        t_rel = now - self._t0_mono
+
+        # 采样频率控制（每路独立过滤，按本路设定的间隔）
+        if ch.last_sample_s is not None and \
+                (t_rel - ch.last_sample_s) * 1000 < ch.sample_interval_ms:
+            return
+        ch.last_sample_s = t_rel
+
+        # 记录距离、时间和原始回波时间数据
+        ch.distance_data.append(distance_cm)
+        ch.time_data.append(t_rel)
+        ch.echo_time_data.append(echo_time)
+
+        # 回声定位法计算速度（按该路自己的相邻两笔回波差分）
+        velocity = self._calculate_velocity(ch)
+
+        # 更新显示（只更新本路行）
+        time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['dist_label'].setText(f"{ch.name} 距离: {distance_cm:.2f}cm")
+            live['echo_label'].setText(f"{ch.name} 回波: {echo_time}µs")
+            if velocity is not None:
+                live['vel_label'].setText(f"{velocity:.2f} cm/s")
+        if velocity is not None:
+            ch.velocity_data.append(velocity)
+            # 隐藏摘要标签记最新活动的一路（仅供全屏折叠态摘要读取）
+            self.current_data_label.setText(
+                f"{ch.name}: {velocity:.2f}cm/s")
+            display_text = (f"{time_str} | {ch.name} | "
+                            f"距离: {distance_cm:.2f}cm | 速度: {velocity:.2f}cm/s")
+            self.data_text.append(display_text)
+
+            # 自动滚动到底部
+            self.data_text.verticalScrollBar().setValue(
+                self.data_text.verticalScrollBar().maximum()
+            )
+
+        # 更新统计信息
+        self.update_stats()
+
+    def _calculate_velocity(self, ch):
+        """回声定位法计算速度 - 基于该路两次测量的时间差
 
         算法原理：
         v = (t₀ - t₁)/2 × vₛ / [(t₁ + t₀)/2 + Δt]
 
         其中：
-        - t₀: 第一次回波时间 (µs)
-        - t₁: 第二次回波时间 (µs)
+        - t₀: 该路第一次回波时间 (µs)
+        - t₁: 该路第二次回波时间 (µs)
         - Δt: 两次发射的时间间隔 (s)
         - vₛ: 声速 = 34000 cm/s
         """
-        if len(self.distance_data) < 2:
+        if len(ch.distance_data) < 2:
             return None
 
         try:
-            # 获取最近两次测量的数据
-            t0 = self.echo_time_data[-2]  # 第一次回波时间 (µs)
-            t1 = self.echo_time_data[-1]  # 第二次回波时间 (µs)
+            # 获取该路最近两次测量的数据
+            t0 = ch.echo_time_data[-2]  # 第一次回波时间 (µs)
+            t1 = ch.echo_time_data[-1]  # 第二次回波时间 (µs)
 
             # 计算两次发射的时间间隔 Δt (秒)
             # 使用 Arduino 的测量间隔 (MIN_INTERVAL = 20000 µs = 0.02s)
             delta_t = 0.02  # 默认 20ms
-            if len(self.time_data) >= 2:
-                delta_t = self.time_data[-1] - self.time_data[-2]
+            if len(ch.time_data) >= 2:
+                delta_t = ch.time_data[-1] - ch.time_data[-2]
 
             # 声速 (cm/s)
             v_sound = 34000  # 340 m/s = 34000 cm/s
@@ -549,63 +1104,97 @@ class UltrasonicVelocityWidget(QWidget):
             return velocity_cm_s
 
         except Exception as e:
-            log.warning("速度计算错误: %s", e)
+            log.warning("速度计算错误（%s）: %s", ch.name, e)
             return None
 
     def update_stats(self):
-        """更新速度统计信息"""
-        if len(self.velocity_data) > 0:
-            avg_velocity = np.mean(self.velocity_data)
-            max_velocity = np.max(self.velocity_data)
-            min_velocity = np.min(self.velocity_data)
-
-            stats_text = f"速度统计: 数据点 {len(self.velocity_data)} | " \
-                        f"平均 {avg_velocity:.2f}cm/s | " \
-                        f"最大 {max_velocity:.2f}cm/s | " \
-                        f"最小 {min_velocity:.2f}cm/s"
-            self.velocity_stats_label.setText(stats_text)
+        """更新速度统计信息：每路有数据的通道各显示一行统计。"""
+        parts = []
+        for ch in self.channels:
+            if not ch.velocity_data:
+                continue
+            avg_velocity = np.mean(ch.velocity_data)
+            max_velocity = np.max(ch.velocity_data)
+            min_velocity = np.min(ch.velocity_data)
+            parts.append(
+                f"{ch.name}: 点数 {len(ch.velocity_data)} | "
+                f"平均 {avg_velocity:.2f}cm/s | "
+                f"最大 {max_velocity:.2f}cm/s | "
+                f"最小 {min_velocity:.2f}cm/s")
+        if parts:
+            self.velocity_stats_label.setText(
+                "速度统计: " + " ‖ ".join(parts))
 
     def update_chart(self):
-        """更新速度图表（双子图：距离-时间 + 速度-时间）"""
+        """更新速度图表（双子图：距离-时间 + 速度-时间，多路叠加）"""
         if not self.isVisible():
             return  # 页面隐藏时跳过重绘（定时器不停止，避免白耗 UI 线程）
-        if len(self.velocity_data) > 0:
-            c = self.chart
-            c.begin()
-            # 子图0：距离-时间图
-            c.plot(self.time_data, self.distance_data,
-                   color='#0078d4', width=2, index=0)
-            c.set_labels('时间 (秒)', '距离 (厘米)', index=0)
-            c.set_title('距离传感器的距离', index=0)
-            # 子图1：速度-时间图（速度序列由距离差分得到，起点对齐）
-            c.plot(self.time_data[len(self.time_data)-len(self.velocity_data):],
-                   self.velocity_data, color='#1a1a1a', width=2, index=1)
-            c.set_labels('时间 (秒)', '速度 (厘米/秒)', index=1)
-            c.set_title('物体运动速度 - 回声定位法', index=1)
-            c.end()
+        # 只画勾选显示的通道（图表卡顶部勾选行控制）；勾选不影响采集与统计
+        active = [ch for ch in self.channels
+                  if ch.distance_data and ch.visible]
+        if not active:
+            # 有数据但全部取消勾选 → 清空图表；本来就没数据 → 保持原样
+            if any(ch.distance_data for ch in self.channels):
+                self.chart.clear_chart()
+            return
+        c = self.chart
+        c.begin()
+        all_t = []
+        # 子图0：距离-时间图（每路一条曲线，颜色 = 通道色）
+        for ch in active:
+            c.plot(ch.time_data, ch.distance_data,
+                   color=ch.color, width=2, index=0, label=ch.name)
+            all_t.extend(ch.time_data)
+        c.set_labels('时间 (秒)', '距离 (厘米)', index=0)
+        c.set_title('距离传感器的距离（多路对比）' if len(active) > 1
+                    else '距离传感器的距离', index=0)
+        c.legend(index=0)
+        # 子图1：速度-时间图（速度序列由距离差分得到，起点对齐）
+        for ch in active:
+            if not ch.velocity_data:
+                continue
+            c.plot(ch.time_data[len(ch.time_data) - len(ch.velocity_data):],
+                   ch.velocity_data, color=ch.color, width=2, index=1,
+                   label=ch.name)
+        c.set_labels('时间 (秒)', '速度 (厘米/秒)', index=1)
+        c.set_title('物体运动速度 - 回声定位法（多路对比）' if len(active) > 1
+                    else '物体运动速度 - 回声定位法', index=1)
+        c.legend(index=1)
+        if len(all_t) > 1:
+            c.set_xlim(min(all_t), max(all_t), index=0)
+            c.set_xlim(min(all_t), max(all_t), index=1)
+        c.end()
 
-    def on_sample_interval_changed(self, interval_ms):
-        """采样频率改变时更新间隔（内联下拉框触发）"""
-        self.sample_interval_ms = interval_ms
+    def _on_channel_sample_interval_changed(self, ch, interval_ms):
+        """本路采样频率改变：更新该路间隔并保存配置（对该路过滤即时生效；
+        模拟器线程按创建时间隔发数，重连后按新频率运行）。"""
+        ch.sample_interval_ms = interval_ms
+        if self.channels and ch is self.channels[0]:
+            self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
+        self.save_config()
 
     def save_data(self):
-        """保存数据到文件 - 超声波速度"""
-        if len(self.distance_data) == 0:
+        """保存数据到文件 - 超声波速度（长表：一行一个样本 + 通道名列）"""
+        total = sum(len(ch.distance_data) for ch in self.channels)
+        if total == 0:
             fluent_message_box(self, "警告", "没有数据可保存")
             return
-
         try:
             filename = f"ultrasonic_velocity_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             with open(filename, 'w', encoding='utf-8') as f:
-                f.write("time_s,distance_cm,velocity_cm_s\n")
-                for i, (time_val, distance, velocity) in enumerate(
-                    zip(self.time_data, self.distance_data,
-                        self.velocity_data + [None] * (len(self.distance_data) - len(self.velocity_data)))):
+                # 长表格式：一行一个样本 + 通道名列。多路的时间轴天然对齐
+                # （主机统一时间戳），便于 Excel 透视/筛选按通道分组分析
+                f.write("channel,time_s,distance_cm,velocity_cm_s\n")
+                for ch in self.channels:
+                    for i, (time_val, distance) in enumerate(
+                            zip(ch.time_data, ch.distance_data)):
+                        vi = i - (len(ch.time_data) - len(ch.velocity_data))
+                        velocity = ch.velocity_data[vi] \
+                            if 0 <= vi < len(ch.velocity_data) else None
+                        velocity_str = f"{velocity:.3f}" if velocity is not None else ""
+                        f.write(f"{ch.name},{time_val:.3f},{distance:.3f},{velocity_str}\n")
 
-                    velocity_str = f"{velocity:.3f}" if velocity is not None else ""
-                    f.write(f"{time_val:.3f},{distance:.3f},{velocity_str}\n")
-
-            log.info("数据已保存到: %s（%d 点）", filename, len(self.distance_data))
+            log.info("数据已保存到: %s（%d 点）", filename, total)
             fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
             log.error("保存失败: %s", e)
@@ -613,32 +1202,54 @@ class UltrasonicVelocityWidget(QWidget):
 
     def clear_data(self):
         """清除数据"""
-        self.distance_data.clear()
-        self.time_data.clear()
-        self.velocity_data.clear()
-        self.echo_time_data.clear()  # 清除回波时间数据
+        for ch in self.channels:
+            ch.distance_data.clear()
+            ch.time_data.clear()
+            ch.velocity_data.clear()
+            ch.echo_time_data.clear()
+            ch.last_sample_s = None
+        self._t0_mono = None
         self.data_text.clear()
         self.velocity_stats_label.setText("速度统计: 暂无数据")
+        for ch in self.channels:
+            live = self._live_rows.get(ch.id)
+            if live:
+                live['vel_label'].setText("--.-- cm/s")
+                live['dist_label'].setText(f"{ch.name} 距离: ---- cm")
+                live['echo_label'].setText(f"{ch.name} 回波: ---- µs")
         self.current_data_label.setText("当前数据: 等待数据...")
         log.info("已清除数据")
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
 
     def _ai_data(self):
-        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。"""
-        if not self.velocity_data:
+        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。
+
+        多路连接时取**速度点最多的通道**作为主分析序列，各通道概况
+        写入 params，供模型理解多路对比背景。
+        """
+        active = [ch for ch in self.channels if ch.velocity_data]
+        if not active:
             return None
+        main = max(active, key=lambda c: len(c.velocity_data))
+        channels_desc = "、".join(
+            f"{ch.name}[{len(ch.velocity_data)}点]" for ch in active)
         return {
             'title': '超声波速度',
             'x_label': '时间 (秒)',
             'y_label': '速度 (cm/s)',
-            'points': list(zip(self.time_data, self.velocity_data)),
+            'points': list(zip(
+                main.time_data[len(main.time_data) - len(main.velocity_data):],
+                main.velocity_data)),
             'params': (
                 f"传感器=HC-SR04 超声波, 速度=相邻两次回波差分"
                 f"（v=(t0−t1)/2 × 34000 / [(t1+t0)/2 + Δt]，Δt 为相邻时间戳差，单位 cm/s）, "
                 f"声速假设=34000cm/s, "
                 f"固件有效回波窗口=100~60000µs（约 2~100cm）, 最小触发间隔=20ms, "
-                f"采样间隔={self.sample_interval_ms}ms"),
+                f"多路连接: 共{len(active)}路（{channels_desc}），"
+                f"主分析通道={main.name}, "
+                f"时间轴=主机统一时间戳（各路对齐）, "
+                f"采样间隔={main.sample_interval_ms}ms（各路独立）"),
             'system_prompt': AI_SYSTEM_PROMPT,
         }
 
@@ -654,14 +1265,27 @@ class UltrasonicVelocityWidget(QWidget):
         return {
             'key': 'ultrasonic_velocity',
             'name': '超声波速度',
-            'connected': self.serial_thread is not None,
+            'connected': any(ch.thread is not None for ch in self.channels),
             'collecting': self._collecting,
             'x_label': d.get('x_label', '时间 (秒)'),
             'y_label': d.get('y_label', '速度 (cm/s)'),
             'params': d.get('params', {}),
             'points': points,
             'latest': latest,
+            # 多路连接明细（points 仍为主通道序列，前端单曲线不破）
+            'channels': [
+                {'name': ch.name, 'color': ch.color,
+                 'connected': ch.thread is not None,
+                 'points_n': len(ch.velocity_data),
+                 'latest_raw': ch.echo_time_data[-1] if ch.echo_time_data else None}
+                for ch in self.channels
+            ],
         }
+
+    def showEvent(self, e):
+        """首次显示后按子卡真实高度收敛连接控制卡（构建期 height() 不可靠）。"""
+        super().showEvent(e)
+        self._sync_conn_card_height()
 
     def apply_theme(self, theme):
         """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
