@@ -505,7 +505,8 @@ python ./src/test_serial.py
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/e7d3888f-da91-4db5-aee3-5100408917c3/image.png 'image.png')  主页
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/7313933f-bb07-4691-9939-af60d01c1896/image.png 'image.png')  ph
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/cd961db4-69ad-4a86-91b8-7c1bf6d550c6/image.png 'image.png') 力
-![image.png](https://raw.gitcode.com/user-images/assets/9825261/cc8116e5-2a32-4b76-aacf-31abf2cd98ee/image.png 'image.png') 电压
+![image.png](https://raw.gitcode.com/user-images/assets/9825261/536e3d5c-b904-4cd3-a0c0-001c3e635cc5/image.png 'image.png')
+电压
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/97d87d7d-ab8a-44ba-960a-87556c20454a/image.png 'image.png') 电流
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/6298a83d-4c05-43bc-9ec9-ec97bf0c0469/image.png 'image.png') 距离
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/c18e0bc1-a84f-43b3-baf0-523489428314/image.png 'image.png') 速度
