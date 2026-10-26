@@ -3,6 +3,7 @@
 
 # === MODULE META ===
 # icon: v
+# icon_file: icon_velocity.svg
 # name: 超声波速度
 # category: physics
 # class: UltrasonicVelocityWidget

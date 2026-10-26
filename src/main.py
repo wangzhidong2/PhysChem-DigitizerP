@@ -148,6 +148,67 @@ def make_text_icon(text: str, size: int = 128) -> QIcon:
     return icon
 
 
+def make_svg_icon(svg_path: str, size: int = 128) -> QIcon:
+    """把模块 assets/ 目录下的 SVG 图标渲染成方形 QIcon。
+
+    模块图标改为 SVG 矢量图（模块目录 assets/ 文件夹），替代文字渲染；
+    同一图标在亮/暗主题下共用（配色选用两种主题下都可读的色值）。
+
+    Args:
+        svg_path: SVG 文件绝对路径
+        size: 画布像素尺寸（实际显示时按比例缩放）
+
+    Returns:
+        QIcon: 渲染失败返回空 QIcon，调用方应回退 make_text_icon()
+    """
+    from PySide6.QtCore import QRectF
+    from PySide6.QtSvg import QSvgRenderer
+    renderer = QSvgRenderer(svg_path)
+    if not renderer.isValid():
+        log.warning("SVG 图标无效: %s", svg_path)
+        return QIcon()
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+    renderer.render(p, QRectF(0, 0, size, size))
+    p.end()
+    icon = QIcon()
+    for mode in (QIcon.Normal, QIcon.Active, QIcon.Selected):
+        icon.addPixmap(pix, mode, QIcon.Off)
+        icon.addPixmap(pix, mode, QIcon.On)
+    return icon
+
+
+def module_icon_path(info):
+    """解析模块的 SVG 图标路径。
+
+    优先用识别区 icon_file 指定的文件名（同一目录多个模块时区分图标），
+    否则用默认的 icon.svg；文件不存在返回 None（调用方回退文字图标）。
+
+    Args:
+        info: scan_modules() 返回的模块信息 dict（须含 file_path）
+
+    Returns:
+        str | None: SVG 文件绝对路径
+    """
+    assets = os.path.join(os.path.dirname(info['file_path']), 'assets')
+    name = info.get('icon_file') or 'icon.svg'
+    path = os.path.join(assets, name)
+    return path if os.path.isfile(path) else None
+
+
+def make_module_icon(info) -> QIcon:
+    """模块统一入口：有 SVG 用 SVG，否则回退识别区文字图标。"""
+    svg = module_icon_path(info)
+    if svg:
+        icon = make_svg_icon(svg)
+        if not icon.isNull():
+            return icon
+    return make_text_icon(info.get('icon', '?'))
+
+
 # ============================================================
 # 主页模块磁贴（文件夹卡片）
 # ============================================================
@@ -163,7 +224,8 @@ class ModuleFolderTile(CardWidget):
       背景动画，亮/暗主题自动适配
     """
 
-    def __init__(self, name: str, icon_text: str, pinned: bool = False, parent=None):
+    def __init__(self, name: str, icon_text: str, pinned: bool = False, parent=None,
+                 icon_svg: str = None):
         super().__init__(parent)
         self.setBorderRadius(8)
         self.setFixedHeight(118)
@@ -171,6 +233,7 @@ class ModuleFolderTile(CardWidget):
         self.setClickEnabled(True)
         self._name = name
         self._icon_text = icon_text or '?'
+        self._icon_svg = icon_svg
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 4, 10, 8)
@@ -189,8 +252,8 @@ class ModuleFolderTile(CardWidget):
         top.addWidget(self.pin_btn)
         lay.addLayout(top)
 
-        # 模块文字图标（识别区文字，如 V/F/x/pH/v/A）
-        self.icon_widget = IconWidget(QIcon(make_text_icon(self._icon_text, size=128)), self)
+        # 模块图标：SVG 优先（模块目录 assets/ 下），无 SVG 回退文字图标
+        self.icon_widget = IconWidget(self._make_icon(), self)
         self.icon_widget.setFixedSize(44, 44)
         lay.addWidget(self.icon_widget, 0, Qt.AlignmentFlag.AlignHCenter)
 
@@ -200,9 +263,17 @@ class ModuleFolderTile(CardWidget):
         self.name_label.setWordWrap(True)
         lay.addWidget(self.name_label)
 
+    def _make_icon(self) -> QIcon:
+        """按当前状态生成图标：SVG 优先，无效或缺文件回退文字图标。"""
+        if self._icon_svg:
+            icon = make_svg_icon(self._icon_svg)
+            if not icon.isNull():
+                return icon
+        return make_text_icon(self._icon_text, size=128)
+
     def refresh_icon(self):
-        """按当前主题重绘文字图标（主题切换时调用）。"""
-        self.icon_widget.setIcon(QIcon(make_text_icon(self._icon_text, size=128)))
+        """按当前主题重绘图标（主题切换时调用）。"""
+        self.icon_widget.setIcon(self._make_icon())
 
 
 # ============================================================
@@ -424,7 +495,7 @@ class HomePageWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        self._modules = []  # [(icon, name, category), ...]
+        self._modules = []  # [(icon, name, category, icon_svg), ...]
         self._tiles = {}    # name -> ModuleFolderTile（磁贴跨重建复用）
         self._project_dialog = None  # 项目信息卡片（首次打开时创建并复用）
         # 自绘 Gitee / GitCode logo（FluentWidgets 没有内置）
@@ -839,11 +910,12 @@ class HomePageWidget(QWidget):
             (self._chem_title, self._chem_flow, chem),
         ):
             title.setVisible(bool(mods))
-            for icon_text, name, _cat in mods:
+            for icon_text, name, _cat, icon_svg in mods:
                 tile = self._tiles.get(name)
                 if tile is None:
                     tile = ModuleFolderTile(
-                        name, icon_text, pinned=(name in pinned))
+                        name, icon_text, pinned=(name in pinned),
+                        icon_svg=icon_svg)
                     tile.clicked.connect(
                         lambda n=name: self.on_module_clicked(n))
                     tile.pin_btn.toggled.connect(
@@ -1659,7 +1731,7 @@ class SettingsWidget(QWidget):
     theme_change_requested = Signal(str)  # 'light' / 'dark'
     engine_change_requested = Signal(str)  # 'matplotlib' / 'pyqtgraph'
 
-    APP_VERSION = "1.8"
+    APP_VERSION = "1.9.2"
 
     def __init__(self):
         super().__init__()
@@ -2688,9 +2760,8 @@ class MainWindow(FluentWindow):
         self.module_widgets.append(home_page)
 
         # 各传感器模块（按发现顺序加载）
-        # 图标：用识别区里的文字（V/F/x/pH/v/A）渲染成 QIcon，
-        #       而不是 FluentIcon.PLAY（那个是三角形播放图标，不适合传感器）
-        home_modules = []  # [(icon, name, category), ...] 给主页用
+        # 图标：模块目录 assets/ 下 SVG 优先，无 SVG 回退文字图标
+        home_modules = []  # [(icon, name, category, icon_svg), ...] 给主页用
 
         for info in discovered:
             cls = getattr(info['module'], info['class_name'])
@@ -2704,14 +2775,17 @@ class MainWindow(FluentWindow):
             # 用模块名作为唯一标识（去掉空格等特殊字符）
             obj_name = "module_" + info['name'].replace(" ", "_").replace("（", "_").replace("）", "_")
             widget.setObjectName(obj_name)
-            # 把识别区文字图标（V/F/x/pH/v/A）画成 QIcon
-            text_icon = make_text_icon(info.get('icon', '?'))
-            nav_item = self.addSubInterface(widget, text_icon, info['name'])
-            self._nav_icons[info['name']] = (info.get('icon', '?'), nav_item)
+            # 图标：模块目录 assets/ 下 SVG 优先，无 SVG 回退文字图标
+            svg_path = module_icon_path(info)
+            module_icon = (make_svg_icon(svg_path)
+                           if svg_path and not make_svg_icon(svg_path).isNull()
+                           else make_text_icon(info.get('icon', '?')))
+            nav_item = self.addSubInterface(widget, module_icon, info['name'])
+            self._nav_icons[info['name']] = (info.get('icon', '?'), nav_item, svg_path)
             self.modules[info['name']] = widget
             self.module_widgets.append(widget)
 
-            home_modules.append((info['icon'], info['name'], info['category']))
+            home_modules.append((info['icon'], info['name'], info['category'], svg_path))
 
         # 设置（始终在最后）—— 用 FluentIcon.SETTING 注册到导航底部
         # 用 FluentWidgets SettingCard 系列组件实现的真实设置页
@@ -2753,7 +2827,8 @@ class MainWindow(FluentWindow):
             except Exception:
                 pass
             self._module_keys[widget] = key
-            self.data_service.register(key, info['name'], widget)
+            self.data_service.register(key, info['name'], widget,
+                                       icon_path=module_icon_path(info))
 
         # === 插件加载（失败静默，不影响主程序）===
         self.plugins = load_plugins(app_dir)
@@ -2874,9 +2949,14 @@ class MainWindow(FluentWindow):
         （QScrollArea 背景、QLabel 颜色、图表主题等）。FluentWidgets 组件
         的颜色由 setTheme 统一刷新，不在本方法职责内。
         """
-        # 重建侧边栏文字图标（深/浅色下 Normal 状态颜色不同）
-        for name, (icon_text, nav_item) in self._nav_icons.items():
+        # 重建侧边栏模块图标（SVG 直接重渲，文字图标按深/浅色换 Normal 颜色）
+        for name, (icon_text, nav_item, svg_path) in self._nav_icons.items():
             try:
+                if svg_path:
+                    icon = make_svg_icon(svg_path)
+                    if not icon.isNull():
+                        nav_item.setIcon(icon)
+                        continue
                 nav_item.setIcon(make_text_icon(icon_text))
             except Exception as e:
                 log.warning("重建模块 %s 导航图标失败: %s", name, e)

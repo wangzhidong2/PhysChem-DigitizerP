@@ -188,6 +188,9 @@ body {
   box-shadow: var(--icon-shadow);
 }
 
+/* 模块 SVG 图标（assets/icon.svg）填充容器 */
+.icon-svg { width: 78%; height: 78%; object-fit: contain; display: block; }
+
 /* 图标右下角状态点：连接/采集 */
 .desktop-icon .icon-dot {
   position: absolute;

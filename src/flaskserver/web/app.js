@@ -54,6 +54,21 @@ function iconText(name, key) {
   return s.slice(0, 1);
 }
 
+/* 模块图标：优先加载模块目录 assets/ 下的 SVG（/api/modules/<key>/icon.svg），
+   无 SVG（404）时回退为文字图标，行为与旧版一致。 */
+function iconNode(name, key) {
+  const img = document.createElement('img');
+  img.className = 'icon-svg';
+  img.alt = '';
+  img.draggable = false;
+  img.src = `/api/modules/${encodeURIComponent(key)}/icon.svg`;
+  img.addEventListener('error', () => {
+    const span = el('span', null, iconText(name, key));
+    img.replaceWith(span);
+  });
+  return img;
+}
+
 function fmt(v) {
   v = Number(v);
   if (!isFinite(v)) return '—';
@@ -331,7 +346,7 @@ function syncIcons() {
       node = el('div', 'desktop-icon');
       node.dataset.key = m.key;
       const img = el('div', 'icon-img');
-      img.appendChild(el('span', null, iconText(m.name, m.key)));
+      img.appendChild(iconNode(m.name, m.key));
       img.appendChild(el('span', 'icon-dot'));
       node.appendChild(img);
       node.appendChild(el('div', 'icon-name', m.name));
@@ -385,7 +400,7 @@ function createWindow(key) {
   // 标题栏
   const bar = el('div', 'window-titlebar');
   const icon = el('div', 'window-icon');
-  icon.textContent = iconText(m.name, key);
+  icon.appendChild(iconNode(m.name, key));
   bar.appendChild(icon);
   const title = el('div', 'window-title');
   title.appendChild(document.createTextNode(m.name + ' '));
@@ -620,7 +635,7 @@ function syncPanelList() {
       node.type = 'button';
       node.dataset.key = m.key;
       const icon = el('span', 'pm-icon');
-      icon.textContent = iconText(m.name, m.key);
+      icon.appendChild(iconNode(m.name, m.key));
       node.appendChild(icon);
       node.appendChild(el('span', 'pm-name', m.name));
       node.appendChild(el('span', 'pm-sub'));
