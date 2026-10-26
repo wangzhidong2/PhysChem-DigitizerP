@@ -6,6 +6,7 @@ flaskserver.server — Flask app、路由、token 校验、静态托管
 不持有数据、不认识任何具体传感器、不操作任何 Qt 控件。
 """
 
+import os
 import time
 from pathlib import Path
 
@@ -194,6 +195,21 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
     # --------------------------------------------------------
     # 控制端点（始终需要 token）
     # --------------------------------------------------------
+    @app.route('/api/modules/<key>/icon.svg')
+    def module_icon(key):
+        """模块 SVG 图标（模块目录 assets/ 下）；无图标返回 404，前端回退文字。"""
+        r = _check_token(write=False)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        path = service.icon_path(key)
+        if not path or not os.path.isfile(path):
+            return _error(404, 'no_icon', '模块无 SVG 图标: %s' % key)
+        resp = send_file(path, mimetype='image/svg+xml', conditional=True)
+        resp.headers['Cache-Control'] = 'no-cache'
+        return resp
+
     @app.route('/api/modules/<key>/collect', methods=['POST'])
     def collect(key):
         r = _check_token(write=True)

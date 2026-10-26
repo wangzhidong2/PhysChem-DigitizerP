@@ -3,6 +3,7 @@
 
 # === MODULE META ===
 # icon: x
+# icon_file: icon.svg
 # name: 超声波位移
 # category: physics
 # class: UltrasonicWidget

@@ -6621,6 +6621,7 @@ class DataService(QObject):
         super().__init__(parent)
         self._modules = {}          # key -> widget
         self._names = {}            # key -> 显示名
+        self._icon_paths = {}       # key -> 模块 SVG 图标绝对路径（无则缺省）
         self._queue = queue.Queue()
         self._timer = QTimer(self)
         self._timer.setInterval(50)
@@ -6629,14 +6630,25 @@ class DataService(QObject):
         self._started_at = time.time()
 
     # ---- 注册（main.py 在模块实例化后调用） ----
-    def register(self, key, name, widget):
-        """注册一个模块实例。key 为 URL 使用的稳定标识（如 'force_sensor'）。"""
+    def register(self, key, name, widget, icon_path=None):
+        """注册一个模块实例。key 为 URL 使用的稳定标识（如 'force_sensor'）。
+
+        icon_path: 模块 assets/ 下 SVG 图标的绝对路径（网页端图标用），
+                   None 表示该模块无 SVG 图标。
+        """
         self._modules[key] = widget
         self._names[key] = name
+        if icon_path:
+            self._icon_paths[key] = icon_path
         log.info("DataService 注册模块: %s (%s)", name, key)
+
+    def icon_path(self, key):
+        """模块 SVG 图标路径；未注册或无图标返回 None。"""
+        return self._icon_paths.get(key)
 
     def unregister(self, key):
         self._modules.pop(key, None)
+        self._icon_paths.pop(key, None)
         self._names.pop(key, None)
 
     # ---- 只读（任意线程安全） ----
