@@ -294,7 +294,8 @@ def parse_module_meta(file_path):
         file_path: 模块 .py 文件的绝对路径
 
     Returns:
-        dict: {'icon': ..., 'name': ..., 'category': ..., 'class': ...}
+        dict: {'icon': ..., 'name': ..., 'category': ..., 'class': ...,
+               可选 'icon_file': ...（assets/ 下图标文件名，多模块共目录时区分图标）}
         解析失败返回 None
     """
     try:
@@ -387,6 +388,7 @@ def scan_modules(modules_dir):
             discovered.append({
                 'name': meta['name'],
                 'icon': meta['icon'],
+                'icon_file': meta.get('icon_file'),
                 'category': meta['category'],
                 'class_name': class_name,
                 'module': mod,
