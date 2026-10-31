@@ -44,7 +44,7 @@ with _contextlib.redirect_stdout(_io.StringIO()):
     from qfluentwidgets import (
         FluentWindow, FluentIcon as FIF, NavigationItemPosition,
         Theme, setTheme, PushButton, PrimaryPushButton,
-        ComboBox, InfoBar, InfoBarPosition, BodyLabel,
+        ComboBox, InfoBar, InfoBarIcon, InfoBarPosition, BodyLabel,
         TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
         SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
         SwitchSettingCard, SwitchButton, SpinBox, MessageBox, MessageBoxBase, Dialog,
@@ -1740,7 +1740,7 @@ class SettingsWidget(QWidget):
         # 主题模式：浅色 / 深色 / 跟随系统
         self._theme_combo_items = ["浅色模式", "深色模式", "跟随系统"]
         self._theme_combo_values = ["light", "dark", "auto"]
-        self._notice = None              # 顶部「自由软件声明」块（init_ui 里创建）
+        self._notice = None              # 顶部「自由软件声明」InfoBar（init_ui 里创建，关闭即销毁）
         # 当前主题模式（显式记录：qconfig.theme 会把 AUTO 解析成 LIGHT/DARK，
         # 无法据此区分「跟随系统」，故单独维护；同步下拉框用）
         self._theme_mode = "light"
@@ -1777,9 +1777,23 @@ class SettingsWidget(QWidget):
         title = TitleLabel("设置")
         layout.addWidget(title)
 
-        # 自由软件声明（置顶，与「项目信息」卡片同一份文案/配色）
-        self._notice = build_free_software_notice(
-            self._content, title_size=13, body_size=11)
+        # 自由软件声明：Fluent 原生 InfoBar 常驻通知条。
+        # duration=-1 不自动消失；position=NONE 嵌入布局而非浮动弹出。
+        # 点 × 走原生 close → deleteLater，仅本次会话隐藏；不写任何配置，
+        # 下次启动设置页重新创建，声明依旧显示（关闭选择不跨会话保存）。
+        # 正文用纯文本：InfoBar 按字符宽度自动换行，不能传富文本 HTML。
+        self._notice = InfoBar(
+            InfoBarIcon.INFORMATION, "自由软件声明",
+            "本软件是自由软件，你可以自由使用、修改和分发；"
+            "分发时请遵守许可证约定，保留版权与许可声明。\n"
+            "官方目前没有提供付费服务，如果你认为你的自由受到了侵害，"
+            "请提交 Issue 给我，并与卖家协商解决。",
+            orient=Qt.Orientation.Vertical,
+            isClosable=True,
+            duration=-1,
+            position=InfoBarPosition.NONE,
+            parent=self._content,
+        )
         layout.addWidget(self._notice)
 
         # ===== 外观分组（主题） =====
@@ -2685,12 +2699,11 @@ class SettingsWidget(QWidget):
             self._theme_combo.blockSignals(False)
 
     def apply_theme(self, theme):
-        """主题切换时刷新本页背景、声明块配色与下拉框同步。"""
+        """主题切换时刷新本页背景与下拉框同步（InfoBar 声明条随 Fluent 自动换色）。"""
         # 用存储的引用刷新页面/滚动区背景
         self._scroll.setStyleSheet(scroll_area_style())
         self._content.setStyleSheet(page_bg_style())
-        # 自由软件声明块（自定义 QSS 面板，Fluent 不会自动换色）
-        apply_notice_theme(getattr(self, '_notice', None))
+        # 自由软件声明已是 Fluent 原生 InfoBar，随主题自动换色，无需手动刷新
         # 同步下拉框
         self._sync_theme_combo_from_current()
 
