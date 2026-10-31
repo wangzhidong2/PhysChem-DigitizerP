@@ -1777,13 +1777,13 @@ class SettingsWidget(QWidget):
         title = TitleLabel("设置")
         layout.addWidget(title)
 
-        # 自由软件声明：Fluent 原生 InfoBar 常驻通知条。
+        # 自由软件声明：Fluent 原生 InfoBar 常驻通知条（Error 红色样式）。
         # duration=-1 不自动消失；position=NONE 嵌入布局而非浮动弹出。
         # 点 × 走原生 close → deleteLater，仅本次会话隐藏；不写任何配置，
         # 下次启动设置页重新创建，声明依旧显示（关闭选择不跨会话保存）。
         # 正文用纯文本：InfoBar 按字符宽度自动换行，不能传富文本 HTML。
         self._notice = InfoBar(
-            InfoBarIcon.INFORMATION, "自由软件声明",
+            InfoBarIcon.ERROR, "自由软件声明",
             "本软件是自由软件，你可以自由使用、修改和分发；"
             "分发时请遵守许可证约定，保留版权与许可声明。\n"
             "官方目前没有提供付费服务，如果你认为你的自由受到了侵害，"
@@ -1794,6 +1794,13 @@ class SettingsWidget(QWidget):
             position=InfoBarPosition.NONE,
             parent=self._content,
         )
+        # 文本左对齐：InfoBar 默认把标题/正文以 AlignTop 加入布局，
+        # 非零对齐使标签按内容宽度在条内居中；改为左对齐并同步标签内部对齐。
+        for _label in (self._notice.titleLabel, self._notice.contentLabel):
+            self._notice.textLayout.setAlignment(
+                _label, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            _label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._notice)
 
         # ===== 外观分组（主题） =====
