@@ -42,7 +42,7 @@ import contextlib as _contextlib
 with _contextlib.redirect_stdout(_io.StringIO()):
     from qfluentwidgets import (
         FluentWindow, FluentIcon as FIF, NavigationItemPosition,
-        Theme, setTheme, PushButton, PrimaryPushButton,
+        PushButton, PrimaryPushButton,
         ComboBox, InfoBar, InfoBarIcon, InfoBarPosition, BodyLabel,
         TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
         SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
@@ -76,6 +76,7 @@ from core import (
     ChartPanel, chart_engine_available, resolve_chart_engine,
     clear_sensor_config, export_sensor_config, import_sensor_config, reset_all_config,
     DEFAULT_THEME_COLOR, system_accent_color, set_app_theme_color,
+    current_theme_mode, set_app_theme_mode, restore_app_theme,
     get_logger, get_log_file_path, setup_logging,
     set_log_enabled, set_log_level, set_log_max_entries,
     DataService,
@@ -1184,23 +1185,17 @@ class ProjectInfoDialog(MessageBoxBase):
     def _fit_scroll(self):
         """把滚动区高度收到内容自然高度（超出上限才滚动）。
 
-        不用 `content.sizeHint()`：QWidget 的 sizeHint 受滚动区宽度与
-        布局约束影响，实测与"刚好放下"的高度不一致（会白挂一条滚动条）。
-        这里改为累加各级布局的实际高度，结果就是内容的自然高度。
+        改用布局整体的 sizeHint()：showEvent 后的 singleShot(0) 时刻
+        content 宽度已由 widgetResizable 确定，布局会按该宽度计算
+        heightForWidth，自动换行控件（InfoBar、WordWrap 简介）的高度
+        因此准确。旧实现逐 item 累加 widget.sizeHint()，忽略
+        heightForWidth，首次打开会算出偏小高度导致内容重叠（issue #13）。
         """
         layout = self.content.layout()
         if layout is None:
             return
-        margin = layout.contentsMargins()
-        total = margin.top() + margin.bottom()
-        total += layout.spacing() * max(0, layout.count() - 1)
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            widget = item.widget()
-            if widget is not None:
-                total += widget.sizeHint().height()
-            elif item.layout() is not None:
-                total += item.layout().sizeHint().height()
+        layout.activate()
+        total = layout.sizeHint().height()
         self._scroll.setFixedHeight(min(total, self.MAX_SCROLL_H))
 
 
@@ -1649,9 +1644,9 @@ class SettingsWidget(QWidget):
         self._theme_combo_items = ["浅色模式", "深色模式", "跟随系统"]
         self._theme_combo_values = ["light", "dark", "auto"]
         self._notice = None              # 顶部「自由软件声明」InfoBar（init_ui 里创建，关闭即销毁）
-        # 当前主题模式（显式记录：qconfig.theme 会把 AUTO 解析成 LIGHT/DARK，
-        # 无法据此区分「跟随系统」，故单独维护；同步下拉框用）
-        self._theme_mode = "light"
+        # 当前主题模式（从配置派生：qconfig.themeMode 存于 app_config.json；
+        # qconfig.theme 会把 AUTO 解析成 LIGHT/DARK，无法据此区分「跟随系统」）
+        self._theme_mode = current_theme_mode()
         # 「清除用户设置」程序内开启保存开关时，跳过开启确认框（用户已确认过）
         self._suppress_persistence_confirm = False
         # 自定义主题色（默认蓝色；「跟随系统主题色」模式下系统色不落盘，此值保留）
@@ -2565,15 +2560,9 @@ class SettingsWidget(QWidget):
             return
         mode = self._theme_combo_values[idx]
         self._theme_mode = mode
-        if mode == "auto":
-            # 跟随系统：交给 FluentWidgets 处理 AUTO 主题。
-            # 传 "auto" 而非解析后的实际亮暗——change_app_theme 收到 auto
-            # 时不再 setTheme(固定主题)，避免把 AUTO 覆盖掉导致主题模式
-            # 反复横跳 + 全量刷新死循环。
-            setTheme(Theme.AUTO)
-            self.theme_change_requested.emit("auto")
-        else:
-            self.theme_change_requested.emit(mode)
+        # 统一由 MainWindow.change_app_theme 写入配置并触发刷新；
+        # auto 也走同一入口，不再单独 setTheme(Theme.AUTO)
+        self.theme_change_requested.emit(mode)
 
     def _sync_theme_combo_from_current(self):
         """按当前主题模式反向同步下拉框选项。
@@ -2621,10 +2610,10 @@ class MainWindow(FluentWindow):
         font = QFont("Segoe UI", 9)
         self.setFont(font)
 
-        self.current_theme = "light"
-        # 主题模式（light/dark/auto）：auto 下监听 qconfig.themeChanged，
-        # 系统主题变化时自动刷新自定义控件（跟随系统真实生效）
-        self._theme_mode = "light"
+        # 主题模式从配置派生（app_config.json 的 QFluentWidgets.ThemeMode，
+        # 启动时 restore_app_theme 已恢复），不再硬编码 light
+        self.current_theme = "dark" if isDarkTheme() else "light"
+        self._theme_mode = current_theme_mode()
         # 退出确认状态：closeEvent 延迟弹框（详见 closeEvent 注释）
         self._exit_confirmed = False
         self._exit_dialog_open = False
@@ -2634,8 +2623,9 @@ class MainWindow(FluentWindow):
         self._nav_icons = {}  # name -> (icon_text, nav_item)，主题切换时重建图标
 
         self.init_ui()
-        # 跟随系统模式下，qfluentwidgets 系统主题监听器改变主题时会广播
-        # themeChanged；仅 auto 模式响应，固定模式由 change_app_theme 负责
+        # 主题变化统一入口：固定模式由 change_app_theme 触发 setTheme，
+        # 跟随系统由 qfluentwidgets 系统主题监听器触发，均广播 themeChanged，
+        # 自定义控件（QSS 背景、文字色、图表、导航图标）在此统一刷新
         from qfluentwidgets import qconfig
         qconfig.themeChanged.connect(self._on_fluent_theme_changed)
         self.apply_modern_style()
@@ -2816,41 +2806,30 @@ class MainWindow(FluentWindow):
             self.switchTo(self.modules[module_name])
 
     def change_app_theme(self, theme):
-        """切换应用主题（light / dark / auto）。
+        """切换应用主题（light/dark/auto）：统一走 core.set_app_theme_mode。
 
-        auto（跟随系统）：设置页已把 qconfig 主题置为 Theme.AUTO，这里
-        只按系统实际亮暗刷新自定义控件，**不再调用 setTheme**——否则会把
-        AUTO 覆盖成固定主题，导致主题模式与下拉框反复横跳、每次系统主题
-        变化都触发秒级全量刷新，界面卡死。
+        setTheme 落盘 QFluentWidgets.ThemeMode 并广播 themeChanged，
+        自定义控件刷新由 _on_fluent_theme_changed 统一完成（固定模式与
+        跟随系统同一路径），此处不再手动全量刷新，避免重复与递归。
         """
         if theme not in ("light", "dark", "auto"):
             return
         self._theme_mode = theme
-        if theme == "auto":
-            actual = "dark" if isDarkTheme() else "light"
-            self.current_theme = actual
-            self._refresh_custom_theme(actual)
-            return
-        self.current_theme = theme
-        self.apply_theme(theme)       # setTheme 固定主题（刷新 FluentWidgets）
-        self._refresh_custom_theme(theme)
+        set_app_theme_mode(theme)
 
     def _on_fluent_theme_changed(self, _theme=None):
-        """qconfig.themeChanged 回调：仅跟随系统模式下重刷自定义控件。
+        """qconfig.themeChanged 回调：统一刷新自定义控件。
 
-        固定模式下 setTheme 由 change_app_theme 驱动，其已做全量刷新，
-        这里再刷会造成重复开销；auto 模式下系统主题（由 qfluentwidgets
-        系统监听器触发）改变时，FluentWidgets 组件自动变色，而自定义
-        QSS 控件需要手动刷新——本回调补齐这部分。
+        固定模式由 change_app_theme 触发，跟随系统由 qfluentwidgets 的
+        系统主题监听器触发，二者都经本回调刷新；isDarkTheme() 此时已
+        反映新主题（qconfig.set 先更新值再发信号）。
         """
-        if self._theme_mode != "auto":
-            return
         try:
             actual = "dark" if isDarkTheme() else "light"
             self.current_theme = actual
             self._refresh_custom_theme(actual)
         except Exception as e:
-            log.warning("跟随系统主题刷新失败: %s", e)
+            log.warning("主题变化刷新自定义控件失败: %s", e)
 
     def _refresh_custom_theme(self, theme):
         """按当前亮/暗主题刷新自定义 widget 颜色（不调用 setTheme）。
@@ -2894,17 +2873,6 @@ class MainWindow(FluentWindow):
                     widget.apply_theme(theme)
                 except Exception as e:
                     log.warning("模块 %s 主题切换失败: %s", name, e)
-
-    def apply_theme(self, theme):
-        """切换 FluentWidgets 主题（light/dark）。
-
-        FluentWindow 自带 WinUI3 风格样式，不再需要手动 QSS。
-        setTheme 会自动刷新所有 FluentWidgets 组件的颜色。
-        """
-        if theme == "dark":
-            setTheme(Theme.DARK)
-        else:
-            setTheme(Theme.LIGHT)
 
     def change_chart_engine(self, engine):
         """热切换图表引擎：所有已加载模块的 ChartPanel 原地换引擎。
@@ -3211,6 +3179,10 @@ def main():
     _install_qt_warning_filter()
     setup_logging()          # 按 app_config.json 初始化运行日志（默认静默）
     app = QApplication(sys.argv)
+    # 恢复上次主题模式（QFluentWidgets.ThemeMode，存于 app_config.json）：
+    # 必须在任何 Fluent 组件创建之前执行，否则配置与组件样式不一致
+    # （配置深色 + 组件浅色的混合界面，issue #13）
+    restore_app_theme()
     # 应用图标（.ico 同时设在 app 和 window 上）
     icon_path = str(Path(__file__).parent / "assets" / "images" / "icon.ico")
     app_icon = QIcon(icon_path)
