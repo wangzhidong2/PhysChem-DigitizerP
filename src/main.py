@@ -31,8 +31,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect, QTimer, QUrl
 from PySide6.QtGui import (QFont, QIcon, QPixmap, QPainter, QColor,
-                           QFontMetrics, QGuiApplication, QDesktopServices,
-                           QTextDocument)
+                           QFontMetrics, QGuiApplication, QDesktopServices)
 
 # FluentWidgets — WinUI3 风格组件库（社区版，GPLv3 + 商业双协议）
 # 文档：https://qfluentwidgets.com/
@@ -985,87 +984,39 @@ class HomePageWidget(QWidget):
 
 
 # ============================================================
-# 自由软件声明（「项目信息」卡片与设置页共用）
+# 自由软件声明（「项目信息」卡片与设置页共用，Fluent 原生 InfoBar）
 # ============================================================
-def free_software_notice_text():
-    """声明文案（含主题相关的高亮色，主题切换后需重设）。"""
-    accent = "#ffd166" if isDarkTheme() else "#b45309"   # 暖色强调
-    return (
-        "本软件是自由软件，你可以自由使用、修改和分发；"
-        "分发时请遵守许可证约定，保留版权与许可声明。<br>"
-        "<b><span style='color:%s'>官方目前没有提供付费服务</span></b>，"
-        "如果你认为你的自由受到了侵害，请"
-        "<b><span style='color:%s'>提交 Issue</span></b>给我，"
-        "并与卖家协商解决。" % (accent, accent))
+def build_free_software_infobar(parent):
+    """构建自由软件声明条：红色背景 + 信息 i 图标的常驻 InfoBar。
 
-
-def free_software_notice_style():
-    """声明块外观：淡色面板 + 左侧竖条，底色/边框随主题。"""
-    if isDarkTheme():
-        bg, border, bar = "#3a3320", "#4d4326", "#ffd166"
-    else:
-        bg, border, bar = "#fff8e6", "#f0dfae", "#e0a020"
-    return ("""
-        #freeSoftwareNotice {
-            background: %s;
-            border: 1px solid %s;
-            border-left: 3px solid %s;
-            border-radius: 6px;
-        }
-        #freeSoftwareNotice QLabel { background: transparent; }
-    """ % (bg, border, bar))
-
-
-def apply_notice_theme(notice):
-    """按当前主题刷新声明块（文案高亮色、正文色、面板底色一起换）。"""
-    if notice is None:
-        return
-    fg = _theme_colors()['text_primary']
-    notice.setStyleSheet(free_software_notice_style())
-    label = notice.findChild(_WrappedLabel)
-    if label is not None:
-        label.setStyleSheet("color: %s;" % fg)
-        label.setText(free_software_notice_text())
-    title = notice.findChild(QLabel, "freeSoftwareNoticeTitle")
-    if title is not None:
-        title.setStyleSheet("color: %s; background: transparent;" % fg)
-
-
-def build_free_software_notice(parent, title_size=12, body_size=11):
-    """构建自由软件声明块（设置页顶部与「项目信息」卡片共用）。
-
-    文案分三层：定性（本软件是自由软件）→ 义务（分发遵守许可证）→
-    维权路径（官方无付费服务；被收费时先提 Issue，再与卖家协商）。
-    维权路径那句用强调色加粗，即"异色"部分；配色随主题切换。
-
-    Args:
-        parent: 父控件
-        title_size: 标题字号（卡片里 12，设置页顶部 13）
-        body_size: 正文字号（卡片里 11）
+    duration=-1 不自动消失；position=NONE 由调用方嵌入布局而非浮动弹出。
+    点 × 走原生 close → deleteLater，仅本次会话/当前弹窗隐藏；不写任何
+    配置，下次启动（或下次打开弹窗）重新创建，声明依旧显示。
+    正文用纯文本：InfoBar 按字符宽度自动换行，不能传富文本 HTML。
     """
-    notice = QWidget(parent)
-    notice.setObjectName("freeSoftwareNotice")
-    col = QVBoxLayout(notice)
-    col.setContentsMargins(12, 10, 12, 10)
-    col.setSpacing(6)
-
-    head = QHBoxLayout()
-    head.setSpacing(8)
-    icon = IconWidget(FIF.INFO, notice)
-    icon.setFixedSize(18, 18)
-    head.addWidget(icon, 0, Qt.AlignVCenter)
-    title = QLabel("自由软件声明", notice)
-    title.setObjectName("freeSoftwareNoticeTitle")
-    title.setFont(QFont("Segoe UI", title_size, QFont.Weight.DemiBold))
-    head.addWidget(title)
-    head.addStretch()
-    col.addLayout(head)
-
-    label = _WrappedLabel(parent=notice)
-    label.setFont(QFont("Segoe UI", body_size))
-    col.addWidget(label)
-
-    apply_notice_theme(notice)
+    notice = InfoBar(
+        InfoBarIcon.ERROR, "自由软件声明",
+        "本软件是自由软件，你可以自由使用、修改和分发；"
+        "分发时请遵守许可证约定，保留版权与许可声明。\n"
+        "官方目前没有提供付费服务，如果你认为你的自由受到了侵害，"
+        "请提交 Issue 给我，并与卖家协商解决。",
+        orient=Qt.Orientation.Vertical,
+        isClosable=True,
+        duration=-1,
+        position=InfoBarPosition.NONE,
+        parent=parent,
+    )
+    # 图标用信息 i 而非错误 ×：QSS type 保持 Error（红色背景不变），
+    # 仅把图标绘制源换成标准 Fluent Info 图标（亮/暗主题自动配色）。
+    notice.iconWidget.icon = FIF.INFO
+    notice.iconWidget.update()
+    # 文本左对齐：InfoBar 默认把标题/正文以 AlignTop 加入布局，
+    # 非零对齐使标签按内容宽度在条内居中；改为左对齐并同步标签内部对齐。
+    for label in (notice.titleLabel, notice.contentLabel):
+        notice.textLayout.setAlignment(
+            label, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     return notice
 
 
@@ -1103,40 +1054,6 @@ def add_titlebar_close_button(dialog, layout, title_widget):
 # ============================================================
 # 「项目信息」卡片（主页聚合按钮弹出）
 # ============================================================
-class _WrappedLabel(QLabel):
-    """自动换行且高度随宽度变化的富文本标签。
-
-    普通 QLabel 在垂直布局里只上报单行 sizeHint，多行富文本会被压扁；
-    这里补上 heightForWidth，把文档按当前宽度排版后回填最小高度，长段落
-    才能完整显示。内容里的 `<br>` 由富文本渲染，避免依赖具体字体换行。
-    """
-
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.setWordWrap(True)
-        self.setTextFormat(Qt.TextFormat.RichText)
-        policy = self.sizePolicy()
-        policy.setHeightForWidth(True)
-        self.setSizePolicy(policy)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        """按给定宽度计算所需高度（宽度未定时退回单行高度）。"""
-        if width <= 0:
-            return self.sizeHint().height()
-        doc = QTextDocument()
-        doc.setDefaultFont(self.font())
-        doc.setHtml(self.text())
-        doc.setTextWidth(width)
-        return int(doc.size().height()) + 2
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.setMinimumHeight(self.heightForWidth(self.width()))
-
-
 class ProjectInfoDialog(MessageBoxBase):
     """项目信息卡片：项目简介 + 标签 + 自由软件声明 + 三平台仓库地址。
 
@@ -1197,8 +1114,8 @@ class ProjectInfoDialog(MessageBoxBase):
         body.setContentsMargins(12, 8, 12, 8)
         body.setSpacing(6)
 
-        # 自由软件声明：字号加大后置于卡片顶部（最需要先被看到的一段）
-        body.addWidget(self._build_notice())
+        # 自由软件声明置于卡片顶部（最需要先被看到的一段），与设置页一致靠左不撑满
+        body.addWidget(self._build_notice(), 0, Qt.AlignmentFlag.AlignLeft)
 
         body.addWidget(CaptionLabel("项目简介", self.content))
         desc = BodyLabel(
@@ -1289,22 +1206,13 @@ class ProjectInfoDialog(MessageBoxBase):
 
     # ---- 内容构建 ----
     def _build_notice(self):
-        """自由软件声明块：与设置页顶部共用同一个构建函数。
+        """自由软件声明条：与设置页顶部共用同一个 InfoBar 构建函数。
 
-        字号比正文大一档（正文 11pt / 标题 12pt），且置于卡片顶部——
-        这是最需要先被看到的一段。
+        置于卡片顶部——这是最需要先被看到的一段；红色背景 + 信息 i 图标，
+        随 Fluent 主题自动换色，无需手动刷新。
         """
-        self._notice = build_free_software_notice(
-            self.content, title_size=11, body_size=10)
-        self._notice_label = self._notice.findChild(_WrappedLabel)
-        self._notice_title = self._notice.findChild(
-            QLabel, "freeSoftwareNoticeTitle")
+        self._notice = build_free_software_infobar(self.content)
         return self._notice
-
-    def _style_notice(self, notice=None, label=None):
-        """按当前主题刷新声明块（薄封装，便于 apply_theme 直接调用）。"""
-        apply_notice_theme(notice if notice is not None
-                           else getattr(self, '_notice', None))
 
     def _build_tags(self):
         """标签胶囊行（配色固定，亮暗主题下都清晰）。"""
@@ -1398,7 +1306,7 @@ class ProjectInfoDialog(MessageBoxBase):
         c = _theme_colors()
         self.content.setStyleSheet(
             "#projectBody { background: %s; }" % c['content_bg'])
-        self._style_notice()    # 声明块：底色/边框/高亮色都随主题
+        # 声明条已是 Fluent 原生 InfoBar，随主题自动换色，无需手动刷新
         self._scroll.setStyleSheet("""
             QScrollArea {{
                 border: 1px solid {sep};
@@ -1777,34 +1685,8 @@ class SettingsWidget(QWidget):
         title = TitleLabel("设置")
         layout.addWidget(title)
 
-        # 自由软件声明：Fluent 原生 InfoBar 常驻通知条（红色背景 + 信息 i 图标）。
-        # duration=-1 不自动消失；position=NONE 嵌入布局而非浮动弹出。
-        # 点 × 走原生 close → deleteLater，仅本次会话隐藏；不写任何配置，
-        # 下次启动设置页重新创建，声明依旧显示（关闭选择不跨会话保存）。
-        # 正文用纯文本：InfoBar 按字符宽度自动换行，不能传富文本 HTML。
-        self._notice = InfoBar(
-            InfoBarIcon.ERROR, "自由软件声明",
-            "本软件是自由软件，你可以自由使用、修改和分发；"
-            "分发时请遵守许可证约定，保留版权与许可声明。\n"
-            "官方目前没有提供付费服务，如果你认为你的自由受到了侵害，"
-            "请提交 Issue 给我，并与卖家协商解决。",
-            orient=Qt.Orientation.Vertical,
-            isClosable=True,
-            duration=-1,
-            position=InfoBarPosition.NONE,
-            parent=self._content,
-        )
-        # 图标用信息 i 而非错误 ×：QSS type 保持 Error（红色背景不变），
-        # 仅把图标绘制源换成标准 Fluent Info 图标（亮/暗主题自动配色）。
-        self._notice.iconWidget.icon = FIF.INFO
-        self._notice.iconWidget.update()
-        # 文本左对齐：InfoBar 默认把标题/正文以 AlignTop 加入布局，
-        # 非零对齐使标签按内容宽度在条内居中；改为左对齐并同步标签内部对齐。
-        for _label in (self._notice.titleLabel, self._notice.contentLabel):
-            self._notice.textLayout.setAlignment(
-                _label, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-            _label.setAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        # 自由软件声明（与「项目信息」卡片共用同一条 InfoBar，关闭选择不跨会话保存）
+        self._notice = build_free_software_infobar(self._content)
         # 整体靠左、不撑满：addWidget 带非零对齐标志后声明条按内容宽度
         # （sizeHint）放置并靠左，不再随页面拉伸；窗口缩放时仍自动换行。
         layout.addWidget(self._notice, 0, Qt.AlignmentFlag.AlignLeft)
