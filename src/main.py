@@ -1777,7 +1777,7 @@ class SettingsWidget(QWidget):
         title = TitleLabel("设置")
         layout.addWidget(title)
 
-        # 自由软件声明：Fluent 原生 InfoBar 常驻通知条（Error 红色样式）。
+        # 自由软件声明：Fluent 原生 InfoBar 常驻通知条（红色背景 + 信息 i 图标）。
         # duration=-1 不自动消失；position=NONE 嵌入布局而非浮动弹出。
         # 点 × 走原生 close → deleteLater，仅本次会话隐藏；不写任何配置，
         # 下次启动设置页重新创建，声明依旧显示（关闭选择不跨会话保存）。
@@ -1794,6 +1794,10 @@ class SettingsWidget(QWidget):
             position=InfoBarPosition.NONE,
             parent=self._content,
         )
+        # 图标用信息 i 而非错误 ×：QSS type 保持 Error（红色背景不变），
+        # 仅把图标绘制源换成标准 Fluent Info 图标（亮/暗主题自动配色）。
+        self._notice.iconWidget.icon = FIF.INFO
+        self._notice.iconWidget.update()
         # 文本左对齐：InfoBar 默认把标题/正文以 AlignTop 加入布局，
         # 非零对齐使标签按内容宽度在条内居中；改为左对齐并同步标签内部对齐。
         for _label in (self._notice.titleLabel, self._notice.contentLabel):
