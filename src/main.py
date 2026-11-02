@@ -1801,7 +1801,9 @@ class SettingsWidget(QWidget):
                 _label, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             _label.setAlignment(
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(self._notice)
+        # 整体靠左、不撑满：addWidget 带非零对齐标志后声明条按内容宽度
+        # （sizeHint）放置并靠左，不再随页面拉伸；窗口缩放时仍自动换行。
+        layout.addWidget(self._notice, 0, Qt.AlignmentFlag.AlignLeft)
 
         # ===== 外观分组（主题） =====
         group_appearance = SettingCardGroup("外观", self._content)
