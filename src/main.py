@@ -2628,7 +2628,8 @@ class MainWindow(FluentWindow):
         # 自定义控件（QSS 背景、文字色、图表、导航图标）在此统一刷新
         from qfluentwidgets import qconfig
         qconfig.themeChanged.connect(self._on_fluent_theme_changed)
-        self.apply_modern_style()
+        # 不再调用 apply_modern_style()：该方法强制浅色，既会覆盖启动时
+        # restore_app_theme() 恢复的主题，其内部 apply_theme 已随主题重写移除
 
     def init_ui(self):
         self.setWindowTitle("PhysChem-DigitizerP")
@@ -2914,10 +2915,6 @@ class MainWindow(FluentWindow):
                 except Exception as e:
                     log.warning("[%s] 图表字体重绘失败: %s", name, e)
         log.info("✓ 已按新字体重绘 %d 个图表面板", count)
-
-    def apply_modern_style(self):
-        self.current_theme = "light"
-        self.apply_theme("light")
 
     def _restore_window_geometry(self):
         """窗口记忆：还原上次退出时记住的窗口位置与大小。
