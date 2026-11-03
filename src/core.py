@@ -1064,6 +1064,49 @@ def set_app_theme_color(color, save=True):
     setThemeColor(QColor(color), save=save)
 
 
+def current_theme_mode():
+    """当前主题模式：'light' / 'dark' / 'auto'。
+
+    主题状态的唯一事实来源是 qconfig.themeMode（持久化在
+    app_config.json 的 QFluentWidgets.ThemeMode）。qconfig.theme 会把
+    AUTO 解析成实际亮暗，因此判断「跟随系统」必须读 themeMode，
+    不能用 isDarkTheme()。
+    """
+    from qfluentwidgets import Theme
+    mode = qconfig.get(qconfig.themeMode)
+    if mode == Theme.DARK:
+        return 'dark'
+    if mode == Theme.AUTO:
+        return 'auto'
+    return 'light'
+
+
+def set_app_theme_mode(mode):
+    """切换主题模式（light/dark/auto）并写入 app_config.json。
+
+    注意 setTheme 的 save 默认是 False，必须显式 save=True 才会把
+    QFluentWidgets.ThemeMode 落盘；自定义控件的刷新由
+    qconfig.themeChanged 信号统一驱动（固定模式与跟随系统同一路径），
+    调用方无需再手动遍历模块刷新。
+    """
+    from qfluentwidgets import Theme, setTheme
+    mapping = {'light': Theme.LIGHT, 'dark': Theme.DARK, 'auto': Theme.AUTO}
+    if mode not in mapping:
+        return
+    setTheme(mapping[mode], save=True)
+
+
+def restore_app_theme():
+    """启动时恢复上次主题模式（QApplication 之后、主窗口创建之前调用）。
+
+    qconfig.load 只把 ThemeMode 读进配置，不会主动刷新 Fluent 组件
+    样式；不显式 setTheme 一次，就会出现「配置是深色、组件仍浅色」
+    的混合界面。save=False：仅应用，不重写配置文件。
+    """
+    from qfluentwidgets import setTheme
+    setTheme(qconfig.get(qconfig.themeMode), save=False)
+
+
 class SystemAccentListener(QAbstractNativeEventFilter):
     """监听 Windows 系统强调色变化（WM_DWMCOLORIZATIONCOLORCHANGED）。
 
@@ -5432,11 +5475,22 @@ def apply_module_theme(widget, theme=None):
 
     c = _theme_colors()
     dark = isDarkTheme()
-    # 亮色硬编码色 → 暗色语义色
+    # 双向语义色映射：light ↔ dark 成对替换，覆盖 _theme_colors() 全部主色
+    # 及历史硬编码别名（#444/#888 等）。替换按键长降序，避免 #444 抢先
+    # 命中 #444444 之类的子串。
     light_to_dark = {
-        '#1a1a1a': c['text_primary'],
+        '#f3f3f3': '#202020',   # page_bg
+        '#ffffff': '#2d2d2d',   # card_bg / input_bg
+        '#e5e5e5': '#404040',   # card_border
+        '#f6f6f6': '#3d3d3d',   # content_bg
+        '#1a1a1a': '#ffffff',   # text_primary
+        '#444444': '#c0c0c0',   # text_secondary
+        '#0078d4': '#60cdff',   # accent
+        '#106ebe': '#7dd8ff',   # accent_hover
+        '#f0f0f0': '#3d3d3d',   # hover_bg
+        '#ebebeb': '#3a3a3a',   # separator
+        # 历史硬编码别名 → 暗色语义色
         '#1A1A1A': c['text_primary'],
-        '#444444': c['text_secondary'],
         '#444':    c['text_secondary'],
         '#666666': c['text_secondary'],
         '#888888': c['text_hint'],
@@ -5445,27 +5499,56 @@ def apply_module_theme(widget, theme=None):
         '#999':    c['text_hint'],
         '#fafafa': c['card_bg'],
         '#f5f5f5': c['card_bg'],
-        '#f0f0f0': c['hover_bg'],
-        '#e5e5e5': c['card_border'],
-        '#ebebeb': c['separator'],
         '#ececec': c['card_border'],
         '#d0d0d0': c['card_border'],
         '#b0b0b0': c['card_border'],
         '#333333': c['text_secondary'],
         '#333':    c['text_secondary'],
     }
+    dark_to_light = {
+        '#202020': '#f3f3f3',   # page_bg
+        '#2d2d2d': '#ffffff',   # card_bg / input_bg
+        '#404040': '#e5e5e5',   # card_border
+        '#3d3d3d': '#f6f6f6',   # content_bg
+        '#ffffff': '#1a1a1a',   # text_primary（仅在深色 QSS 上反向，安全）
+        '#c0c0c0': '#444444',   # text_secondary
+        '#60cdff': '#0078d4',   # accent
+        '#7dd8ff': '#106ebe',   # accent_hover
+        '#454545': '#e5e5e5',   # pressed_bg
+        '#3a3a3a': '#ebebeb',   # separator
+    }
+    # 深色特征色：浅色 QSS 几乎不会出现的暗色背景/边框值，
+    # 用于判断缓存的原始 QSS 是否诞生于深色主题。
+    dark_features = ('#202020', '#2d2d2d', '#404040', '#3d3d3d',
+                     '#454545', '#3a3a3a', '#60cdff', '#7dd8ff')
+
+    def _looks_dark(qss):
+        low = qss.lower()
+        return any(k in low for k in dark_features)
+
+    def _remap(qss, mapping):
+        # 两阶段替换：先统一换成占位符，再换成目标色。目标色可能恰好是
+        # 另一条规则的源色（如 #ffffff ↔ #2d2d2d 互映射），单阶段顺序
+        # 替换会把刚换好的颜色再次改掉（实测背景无法还原浅色）。
+        keys = sorted(mapping, key=len, reverse=True)
+        for i, old in enumerate(keys):
+            qss = qss.replace(old, "__THEME_%d__" % i)
+        for i, old in enumerate(keys):
+            qss = qss.replace("__THEME_%d__" % i, mapping[old])
+        return qss
 
     def _derive_qss(orig_qss: str) -> str:
-        """从原始 QSS 派生当前主题的 QSS。"""
+        """从原始 QSS 派生当前主题的 QSS（双向、与创建时主题无关）。
+
+        旧实现切亮色时直接回 orig，导致「深色主题下创建的模块永远
+        无法变浅」（issue #13）。现在按 orig 的实际配色选择方向：
+        已是目标配色则原样使用，否则按映射表整体换算。
+        """
         if not orig_qss:
             return orig_qss
         if dark:
-            out = orig_qss
-            for old, new in light_to_dark.items():
-                out = out.replace(old, new)
-            return out
-        # 亮色：直接用原始 QSS
-        return orig_qss
+            return orig_qss if _looks_dark(orig_qss) else _remap(orig_qss, light_to_dark)
+        return _remap(orig_qss, dark_to_light) if _looks_dark(orig_qss) else orig_qss
 
     # 1. 递归刷新 QScrollArea 与 QWidget#card 的样式表，并 remap QLabel/QLineEdit/QFrame 颜色
     def _refresh(w):
