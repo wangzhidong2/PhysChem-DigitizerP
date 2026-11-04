@@ -55,13 +55,15 @@ function iconText(name, key) {
 }
 
 /* 模块图标：优先加载模块目录 assets/ 下的 SVG（/api/modules/<key>/icon.svg），
-   无 SVG（404）时回退为文字图标，行为与旧版一致。 */
+   无 SVG（404）时回退为文字图标，行为与旧版一致。
+   URL 带 ?theme=dark|light 选深/浅两套图标（白字/黑字），随系统主题切换。 */
 function iconNode(name, key) {
   const img = document.createElement('img');
   img.className = 'icon-svg';
   img.alt = '';
   img.draggable = false;
-  img.src = `/api/modules/${encodeURIComponent(key)}/icon.svg`;
+  img.dataset.moduleKey = key;   // 系统主题切换时据此重设图标 URL
+  img.src = `/api/modules/${encodeURIComponent(key)}/icon.svg?theme=${themeDark() ? 'dark' : 'light'}`;
   img.addEventListener('error', () => {
     const span = el('span', null, iconText(name, key));
     img.replaceWith(span);
@@ -1079,13 +1081,19 @@ function bindEvents() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closePanel();
   });
-  // 系统主题切换时重绘曲线
+  // 系统主题切换时重绘曲线 + 更换模块图标（深/浅两套 SVG）
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
-  const onTheme = () => windows.forEach((w) => {
-    if (w.chart && w._lastDraw) {
-      drawChart(w, w._lastDraw.points, w._lastDraw.xLabel, w._lastDraw.yLabel);
-    }
-  });
+  const onTheme = () => {
+    windows.forEach((w) => {
+      if (w.chart && w._lastDraw) {
+        drawChart(w, w._lastDraw.points, w._lastDraw.xLabel, w._lastDraw.yLabel);
+      }
+    });
+    const theme = themeDark() ? 'dark' : 'light';
+    document.querySelectorAll('img.icon-svg[data-module-key]').forEach((img) => {
+      img.src = `/api/modules/${encodeURIComponent(img.dataset.moduleKey)}/icon.svg?theme=${theme}`;
+    });
+  };
   if (mq.addEventListener) mq.addEventListener('change', onTheme);
   window.addEventListener('resize', () => {
     windows.forEach((w) => {

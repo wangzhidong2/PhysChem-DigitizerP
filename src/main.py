@@ -151,8 +151,9 @@ def make_text_icon(text: str, size: int = 128) -> QIcon:
 def make_svg_icon(svg_path: str, size: int = 128) -> QIcon:
     """把模块 assets/ 目录下的 SVG 图标渲染成方形 QIcon。
 
-    模块图标改为 SVG 矢量图（模块目录 assets/ 文件夹），替代文字渲染；
-    同一图标在亮/暗主题下共用（配色选用两种主题下都可读的色值）。
+    模块图标为 SVG 矢量图（模块目录 assets/ 文件夹），替代文字渲染；
+    深/浅两套文件（icon.svg 黑字 / icon_dark.svg 白字）由
+    module_icon_path() 按主题选择，本函数只负责按文件原色渲染。
 
     Args:
         svg_path: SVG 文件绝对路径
@@ -181,20 +182,28 @@ def make_svg_icon(svg_path: str, size: int = 128) -> QIcon:
     return icon
 
 
-def module_icon_path(info):
-    """解析模块的 SVG 图标路径。
+def module_icon_path(info, theme=None):
+    """解析模块的 SVG 图标路径（按主题选择深/浅两套）。
 
     优先用识别区 icon_file 指定的文件名（同一目录多个模块时区分图标），
-    否则用默认的 icon.svg；文件不存在返回 None（调用方回退文字图标）。
+    否则用默认的 icon.svg。深色主题下优先选同名 ``*_dark.svg`` 变体
+    （透明底白字，黑底白字效果），不存在则回退浅色文件（黑字）。
+    文件不存在返回 None（调用方回退文字图标）。
 
     Args:
         info: scan_modules() 返回的模块信息 dict（须含 file_path）
+        theme: 'light' / 'dark'，None 表示按当前主题（isDarkTheme()）
 
     Returns:
         str | None: SVG 文件绝对路径
     """
     assets = os.path.join(os.path.dirname(info['file_path']), 'assets')
     name = info.get('icon_file') or 'icon.svg'
+    dark = isDarkTheme() if theme is None else (theme == 'dark')
+    if dark:
+        dark_path = os.path.join(assets, name[:-4] + '_dark.svg')
+        if os.path.isfile(dark_path):
+            return dark_path
     path = os.path.join(assets, name)
     return path if os.path.isfile(path) else None
 
@@ -225,7 +234,7 @@ class ModuleFolderTile(CardWidget):
     """
 
     def __init__(self, name: str, icon_text: str, pinned: bool = False, parent=None,
-                 icon_svg: str = None):
+                 icon_info: dict = None):
         super().__init__(parent)
         self.setBorderRadius(8)
         self.setFixedHeight(118)
@@ -233,7 +242,7 @@ class ModuleFolderTile(CardWidget):
         self.setClickEnabled(True)
         self._name = name
         self._icon_text = icon_text or '?'
-        self._icon_svg = icon_svg
+        self._icon_info = icon_info   # 模块 info：刷新时按主题重选深/浅 SVG
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 4, 10, 8)
@@ -264,11 +273,13 @@ class ModuleFolderTile(CardWidget):
         lay.addWidget(self.name_label)
 
     def _make_icon(self) -> QIcon:
-        """按当前状态生成图标：SVG 优先，无效或缺文件回退文字图标。"""
-        if self._icon_svg:
-            icon = make_svg_icon(self._icon_svg)
-            if not icon.isNull():
-                return icon
+        """按当前主题生成图标：深/浅 SVG 优先，无效或缺文件回退文字图标。"""
+        if self._icon_info:
+            svg = module_icon_path(self._icon_info)
+            if svg:
+                icon = make_svg_icon(svg)
+                if not icon.isNull():
+                    return icon
         return make_text_icon(self._icon_text, size=128)
 
     def refresh_icon(self):
@@ -912,12 +923,12 @@ class HomePageWidget(QWidget):
             (self._chem_title, self._chem_flow, chem),
         ):
             title.setVisible(bool(mods))
-            for icon_text, name, _cat, icon_svg in mods:
+            for icon_text, name, _cat, icon_info in mods:
                 tile = self._tiles.get(name)
                 if tile is None:
                     tile = ModuleFolderTile(
                         name, icon_text, pinned=(name in pinned),
-                        icon_svg=icon_svg)
+                        icon_info=icon_info)
                     tile.clicked.connect(
                         lambda n=name: self.on_module_clicked(n))
                     tile.pin_btn.toggled.connect(
@@ -2682,11 +2693,12 @@ class MainWindow(FluentWindow):
                            if svg_path and not make_svg_icon(svg_path).isNull()
                            else make_text_icon(info.get('icon', '?')))
             nav_item = self.addSubInterface(widget, module_icon, info['name'])
-            self._nav_icons[info['name']] = (info.get('icon', '?'), nav_item, svg_path)
+            # 存 info（而非固定路径）：主题切换时按新主题重选深/浅 SVG
+            self._nav_icons[info['name']] = (info.get('icon', '?'), nav_item, info)
             self.modules[info['name']] = widget
             self.module_widgets.append(widget)
 
-            home_modules.append((info['icon'], info['name'], info['category'], svg_path))
+            home_modules.append((info['icon'], info['name'], info['category'], info))
 
         # 设置（始终在最后）—— 用 FluentIcon.SETTING 注册到导航底部
         # 用 FluentWidgets SettingCard 系列组件实现的真实设置页
@@ -2729,7 +2741,7 @@ class MainWindow(FluentWindow):
                 pass
             self._module_keys[widget] = key
             self.data_service.register(key, info['name'], widget,
-                                       icon_path=module_icon_path(info))
+                                       icon_path=module_icon_path(info, theme='light'))
 
         # === 插件加载（失败静默，不影响主程序）===
         self.plugins = load_plugins(app_dir)
@@ -2839,9 +2851,10 @@ class MainWindow(FluentWindow):
         （QScrollArea 背景、QLabel 颜色、图表主题等）。FluentWidgets 组件
         的颜色由 setTheme 统一刷新，不在本方法职责内。
         """
-        # 重建侧边栏模块图标（SVG 直接重渲，文字图标按深/浅色换 Normal 颜色）
-        for name, (icon_text, nav_item, svg_path) in self._nav_icons.items():
+        # 重建侧边栏模块图标（按当前主题重选深/浅 SVG；文字图标换 Normal 颜色）
+        for name, (icon_text, nav_item, info) in self._nav_icons.items():
             try:
+                svg_path = module_icon_path(info)
                 if svg_path:
                     icon = make_svg_icon(svg_path)
                     if not icon.isNull():

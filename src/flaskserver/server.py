@@ -197,7 +197,11 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
     # --------------------------------------------------------
     @app.route('/api/modules/<key>/icon.svg')
     def module_icon(key):
-        """模块 SVG 图标（模块目录 assets/ 下）；无图标返回 404，前端回退文字。"""
+        """模块 SVG 图标（模块目录 assets/ 下）；无图标返回 404，前端回退文字。
+
+        支持 ?theme=dark：优先返回同名 *_dark.svg（白字）变体，
+        不存在时回退浅色文件；默认（或 ?theme=light）返回注册时的浅色文件。
+        """
         r = _check_token(write=False)
         if r is not None:
             return r
@@ -206,6 +210,10 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
         path = service.icon_path(key)
         if not path or not os.path.isfile(path):
             return _error(404, 'no_icon', '模块无 SVG 图标: %s' % key)
+        if request.args.get('theme') == 'dark':
+            dark_path = path[:-4] + '_dark.svg'
+            if os.path.isfile(dark_path):
+                path = dark_path
         resp = send_file(path, mimetype='image/svg+xml', conditional=True)
         resp.headers['Cache-Control'] = 'no-cache'
         return resp
