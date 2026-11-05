@@ -1029,6 +1029,12 @@ def build_free_software_infobar(parent):
             label, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    # 移除 InfoBar 自带的 QGraphicsOpacityEffect：它只服务 duration>=0 的
+    # 淡出动画，本声明条 duration=-1、点 × 直接 close→deleteLater，用不到。
+    # 保留时它会与弹窗中心容器的投影特效（MessageBoxBase.setShadowEffect）
+    # 形成嵌套图形特效，首次显示被绘制到投影源位图的偏移处，整条声明错位
+    # （关闭后库在 done() 里移除投影特效，所以第二次打开又恢复正常）。
+    notice.setGraphicsEffect(None)
     return notice
 
 
