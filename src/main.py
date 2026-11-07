@@ -3149,7 +3149,7 @@ def _apply_taskbar_identity(window):
             (5, APP_USER_MODEL_ID),
             (2, relaunch),
             (4, 'PhysChem-DigitizerP'),
-            (3, icon_path),
+            (3, f'{icon_path},0'),
         ):
             buf = ctypes.create_unicode_buffer(value)
             pv = PROPVARIANT()
