@@ -38,6 +38,7 @@
 | `name` | 是 | 模块显示名，用于侧边栏与主页磁贴 |
 | `category` | 是 | `physics` 或 `chemistry`，决定主页分组 |
 | `class` | 是 | 主类名，须继承 `QWidget` |
+| `kernel` | 是 | 同目录内核文件与类，如 `_kernel_ph:PhKernel`；格式 `文件:类名` |
 
 **格式严格**：字段名、冒号、空格写错会导致模块加载失败（`importlib` 动态加载依赖此格式）。
 
@@ -62,6 +63,22 @@
 | 滚动区 / 页面背景 | `scroll_area_style()` / `page_bg_style()` |
 
 **不要**再拼 `QWidget#card QLabel { color: ... }` 这类硬编码样式，Fluent 组件本身已随主题变色。
+
+### 2.5 内核 / View 分离（新模块必须遵守）
+
+- 每个传感器目录必须同时提供 View 与内核，例如：
+  ```text
+  src/sensors/ph/
+  ├─ ph_sensor.py   # View
+  └─ _kernel.py     # PhKernel
+  ```
+- 内核文件纯 Python，**禁止** import `PySide6` / `qfluentwidgets`；只使用 `core` 的纯内核 API（`SensorKernel`、`SimulatorTransport`、`load_sensor_config` 等）。
+- 内核负责：配置读写、串口/模拟器、解析换算、校准/去皮、采样节流、缓存、快照、CSV、专有命令。
+- View 负责：控件、通道卡、实时行、图表、对话框、主题；数据与采集全部委托 `self.kernel`。
+- View 构造函数统一为 `__init__(self, kernel=None)`，无注入时从同目录内核文件兜底。
+- View 用 `kernel.subscribe()` + `QTimer` 在 GUI 线程消费事件，禁止后台线程直接操作 QWidget。
+- 不再新起 `SerialThread` / `SimulatorThread`；统一用 `core.SerialTransport` / `core.SimulatorTransport`。
+- PyInstaller spec 已收集 `src/sensors/**/_kernel*.py`，新增内核文件无需改 spec。
 
 ## 3. 图表（`core.ChartPanel`）
 

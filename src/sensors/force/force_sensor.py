@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
+# key: force_sensor
 # icon: F
 # name: 力传感器
 # category: physics
 # class: ForceSensorWidget
+# kernel: _kernel_force:ForceKernel
 # ===================
 
 # -*- coding: utf-8 -*-
@@ -18,8 +20,7 @@
 
 import sys
 import os
-import time
-from collections import deque
+import importlib.util
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
@@ -41,13 +42,12 @@ import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
     fluent_message_box, ChartPanel,
-    SerialThread, SimulatorThread,
-    SampleRateComboBox, CalibrationDialog, stop_thread,
-    load_sensor_config, save_sensor_config,
+    SampleRateComboBox,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
+    EVENT_SAMPLE_PREVIEW, EVENT_SAMPLE_RECORDED, EVENT_CHANNEL_STATE,
+    EVENT_COLLECTION_CHANGED, EVENT_ERROR,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, FluentCard, ExpandableTextEdit,
-    _get_config_file_path,
     scroll_area_style, page_bg_style, apply_module_theme,
     update_collect_btn, set_action_button_width,
     get_logger,
@@ -179,156 +179,66 @@ class KnownWeightMessageBox(MessageBoxBase):
         return True
 
 
-class _Channel:
-    """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
-
-    每路连接独立选择「有线串口 / 模拟器」、独立串口、独立曲线颜色、
-    独立去皮零点与标定系数（不同 HX711 的 offset/scale 各不相同）；
-    数据按主机统一时间戳记录（见 handle_data）。
-    UI 行控件引用由模块统一保管在 _rows[channel.id] 里。
-    """
-
-    def __init__(self, cid, name, color, mode='serial', port='',
-                 sample_interval_ms=100, cal_params=None):
-        self.id = cid                      # 稳定 id（信号绑定用，删除后不复用）
-        self.name = name                    # 显示名（可自定义，留空回退默认名）
-        self.default_name = name            # 默认名（通道N，创建时定序）
-        self.color = color                  # 曲线颜色
-        self.mode = mode                    # 'serial' | 'simulator'
-        self.port = port                    # 串口模式下选中的端口
-        self.thread = None                  # SerialThread / SimulatorThread
-        self.sample_interval_ms = sample_interval_ms  # 本路采样间隔（每路独立）
-        # 本路换算参数（每路独立；缺省继承模块级/全局默认）
-        p = cal_params or {}
-        self.offset = p.get('offset', 0)
-        self.scale = p.get('scale', 1.0)
-        self.calibrated = p.get('calibrated', False)
-        self.visible = p.get('visible', True)   # 图表显示开关（勾选框控制）
-        # 采集数据（已校准存克值，未校准存原始 ADC 值）
-        self.time_data = []
-        self.raw_data = []
-        self.force_data = []
-        # 去皮 / 实时显示用的滚动窗口（含未采集时的实时数据）
-        self.live_window = deque(maxlen=10)
-        # 上次记录样本的主机相对秒（采样间隔过滤，每路独立）
-        self.last_sample_s = None
-
-
 class ForceSensorWidget(QWidget):
     """力传感器（HX711）模块界面 - 支持多路连接、逐路去皮与校准、单位切换"""
 
-    GRAVITY = 9.8
     UNIT_LABELS = {"g": "克 (g)", "kg": "千克 (kg)", "N": "牛顿 (N)"}
 
-    def __init__(self):
+    def __init__(self, kernel=None):
         super().__init__()
+        # 内核由加载器注入；直接实例化时用同目录 _kernel_force.py 兜底
+        self.kernel = kernel or self._create_default_kernel()
+        self.channels = self.kernel.channels
         self._collecting = False  # 当前是否在采集（合并开始/停止按钮状态）
-        # 多路连接：每路一个 _Channel（独立模式/串口/颜色/去皮/校准/数据）
-        self.channels = []
-        self._rows = {}              # channel.id -> 行控件引用 dict
-        self._next_channel_id = 1   # 稳定 id 分配器（删除后不复用）
-        self._next_channel_seq = 1  # 显示名序号（通道N）
-        self._t0_mono = None        # 采集期主机统一时间基准（首个样本时刻）
+        self._rows = {}           # channel.id -> 行控件引用 dict
+        self.sample_interval_ms = self.kernel.sample_interval_ms
 
-        # 采样频率设置（毫秒）—— 模块级镜像字段（始终与第 1 路一致）
-        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        # 模块级共享设置（对全部通道生效，由内核持久化）
+        self.current_unit = self.kernel.current_unit
 
-        # 模块级换算镜像字段（始终与第 1 路一致；各路独立值在 _Channel 上）
-        self.offset = 0
-        self.scale = 1.0
-        self.calibrated = False
-        # 模块级共享设置（对全部通道生效）
-        self.cal_known_weight = 100.0   # 校准砝码质量的默认提示值
-        self.current_unit = "g"
-
-        # 校准流程状态（针对「校准与去皮」卡当前选中路）
+        # 校准按钮流程状态（数学计算全部在内核完成）
         self.cal_step = 0
-        self.cal_raw_before = 0
-        self.cal_raw_after = 0
-
-        self.config = self.load_config()
-        self.offset = self.config.get('offset', 0)
-        self.scale = self.config.get('scale', 1.0)
-        self.calibrated = self.config.get('calibrated', False)
-        self.cal_known_weight = self.config.get('cal_known_weight', 100.0)
-        self.current_unit = self.config.get('unit', 'g')
+        self._pending_weight = self.kernel.cal_known_weight
 
         self.init_ui()
         # 恢复上次的通道列表（含模式/串口/颜色/去皮/校准）；无记录时建一路默认通道
-        self._restore_channels()
+        self._build_channels_from_kernel()
+
+    @staticmethod
+    def _create_default_kernel():
+        """不经过 main.py 加载器时，直接加载同目录内核文件。"""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            '_kernel_force.py')
+        spec = importlib.util.spec_from_file_location(
+            '_sensor_kernel_force', path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.ForceKernel()
+
+    # ------------------------------------------------------------------
+    # 配置（委托内核）
+    # ------------------------------------------------------------------
+    def load_config(self):
+        return self.kernel.config
+
+    def save_config(self):
+        return self.kernel.save_config()
 
     def convert_unit(self, value_grams):
-        """将克值转换为当前单位值
-
-        转换关系：
-          g  → 直接返回
-          kg → value_grams / 1000
-          N  → value_grams / 1000 * 9.8
-        """
-        if self.current_unit == "kg":
-            return value_grams / 1000.0
-        elif self.current_unit == "N":
-            return value_grams / 1000.0 * self.GRAVITY
-        return value_grams
+        """将克值转换为当前单位值（换算在内核）。"""
+        return self.kernel.convert_unit(value_grams)
 
     def get_unit_str(self, ch=None):
         """获取当前单位字符串（未校准通道显示 raw）"""
-        ch = ch or self._main_channel()
-        calibrated = ch.calibrated if ch is not None else self.calibrated
-        return self.current_unit if calibrated else "raw"
+        return self.kernel.unit_str(ch)
 
     def get_chart_ylabel(self):
         """获取图表Y轴标签（按主通道的校准状态）"""
-        main = self._main_channel()
-        calibrated = main.calibrated if main is not None else self.calibrated
-        if not calibrated:
-            return "原始ADC值"
-        labels = {"g": "质量 (g)", "kg": "质量 (kg)", "N": "力 (N)"}
-        return labels.get(self.current_unit, "质量 (g)")
+        return self.kernel.chart_ylabel()
 
     def _main_channel(self):
         """主通道：数据最多的一路（无数据时取第 1 路）。"""
-        with_data = [ch for ch in self.channels if ch.force_data]
-        if with_data:
-            return max(with_data, key=lambda c: len(c.force_data))
-        return self.channels[0] if self.channels else None
-
-    def get_config_path(self):
-        """获取配置文件路径（已废弃，保留兼容）"""
-        return _get_config_file_path()
-
-    def load_config(self):
-        """加载力传感器配置"""
-        config = load_sensor_config('force_sensor')
-        if config:
-            self.offset = config.get('offset', 0)
-            self.scale = config.get('scale', 1.0)
-            self.calibrated = config.get('calibrated', False)
-            self.cal_known_weight = config.get('cal_known_weight', 100.0)
-            self.current_unit = config.get('unit', 'g')
-            self.sample_interval_ms = config.get('sample_interval_ms', 100)
-        return config
-
-    def save_config(self):
-        """保存力传感器配置（顶层字段取第 1 路，channels 记录各路独立参数）"""
-        first = self.channels[0] if self.channels else None
-        config = {
-            'offset': first.offset if first else self.offset,
-            'scale': first.scale if first else self.scale,
-            'calibrated': first.calibrated if first else self.calibrated,
-            'cal_known_weight': self.cal_known_weight,
-            'unit': self.current_unit,
-            'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
-            # 多路连接：每路的模式/串口/颜色/采样间隔/去皮/校准/图表显示
-            'channels': [
-                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
-                 'offset': ch.offset, 'scale': ch.scale,
-                 'calibrated': ch.calibrated, 'visible': ch.visible}
-                for ch in self.channels
-            ],
-        }
-        return save_sensor_config('force_sensor', config)
+        return self.kernel.main_channel()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -578,15 +488,22 @@ class ForceSensorWidget(QWidget):
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)
 
+        # 内核事件队列：后台采集线程只入队，GUI 线程由 QTimer 消费
+        self._events = self.kernel.subscribe()
+        self._event_timer = QTimer(self)
+        self._event_timer.timeout.connect(self._drain_kernel_events)
+        self._event_timer.start(50)
+
     def on_unit_changed(self, index):
         unit_list = ["g", "kg", "N"]
         self.current_unit = unit_list[index]
-        self.save_config()
+        self.kernel.set_unit(self.current_unit)
         main = self._main_channel()
-        calibrated = main.calibrated if main is not None else self.calibrated
+        calibrated = main.calibrated if main is not None else False
         self.current_unit_label.setText(
             f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}"
-            + ("（未校准则显示原始值）" if not calibrated else f"（校准比例={main.scale:.6f}）")
+            + ("（未校准则显示原始值）" if not calibrated
+               else f"（校准比例={main.scale:.6f}）")
         )
         # 逐路刷新实时行（显示单位变了，换算后的显示值要跟着变）
         for ch in self.channels:
@@ -599,60 +516,24 @@ class ForceSensorWidget(QWidget):
     # ============================================================
     # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
     # ============================================================
-    def _restore_channels(self):
-        """按配置重建通道行；旧版单通道配置自动迁移为一路通道。"""
-        saved = (self.config or {}).get('channels') or []
-        if saved:
-            for item in saved:
-                mode = item.get('mode', 'serial')
-                if mode != 'simulator' and not SERIAL_AVAILABLE:
-                    mode = 'simulator'   # pyserial 缺失时优雅降级
-                ch = self._make_channel(
-                    name=item.get('name') or None,
-                    color=item.get('color') or None,
-                    mode=mode, port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'),
-                    # 缺字段用模块级顶层值补齐（旧版多通道配置迁移）
-                    cal_params={'offset': self.offset, 'scale': self.scale,
-                                'calibrated': self.calibrated, **item})
-        else:
-            # 旧版单通道配置迁移：顶层去皮/校准字段作为第 1 路初值
-            self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
+    def _build_channels_from_kernel(self):
+        """按内核已有通道重建 UI 行（内核负责配置恢复）。"""
+        for ch in self.channels:
+            self._build_channel_card(ch)
+            self._build_live_row(ch)
         self._refresh_active_channel_combo()
-        # 顶层镜像字段刷新为第 1 路实际值
-        if self.channels:
-            first = self.channels[0]
-            self.offset = first.offset
-            self.scale = first.scale
-            self.calibrated = first.calibrated
-            self.sample_interval_ms = first.sample_interval_ms
+        self._refresh_chart_visibility_row()
+        self._update_delete_btns()
         self._sync_compat_aliases()
         self.update_cal_status_label()
         self._refresh_summary_text()
 
     def _make_channel(self, color=None, mode='serial', port='', name=None,
                       sample_interval_ms=None, cal_params=None):
-        """创建通道对象 + 对应 UI 行（不重复使用已删除通道的 id/name）。
-
-        新建通道的去皮/校准参数缺省继承第 1 路 / 模块级。
-        """
-        cid = self._next_channel_id
-        self._next_channel_id += 1
-        seq = self._next_channel_seq
-        self._next_channel_seq += 1
-        if not color:
-            used = {ch.color for ch in self.channels}
-            color = next((c for c in CHANNEL_COLORS if c not in used),
-                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
-        if cal_params is None:
-            first = self.channels[0] if self.channels else None
-            cal_params = {'offset': first.offset if first else self.offset,
-                          'scale': first.scale if first else self.scale,
-                          'calibrated': first.calibrated if first else self.calibrated}
-        ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port,
-                      sample_interval_ms=sample_interval_ms or self.sample_interval_ms,
-                      cal_params=cal_params)
-        self.channels.append(ch)
+        """创建内核通道，并为它建立对应的 UI 子卡/实时行。"""
+        ch = self.kernel.add_channel(
+            color=color, mode=mode, port=port, name=name,
+            sample_interval_ms=sample_interval_ms, cal_params=cal_params)
         self._build_channel_card(ch)
         self._build_live_row(ch)
         self._refresh_chart_visibility_row()
@@ -669,20 +550,19 @@ class ForceSensorWidget(QWidget):
 
     def _delete_channel(self, ch):
         """删除一路连接（正在连接的通道须先断开；至少保留一路）。"""
-        if ch.thread and ch.thread.isRunning():
+        if getattr(ch, 'connected', False):
             fluent_message_box(self, "提示", f"{ch.name} 正在连接，请先断开再删除")
             return
         refs = self._rows.pop(ch.id, None)
         if refs:
             self.channels_layout.removeWidget(refs['card'])
             refs['card'].deleteLater()
-        self.channels.remove(ch)
+        self.kernel.remove_channel(ch.id)
         self._remove_live_row(ch)
         self._refresh_chart_visibility_row()
         self._update_delete_btns()
         self._sync_compat_aliases()
         self._refresh_active_channel_combo()
-        self.save_config()
         self._sync_conn_card_height()
 
     def _build_live_row(self, ch):
@@ -750,13 +630,10 @@ class ForceSensorWidget(QWidget):
         """按该路校准状态与当前单位，格式化实时大字文本。"""
         if not ch.force_data and not ch.live_window:
             return "力/质量: --.-"
-        if ch.calibrated:
-            grams = ch.force_data[-1] if ch.force_data else (
-                (ch.live_window[-1] - ch.offset) * ch.scale)
-            converted = self.convert_unit(grams)
+        if ch.force_data:
+            converted = self.kernel.display_value(ch, value=ch.force_data[-1])
         else:
-            converted = float(ch.force_data[-1] if ch.force_data
-                              else ch.live_window[-1])
+            converted = self.kernel.display_value(ch, raw=ch.live_window[-1])
         return f"力/质量: {converted:.4f} {self.get_unit_str(ch)}"
 
     def _refresh_summary_text(self):
@@ -1060,39 +937,29 @@ class ForceSensorWidget(QWidget):
             self._sync_conn_card_height()
 
     def _toggle_channel_connection(self, ch):
-        """单路的连接/断开按钮：按本路线程状态切换。"""
-        if ch.thread and ch.thread.isRunning():
+        """单路的连接/断开按钮：按本路连接状态切换。"""
+        if getattr(ch, 'connected', False):
             self._disconnect_channel(ch)
         else:
             self._connect_channel(ch)
 
     def _connect_channel(self, ch):
         """连接单路：串口或模拟器（其余通道不受影响）。"""
-        try:
-            if ch.mode == 'simulator':
-                # HX711 24 位原始读数，围绕一个基准值缓慢漂移
-                th = SimulatorThread(
-                    value_min=7500000, value_max=9000000,
-                    interval_ms=ch.sample_interval_ms,
-                    start_value=8200000)
-            else:
-                if not SERIAL_AVAILABLE:
-                    fluent_message_box(self, "提示", serial_unavailable_hint())
-                    return
-                port = self._rows[ch.id]['port_combo'].currentText()
-                if not port or "未安装" in port or "无可用" in port:
-                    fluent_message_box(self, "错误", f"{ch.name}: 请选择串口")
-                    return
-                ch.port = port
-                th = SerialThread(port)
-            th.data_received.connect(lambda d, c=ch: self.handle_data(d, c))
-            ch.thread = th
-            th.start()
-        except Exception as e:
-            ch.thread = None
-            fluent_message_box(self, "连接错误", f"{ch.name} 连接失败: {e}")
-            return
         refs = self._rows.get(ch.id)
+        if ch.mode == 'serial':
+            if not SERIAL_AVAILABLE:
+                fluent_message_box(self, "提示", serial_unavailable_hint())
+                return
+            port = refs['port_combo'].currentText() if refs else ch.port
+            if not port or "未安装" in port or "无可用" in port:
+                fluent_message_box(self, "错误", f"{ch.name}: 请选择串口")
+                return
+            ch.port = port
+        res = self.kernel.connect(ch.id)
+        if not res.get('ok'):
+            fluent_message_box(self, "连接错误",
+                               res.get('message', f'{ch.name} 连接失败'))
+            return
         if refs:
             refs['connect_btn'].setText("断开")
         log.info("%s 已连接（%s）", ch.name,
@@ -1107,9 +974,7 @@ class ForceSensorWidget(QWidget):
 
     def _disconnect_channel(self, ch):
         """断开单路（其余通道不受影响）。"""
-        if ch.thread:
-            stop_thread(ch.thread, name=f"力{ch.name}线程")
-            ch.thread = None
+        self.kernel.disconnect(ch.id)
         refs = self._rows.get(ch.id)
         if refs:
             refs['connect_btn'].setText("连接")
@@ -1121,21 +986,31 @@ class ForceSensorWidget(QWidget):
             live['force_label'].setText("力/质量: --.-")
             live['raw_label'].setText(f"{ch.name} ADC: 已断开")
         self._refresh_summary_text()
-        if not any(c.thread for c in self.channels):
+        if not self.kernel.connected_any():
             self._set_collect_enabled(False)
             self.tare_btn.setEnabled(False)
             self.calibrate_btn.setEnabled(False)
 
     def connect_device(self):
         """连接全部未连接的通道（网页端 set_connection connect=true 走这里）。"""
+        self.kernel.connect_all()
         for ch in self.channels:
-            if not (ch.thread and ch.thread.isRunning()):
-                self._connect_channel(ch)
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText(
+                    "断开" if getattr(ch, 'connected', False) else "连接")
+        self._set_collect_enabled(self.kernel.connected_any())
 
     def disconnect_all(self):
         """断开全部通道（退出清理 / 网页端命令也走这里）。"""
-        for ch in list(self.channels):
-            self._disconnect_channel(ch)
+        self.kernel.disconnect_all()
+        for ch in self.channels:
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText("连接")
+        self._set_collect_enabled(False)
+        self.tare_btn.setEnabled(False)
+        self.calibrate_btn.setEnabled(False)
 
     # ------------------------------------------------------------------
     # 当前连接（校准与去皮卡）
@@ -1178,59 +1053,34 @@ class ForceSensorWidget(QWidget):
         """校准流程中途换路/增删路时复位按钮文案（避免把 A 路零点标到 B 路）。"""
         if self.cal_step != 0:
             self.cal_step = 0
+            self.kernel.calib_cancel()
             self.calibrate_btn.setText("校准（CALIBRATE）")
 
     # ------------------------------------------------------------------
     # 去皮与校准（每路独立）
     # ------------------------------------------------------------------
     def tare_now(self):
-        """去皮：把最近若干个采样的平均值记为新的零点（offset），支持反复点击。
+        """去皮：内核取各路最近采样的平均值作为新零点并通知真串口固件。
 
-        多路连接时对**所有有数据流入的通道**分别去皮，各路零点独立
-        （不同 HX711 的空载偏移不同）：
-        1. 不要求先「开始采集」——设备连着、有数据流入即可去皮（用各路实时窗口）；
-        2. 有线串口照旧向**各自固件**发 TARE 命令（固件内部状态保持同步）；
-           模拟器没有这个命令，直接走上位机侧零点；
-        3. 可反复点击，每点一次都以当前读数重新归零，没有「取消去皮」。
+        多路连接时对所有有数据流入的通道分别去皮，各路零点独立；
+        模拟器不发送 TARE 命令；可反复点击。
         """
-        targets = [ch for ch in self.channels if ch.live_window]
-        if not targets:
-            fluent_message_box(self, "提示", "还没有收到数据，等数据流入后再去皮")
+        res = self.kernel.tare()
+        if not res.get('ok'):
+            fluent_message_box(self, "提示", res.get('message', '去皮失败'))
             return
-
-        parts = []
-        notified = []
-        for ch in targets:
-            # 上位机侧零点：最近 10 个采样的平均值（比取单点更抗噪声）
-            ch.offset = int(round(float(np.mean(ch.live_window))))
-            parts.append(f"{ch.name} offset={ch.offset}")
-            # 真串口才通知固件（固件回 TARE_DONE 后会用它的 10 次平均值
-            # 覆盖上面的零点，以固件为准）
-            if self._write_firmware_tare(ch):
-                notified.append(ch.name)
-        log.info("去皮：%s", "; ".join(parts))
-        self.save_config()
         self.update_cal_status_label()
+        self.update_stats()
+        self.update_chart()
+        # 逐路刷新实时行 + 汇总标签（去皮后显示值归零）
+        for ch in self.channels:
+            live = self._live_rows.get(ch.id)
+            if live and ch.force_data:
+                live['force_label'].setText(self._format_force_value(ch))
+        self._refresh_summary_text()
+        notified = res.get('firmware') or []
         live_note = "（已通知固件: " + "、".join(notified) + "）" if notified else ""
         self.current_force_label.setText(f"力/质量: 去皮完成{live_note}")
-        # 按新零点重算已采集的数据（去皮只改 offset，已存克值按原零点算，
-        # 重算保持曲线与新零点一致）
-        self.recompute_force_data()
-
-    def _write_firmware_tare(self, ch):
-        """向该路固件发送 TARE 命令；仅真串口可用（模拟器没有这个命令）。"""
-        thread = ch.thread
-        if not (thread and thread.isRunning()):
-            return False
-        port = getattr(thread, 'serial', None)
-        if not (port and port.is_open):
-            return False
-        try:
-            port.write(b"TARE\n")
-            return True
-        except Exception as e:
-            log.warning("固件去皮命令发送失败（%s）：%s", ch.name, e)
-            return False
 
     def update_cal_status_label(self):
         """刷新校准状态标签（多路时逐路显示零点与标定状态）"""
@@ -1254,11 +1104,7 @@ class ForceSensorWidget(QWidget):
         """零点变化后，按各通道已有 raw_data 重算 force_data"""
         if not any(ch.raw_data for ch in self.channels):
             return
-        for ch in self.channels:
-            if ch.calibrated:
-                ch.force_data = [(r - ch.offset) * ch.scale for r in ch.raw_data]
-            else:
-                ch.force_data = [float(r) for r in ch.raw_data]
+        self.kernel.recompute_force_data()
         self.update_stats()
         self.update_chart()
         # 逐路刷新实时行 + 汇总标签（去皮后显示值归零）
@@ -1270,82 +1116,65 @@ class ForceSensorWidget(QWidget):
 
     def api_actions(self):
         """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
-        return ['tare', 'calibrate']
+        return self.kernel.actions()
 
     def api_command(self, action, params=None):
-        """执行模块特有控制动作（由 DataService 保证在 GUI 线程调用）。
-        通用动作（start/stop/clear/toggle）返回 None 交给通用动作表。"""
-        if action == 'tare':
-            if not any(ch.thread for ch in self.channels):
-                return {'ok': False, 'message': '设备未连接，无法去皮'}
-            if not any(ch.live_window for ch in self.channels):
-                return {'ok': False, 'message': '还没有收到数据，无法去皮'}
-            self.tare_now()
-            offsets = "; ".join(f"{ch.name}={ch.offset}"
-                                for ch in self.channels if ch.live_window)
-            return {'ok': True, 'message': f'已去皮（{offsets}）'}
-        if action == 'calibrate':
-            if not any(ch.thread for ch in self.channels):
-                return {'ok': False, 'message': '设备未连接，无法校准'}
-            self.start_calibration()
-            return {'ok': True, 'message': '校准流程已启动（请在界面上继续操作）'}
-        return None
+        """执行控制动作（由 DataService 保证在 GUI 线程调用）。"""
+        return self.kernel.command(action, params)
 
     def start_calibration(self):
-        """两点标定流程：作用于「当前连接」下拉所选的一路。"""
+        """两点标定流程：作用于「当前连接」下拉所选的一路。
+
+        按钮流程与砝码输入留在 View，标定数学全部由内核完成。
+        """
         ch = self._active_channel_obj() or (self.channels[0] if self.channels else None)
         if ch is None:
             return
         if self.cal_step == 0:
+            res = self.kernel.calib_begin(ch.id)
+            if not res.get('ok'):
+                fluent_message_box(self, "提示", res.get('message', '无法开始校准'))
+                return
             self.cal_step = 1
             self.calibrate_btn.setText(f"1. {ch.name} 空载，点击记录零点")
         elif self.cal_step == 1:
-            # 用实时窗口最新值（未开始采集也能校准）
-            if ch.live_window:
-                self.cal_raw_before = ch.live_window[-1]
+            res = self.kernel.calib_record_zero(ch.id)
+            if not res.get('ok'):
+                fluent_message_box(self, "提示", res.get('message', '记录零点失败'))
+                return
             self.cal_step = 2
-            dlg = KnownWeightMessageBox(self.cal_known_weight, self)
+            dlg = KnownWeightMessageBox(self.kernel.cal_known_weight, self)
             ok = dlg.exec() == QDialog.DialogCode.Accepted
             weight = dlg.weight
             if ok:
-                self.cal_known_weight = weight
+                self._pending_weight = weight
                 self.calibrate_btn.setText(f"2. {ch.name} 已放{weight}g砝码，点击记录")
             else:
+                self.kernel.calib_cancel(ch.id)
                 self.cal_step = 0
                 self.calibrate_btn.setText("校准（CALIBRATE）")
         elif self.cal_step == 2:
-            if ch.live_window:
-                self.cal_raw_after = ch.live_window[-1]
-                diff = self.cal_raw_after - self.cal_raw_before
-                if diff != 0:
-                    ch.scale = self.cal_known_weight / diff
-                    ch.offset = self.cal_raw_before
-                    ch.calibrated = True
-                    if self.channels and ch is self.channels[0]:
-                        self.scale = ch.scale
-                        self.offset = ch.offset
-                        self.calibrated = True
-                    self.save_config()
-                    self.update_cal_status_label()
-                    main = self._main_channel()
-                    if main is not None and main.calibrated:
-                        self.current_unit_label.setText(
-                            f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}"
-                            f"（校准比例={main.scale:.6f}）")
-                    log.info("校准完成（%s）：offset=%s, scale=%.6f, 砝码=%.4g g",
-                             ch.name, ch.offset, ch.scale, self.cal_known_weight)
-                    fluent_message_box(self, "校准成功",
-                        f"{ch.name} 校准完成！\n"
-                        f"空载ADC: {self.cal_raw_before}\n"
-                        f"加载ADC: {self.cal_raw_after}\n"
-                        f"ADC差值: {diff}\n"
-                        f"校准比例: {ch.scale:.6f}\n"
-                        f"砝码质量: {self.cal_known_weight}g")
-                    # 按新标定系数重算该路已有数据
-                    self.recompute_force_data()
-                else:
-                    fluent_message_box(self, "校准失败", "ADC差值为0，请检查传感器是否正常工作")
-
+            weight = self._pending_weight or self.kernel.cal_known_weight
+            res = self.kernel.calib_record_known(ch.id, weight)
+            if res.get('ok'):
+                self.update_cal_status_label()
+                main = self._main_channel()
+                if main is not None and main.calibrated:
+                    self.current_unit_label.setText(
+                        f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}"
+                        f"（校准比例={main.scale:.6f}）")
+                fluent_message_box(self, "校准成功",
+                    f"{ch.name} 校准完成！\n"
+                    f"空载ADC: {res['raw_before']}\n"
+                    f"加载ADC: {res['raw_after']}\n"
+                    f"ADC差值: {res['diff']}\n"
+                    f"校准比例: {res['scale']:.6f}\n"
+                    f"砝码质量: {res['known']}g")
+                # 按新标定系数重算该路已有数据
+                self.recompute_force_data()
+            else:
+                fluent_message_box(self, "校准失败",
+                                   res.get('message', '校准失败'))
             self.cal_step = 0
             self.calibrate_btn.setText("校准（CALIBRATE）")
 
@@ -1370,18 +1199,13 @@ class ForceSensorWidget(QWidget):
         update_collect_btn(self.float_collect_btn, self._collecting)
 
     def start_collection(self):
-        for ch in self.channels:
-            ch.force_data.clear()
-            ch.time_data.clear()
-            ch.raw_data.clear()
-            ch.last_sample_s = None
-        self.data_text.clear()
-        # 主机统一时间基准：以采集期收到的**首个样本**为 t=0（各路共享）
-        self._t0_mono = None
-
+        """开始数据采集（数据清空与时间基准由内核负责）。"""
+        self.kernel.start_collection()
         self._collecting = True
+        self.data_text.clear()
         log.info("开始采集（已连接 %d 路）",
-                 sum(1 for ch in self.channels if ch.thread))
+                 sum(1 for ch in self.channels
+                     if getattr(ch, 'connected', False)))
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
 
@@ -1392,6 +1216,8 @@ class ForceSensorWidget(QWidget):
                 live['raw_label'].setText(f"{ch.name} ADC: 采集中...")
 
     def stop_collection(self):
+        """停止数据采集。"""
+        self.kernel.stop_collection()
         self._collecting = False
         self._refresh_collect_btn()
         total = sum(len(ch.force_data) for ch in self.channels)
@@ -1401,109 +1227,113 @@ class ForceSensorWidget(QWidget):
         if total > 0:
             main = self._main_channel()
             if main is not None and main.force_data:
-                converted = self.convert_unit(np.mean(main.force_data)) \
-                    if main.calibrated else np.mean(main.force_data)
+                converted = (self.convert_unit(np.mean(main.force_data))
+                             if main.calibrated else np.mean(main.force_data))
                 self.current_force_label.setText(
                     f"{main.name} 均值: {converted:.4f} {self.get_unit_str(main)}")
 
-    def handle_data(self, data, ch):
-        """一路连接的数据回调（SerialThread / SimulatorThread → 本模块）。
+    # ------------------------------------------------------------------
+    # 内核事件 → UI（QTimer 在 GUI 线程消费，避免后台线程直接碰 QWidget）
+    # ------------------------------------------------------------------
+    def _drain_kernel_events(self):
+        for event in self._events.drain(200):
+            if event is None:
+                return
+            self._handle_kernel_event(event)
 
-        多路连接下的约定：
-        - ERROR / START / TARE_DONE 按通道处理，出错只断开这一路；
-        - 记录用**主机统一时间戳**（time.monotonic），各路天然对齐在同一
-          时间轴（不同 ESP32 开机时刻不同，固件时间戳不可跨路比较）；
-        - 固件的 timestamp 字段只做格式解析，不参与记录。
-        """
-        if data.startswith("ERROR:"):
-            log.error("%s 设备错误: %s", ch.name, data[6:])
-            fluent_message_box(self, "连接错误", f"{ch.name}: {data[6:]}")
-            self._disconnect_channel(ch)
-            return
+    def _handle_kernel_event(self, event):
+        kind = event.kind
+        cid = event.channel_id
+        data = event.data or {}
+        ch = self.kernel.get_channel(cid) if cid is not None else None
 
-        if data == "START":
+        if kind == EVENT_SAMPLE_PREVIEW and ch is not None:
+            value = data.get('value')
+            raw = data.get('raw')
+            if value is None:
+                return
+            display = self.kernel.display_value(ch, value=value)
+            unit = self.get_unit_str(ch)
             live = self._live_rows.get(ch.id)
             if live:
-                live['force_label'].setText("力/质量: 设备就绪")
-                live['raw_label'].setText(f"{ch.name}: 等待数据...")
+                live['force_label'].setText(
+                    f"力/质量: {display:.4f} {unit}")
+                live['raw_label'].setText(f"{ch.name} ADC: {int(raw)}")
+            self.current_force_label.setText(
+                f"{ch.name}: {display:.4f} {unit}")
             return
 
-        if data.startswith("TARE_DONE"):
-            parts = data.split(",")
-            if len(parts) == 2:
-                try:
-                    # 固件用 10 次平均得到零点，比上位机单点更稳，以它为准
-                    # （只覆盖发出过 TARE 的这一路）
-                    ch.offset = int(parts[1])
-                    self.save_config()
-                    self.update_cal_status_label()
-                    live = self._live_rows.get(ch.id)
-                    if live:
-                        live['force_label'].setText(f"{ch.name}: 去皮完成")
-                    log.info("固件去皮完成（%s）：零点 offset=%d", ch.name, ch.offset)
-                except (ValueError, TypeError):
-                    pass
+        if kind == EVENT_SAMPLE_RECORDED and ch is not None:
+            value = data.get('value')
+            raw = data.get('raw')
+            if value is None:
+                return
+            display = self.kernel.display_value(ch, value=value)
+            unit = self.get_unit_str(ch)
+            time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            self.data_text.append(
+                f"{time_str} | {ch.name} | ADC: {int(raw)} | "
+                f"{unit}: {display:.4f}")
+            self.data_text.verticalScrollBar().setValue(
+                self.data_text.verticalScrollBar().maximum())
+            self.update_stats()
             return
 
-        if data.startswith("CALIBRATE_READY"):
+        if kind == EVENT_CHANNEL_STATE and ch is not None:
+            connected = bool(data.get('connected'))
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText("断开" if connected else "连接")
+            live = self._live_rows.get(ch.id)
+            if live:
+                if connected:
+                    msg = data.get('message') or '连接中...'
+                    if msg == '设备就绪':
+                        live['force_label'].setText("力/质量: 设备就绪")
+                        live['raw_label'].setText(f"{ch.name}: 等待数据...")
+                    else:
+                        live['force_label'].setText("力/质量: 等待数据...")
+                        live['raw_label'].setText(f"{ch.name}: {msg}")
+                else:
+                    live['force_label'].setText("力/质量: --.-")
+                    live['raw_label'].setText(f"{ch.name} ADC: 已断开")
+            self._refresh_summary_text()
+            any_connected = self.kernel.connected_any()
+            self._set_collect_enabled(any_connected)
+            self.tare_btn.setEnabled(any_connected)
+            self.calibrate_btn.setEnabled(any_connected)
+            return
+
+        if kind == EVENT_COLLECTION_CHANGED:
+            self._collecting = bool(data.get('collecting'))
+            self._refresh_collect_btn()
+            if self._collecting:
+                self.save_btn.setEnabled(False)
+            else:
+                total = sum(len(c.force_data) for c in self.channels)
+                self.save_btn.setEnabled(total > 0)
+            return
+
+        if kind == 'tare_done' and ch is not None:
+            offset = data.get('offset')
+            self.update_cal_status_label()
+            live = self._live_rows.get(ch.id)
+            if live:
+                live['force_label'].setText(f"{ch.name}: 去皮完成")
+            log.info("固件去皮完成（%s）：零点 offset=%s", ch.name, offset)
+            return
+
+        if kind == 'calibration_ready' and ch is not None:
             live = self._live_rows.get(ch.id)
             if live:
                 live['force_label'].setText(f"{ch.name}: 请放置已知质量砝码")
             return
 
-        try:
-            if "," not in data:
-                return
-            parts = data.split(",")
-            if len(parts) != 2:
-                return
-            raw_value = int(parts[1])
-        except ValueError:
+        if kind == EVENT_ERROR and ch is not None:
+            message = data.get('message', '')
+            log.error("%s 设备错误: %s", ch.name, message)
+            fluent_message_box(self, "连接错误", f"{ch.name}: {message}")
             return
-
-        # 实时显示 + 去皮滚动窗口（未采集时也持续刷新）——只更新本路行
-        ch.live_window.append(raw_value)
-        if ch.calibrated:
-            force_value_grams = (raw_value - ch.offset) * ch.scale
-            force_value = self.convert_unit(force_value_grams)
-        else:
-            force_value = float(raw_value)
-        unit = self.get_unit_str(ch)
-        live = self._live_rows.get(ch.id)
-        if live:
-            live['raw_label'].setText(f"{ch.name} ADC: {raw_value}")
-            live['force_label'].setText(f"力/质量: {force_value:.4f} {unit}")
-        # 隐藏摘要标签记最新活动的一路（仅供全屏浮动面板折叠态摘要读取）
-        self.current_force_label.setText(
-            f"{ch.name}: {force_value:.4f} {unit}")
-
-        if not self._collecting:
-            return
-
-        # 主机统一时间戳：采集期首个到达样本定为 t=0
-        now = time.monotonic()
-        if self._t0_mono is None:
-            self._t0_mono = now
-        t_rel = now - self._t0_mono
-
-        # 采样频率控制（每路独立过滤，按本路设定的间隔）
-        if ch.last_sample_s is not None and \
-                (t_rel - ch.last_sample_s) * 1000 < ch.sample_interval_ms:
-            return
-        ch.last_sample_s = t_rel
-
-        ch.raw_data.append(raw_value)
-        ch.force_data.append(force_value_grams if ch.calibrated else force_value)
-        ch.time_data.append(t_rel)
-
-        time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        display_text = (f"{time_str} | {ch.name} | ADC: {raw_value} | "
-                        f"{unit}: {force_value:.4f}")
-        self.data_text.append(display_text)
-        self.data_text.verticalScrollBar().setValue(
-            self.data_text.verticalScrollBar().maximum()
-        )
-        self.update_stats()
 
     def update_stats(self):
         """统计栏：每路有数据的通道各显示一行统计（按各自校准状态换算）。"""
@@ -1562,53 +1392,30 @@ class ForceSensorWidget(QWidget):
     def _on_channel_sample_interval_changed(self, ch, interval_ms):
         """本路采样频率改变：更新该路间隔并保存配置（对该路过滤即时生效；
         模拟器线程按创建时间隔发数，重连后按新频率运行）。"""
-        ch.sample_interval_ms = interval_ms
+        self.kernel.set_sample_interval(ch.id, interval_ms)
         if self.channels and ch is self.channels[0]:
-            self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
-        self.save_config()
+            self.sample_interval_ms = ch.sample_interval_ms  # 顶层字段跟第 1 路
 
     def save_data(self):
+        """保存数据到文件（由内核生成 CSV）。"""
         total = sum(len(ch.force_data) for ch in self.channels)
         if total == 0:
             fluent_message_box(self, "警告", "没有数据可保存")
             return
         try:
-            unit = self.get_unit_str()
-            filename = f"force_sensor_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            with open(filename, 'w', encoding='utf-8') as f:
-                # 长表格式：一行一个样本 + 通道名列。多路的时间轴天然对齐
-                # （主机统一时间戳），便于 Excel 透视/筛选按通道分组分析
-                for ch in self.channels:
-                    cal_desc = (f"校准 scale={ch.scale:.6f} offset={ch.offset}"
-                                if ch.calibrated else "未校准（值为原始ADC）")
-                    f.write(f"# {ch.name}: {cal_desc}\n")
-                f.write(f"channel,time_s,raw_adc,value,unit\n")
-                for ch in self.channels:
-                    ch_unit = self.get_unit_str(ch)
-                    for i, (time_val, force_val) in enumerate(
-                            zip(ch.time_data, ch.force_data)):
-                        raw_val = ch.raw_data[i] if i < len(ch.raw_data) else 0
-                        converted = (self.convert_unit(force_val)
-                                     if ch.calibrated else force_val)
-                        f.write(f"{ch.name},{time_val:.3f},{raw_val},"
-                                f"{converted:.6f},{ch_unit}\n")
-
+            filename = self.kernel.export_csv()
             log.info("数据已保存到：%s（%d 点）", filename, total)
             fluent_message_box(self, "成功",
-                                    f"数据已保存到：{filename}\n"
-                                    f"共 {total} 个数据点\n"
-                                    f"单位：{self.UNIT_LABELS.get(self.current_unit, 'g')}")
+                               f"数据已保存到：{filename}\n"
+                               f"共 {total} 个数据点\n"
+                               f"单位：{self.UNIT_LABELS.get(self.current_unit, 'g')}")
         except Exception as e:
             log.error("保存失败：%s", e)
             fluent_message_box(self, "错误", f"保存失败：{e}")
 
     def clear_data(self):
-        for ch in self.channels:
-            ch.force_data.clear()
-            ch.time_data.clear()
-            ch.raw_data.clear()
-            ch.last_sample_s = None
-        self._t0_mono = None
+        """清除数据（由内核清空各通道缓存）。"""
+        self.kernel.clear_data()
         self.data_text.clear()
         log.info("已清除数据")
         self.stats_label.setText("统计信息: 暂无数据")
@@ -1622,75 +1429,33 @@ class ForceSensorWidget(QWidget):
         self.save_btn.setEnabled(False)
 
     def _ai_data(self):
-        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。
-
-        多路连接时取**数据最多的通道**作为主分析序列，各通道概况与
-        每路去皮/标定参数写入 params，供模型理解多路对比背景。
-        """
-        active = [ch for ch in self.channels if ch.force_data]
-        if not active:
+        """AI 分析实验数据回调（数据由内核生成，View 只补系统提示词）。"""
+        data = self.kernel.ai_data()
+        if not data:
             return None
-        main = max(active, key=lambda c: len(c.force_data))
-        # 已校准时 force_data 存克值，按显示单位换算后与 y_label 保持一致；
-        # 未校准时为原始 ADC 值
-        display = ([self.convert_unit(v) for v in main.force_data]
-                   if main.calibrated else list(main.force_data))
-        channels_desc = "、".join(
-            f"{ch.name}[{len(ch.force_data)}点"
-            + (f"/去皮{ch.offset}/标定{ch.scale:.4g}g/计数" if ch.calibrated
-               else f"/未校准(零点{ch.offset})") + "]"
-            for ch in active)
-        return {
-            'title': '力传感器',
-            'x_label': '时间 (秒)',
-            'y_label': self.get_chart_ylabel(),
-            'points': list(zip(main.time_data, display)),
-            'params': (
-                f"传感器=HX711（24 位 ADC）+ 应变片, "
-                f"主分析通道={main.name}, "
-                f"去皮 offset={main.offset}, "
-                f"标定 scale={main.scale:.6f} 克/计数, 砝码质量={self.cal_known_weight}g, "
-                f"已校准={main.calibrated}"
-                + ("" if main.calibrated else "（未校准时数据为原始 ADC 值）")
-                + f", 显示单位={self.current_unit}, 重力加速度 g=9.8m/s², "
-                f"原始 ADC 范围=±8388607（24 位有符号）, "
-                f"多路连接: 共{len(active)}路（{channels_desc}），"
-                f"各路去皮零点与标定系数独立, "
-                f"采样间隔={main.sample_interval_ms}ms（各路独立）"),
-            'system_prompt': AI_SYSTEM_PROMPT,
-        }
+        data = dict(data)
+        data['system_prompt'] = AI_SYSTEM_PROMPT
+        return data
 
     def api_snapshot(self):
-        """当前实验数据快照（供 core.DataService 任意线程读取）。
-        禁止调用任何 Qt 方法：只读模块自身的 Python 数据。"""
-        d = self._ai_data() or {}
-        points = list(d.get('points') or [])
-        latest = None
-        main = self._main_channel()
-        if points:
-            t, y = points[-1]
-            latest = {'t': t, 'y': y,
-                      'raw': main.raw_data[-1] if (main and main.raw_data) else None}
-        return {
-            'key': 'force_sensor',
-            'name': '力传感器',
-            'connected': any(ch.thread is not None for ch in self.channels),
-            'collecting': self._collecting,
-            'x_label': d.get('x_label', '时间 (秒)'),
-            'y_label': d.get('y_label', '力'),
-            'params': d.get('params', {}),
-            'points': points,
-            'latest': latest,
-            # 多路连接明细（points 仍为主通道序列，前端单曲线不破）
-            'channels': [
-                {'name': ch.name, 'color': ch.color,
-                 'connected': ch.thread is not None,
-                 'points_n': len(ch.force_data),
-                 'calibrated': ch.calibrated,
-                 'latest_raw': ch.raw_data[-1] if ch.raw_data else None}
-                for ch in self.channels
-            ],
-        }
+        """当前实验数据快照（由内核生成，任意线程可读）。"""
+        return self.kernel.snapshot()
+
+    def api_csv(self):
+        """HTTP 导出用 CSV（避免 DataService 回退到单通道快照拼接）。"""
+        return self.kernel.csv_text()
+
+    def shutdown(self):
+        """退出清理：停止事件消费、关闭传输并关闭事件总线。"""
+        try:
+            self._event_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._events.close()
+        except Exception:
+            pass
+        self.kernel.shutdown()
 
     def showEvent(self, e):
         """首次显示后按子卡真实高度收敛连接控制卡（构建期 height() 不可靠）。"""

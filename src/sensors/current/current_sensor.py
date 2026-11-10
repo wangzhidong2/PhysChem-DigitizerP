@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
+# key: current_sensor
 # icon: A
 # name: 电流传感器
 # category: physics
 # class: CurrentSensorWidget
+# kernel: _kernel_current:CurrentKernel
 # ===================
 
 # -*- coding: utf-8 -*-
@@ -18,8 +20,7 @@
 
 import sys
 import os
-import time
-from collections import deque
+import importlib.util
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
@@ -33,17 +34,16 @@ from qfluentwidgets import (
     FlowLayout, LineEdit, ToolButton, CheckBox,
 )
 from qfluentwidgets.components.dialog_box import ColorDialog
-import numpy as np
 
 # 从公共模块导入共享代码
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
     fluent_message_box, ChartPanel,
-    SerialThread, SimulatorThread,
-    SampleRateComboBox, stop_thread,
-    load_sensor_config, save_sensor_config,
-    SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
+    SampleRateComboBox,
+    SERIAL_AVAILABLE, list_serial_ports,
+    EVENT_SAMPLE_PREVIEW, EVENT_SAMPLE_RECORDED, EVENT_CHANNEL_STATE,
+    EVENT_COLLECTION_CHANGED, EVENT_CHANNELS_CHANGED, EVENT_ERROR,
     card_style, primary_btn_style, accent_btn_style, modern_combo_style,
     CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
@@ -132,44 +132,6 @@ class _FlowWrapBox(QWidget):
         self.updateGeometry()
 
 
-class _Channel:
-    """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
-
-    每路连接独立选择「有线串口 / 模拟器」、独立串口、独立曲线颜色、
-    独立 ACS712 换算参数与零点校准；数据按主机统一时间戳记录（见 handle_data）。
-    UI 行控件引用由模块统一保管在 _rows[channel.id] 里。
-    """
-
-    def __init__(self, cid, name, color, mode='serial', port='',
-                 sample_interval_ms=100, acs_params=None):
-        self.id = cid                      # 稳定 id（信号绑定用，删除后不复用）
-        self.name = name                    # 显示名（可自定义，留空回退默认名）
-        self.default_name = name            # 默认名（通道N，创建时定序）
-        self.color = color                  # 曲线颜色
-        self.mode = mode                    # 'serial' | 'simulator'
-        self.port = port                    # 串口模式下选中的端口
-        self.thread = None                  # SerialThread / SimulatorThread
-        self.sample_interval_ms = sample_interval_ms  # 本路采样间隔（每路独立）
-        # 本路 ACS712 换算参数（每路独立；缺省继承模块级/全局默认）
-        p = acs_params or {}
-        self.acs_range = p.get('acs_range', '5A')
-        self.vcc = p.get('vcc', 5.0)
-        self.v_quiescent = p.get('v_quiescent', 2.5)
-        self.divider_ratio = p.get('divider_ratio', 1.515)
-        self.adc_bits = p.get('adc_bits', 12)
-        self.zero_cal_active = p.get('zero_cal_active', False)
-        self.visible = p.get('visible', True)   # 图表显示开关（勾选框控制）
-        # 采集数据（内部电流单位：安培）
-        self.time_data = []
-        self.raw_data = []
-        self.vsensor_data = []
-        self.current_data = []
-        # 去皮 / 实时显示用的滚动窗口（含未采集时的实时数据）
-        self.live_window = deque(maxlen=10)
-        # 上次记录样本的主机相对秒（采样间隔过滤，每路独立）
-        self.last_sample_s = None
-
-
 class CurrentSensorWidget(QWidget):
     """电流传感器模块界面 - ACS712 霍尔电流传感器
 
@@ -183,164 +145,43 @@ class CurrentSensorWidget(QWidget):
     通常在 ACS712 输出与 ESP32 ADC 之间加分压电路（分压比≈5/3.3≈1.515）。
     """
 
-    # ADC 位数 → 满量程计数值
-    ADC_BITS_OPTIONS = {8: 256, 10: 1024, 12: 4096, 14: 16384, 16: 65536}
-    VREF = 3.3  # ESP32 ADC 参考电压
-
-    # ACS712 量程参数：灵敏度（V/A）、标称量程（A）、说明
-    ACS712_RANGES = {
-        '5A':  {'sensitivity': 0.185, 'range_a': 5,  'desc': 'ACS712ELC-05B  ±5A  185mV/A'},
-        '20A': {'sensitivity': 0.100, 'range_a': 20, 'desc': 'ACS712ELC-20A  ±20A  100mV/A'},
-        '30A': {'sensitivity': 0.066, 'range_a': 30, 'desc': 'ACS712ELC-30A  ±30A  66mV/A'},
-    }
-
-    # 内部 current_data 始终存安培，显示时按当前单位换算
-    UNIT_FACTORS = {'A': 1.0, 'mA': 1000.0}
-
-    def __init__(self):
+    def __init__(self, kernel=None):
         super().__init__()
+        # 内核由加载器注入；直接实例化时用同目录 _kernel_current.py 兜底
+        self.kernel = kernel or self._create_default_kernel()
+        self.channels = self.kernel.channels
         self._collecting = False  # 当前是否在采集（合并开始/停止按钮状态）
-        # 多路连接：每路一个 _Channel（独立模式/串口/颜色/换算参数/零点/数据）
-        self.channels = []
         self._rows = {}              # channel.id -> 行控件引用 dict
-        self._next_channel_id = 1   # 稳定 id 分配器（删除后不复用）
-        self._next_channel_seq = 1  # 显示名序号（通道N）
-        self._t0_mono = None        # 采集期主机统一时间基准（首个样本时刻）
+        self.sample_interval_ms = self.kernel.sample_interval_ms
 
-        # 采样频率设置（毫秒）—— 模块级镜像字段（始终与第 1 路一致）
-        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
+        # 模块级共享设置镜像（真正读写在内核）
+        self.current_mode = self.kernel.current_mode
+        self.current_unit = self.kernel.current_unit
+        self.ac_rms_window = self.kernel.ac_rms_window
 
-        # ACS712 参数（模块级镜像字段，始终与第 1 路一致；各路独立值在 _Channel 上）
-        self.acs_range = '5A'
-        self.vcc = 5.0              # ACS712 供电电压
-        self.v_quiescent = 2.5      # 零电流输出电压（= VCC/2，可校准）
-        self.divider_ratio = 1.515  # 分压比 (R1+R2)/R2，还原 ACS712 原始输出
-        self.adc_bits = 12
-        self.zero_cal_active = False
-        # 模块级共享设置（对全部通道生效）
-        self.current_mode = 'DC'    # DC / AC
-        self.current_unit = 'A'     # A / mA
-        # AC 模式 RMS 滚动窗口大小（采样点数）
-        self.ac_rms_window = 50
-
-        self.config = self.load_config()
         self.init_ui()
-        # 恢复上次的通道列表（含模式/串口/颜色/换算参数/零点）；无记录时建一路默认通道
-        self._restore_channels()
+        # 内核已恢复通道列表（含模式/串口/颜色/换算参数/零点）
+        self._build_channels_from_kernel()
+
+    @staticmethod
+    def _create_default_kernel():
+        """不经过 main.py 加载器时，直接加载同目录内核文件。"""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            '_kernel_current.py')
+        spec = importlib.util.spec_from_file_location(
+            '_sensor_kernel_current', path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.CurrentKernel()
 
     # ------------------------------------------------------------------
-    # 配置读写
+    # 配置（委托内核）
     # ------------------------------------------------------------------
     def load_config(self):
-        config = load_sensor_config('current_sensor')
-        if config:
-            self.acs_range = config.get('acs_range', '5A')
-            self.vcc = config.get('vcc', 5.0)
-            self.v_quiescent = config.get('v_quiescent', self.vcc / 2.0)
-            self.divider_ratio = config.get('divider_ratio', 1.515)
-            self.adc_bits = config.get('adc_bits', 12)
-            self.zero_cal_active = config.get('zero_cal_active', False)
-            self.current_mode = config.get('current_mode', 'DC')
-            self.current_unit = config.get('current_unit', 'A')
-            self.sample_interval_ms = config.get('sample_interval_ms', 100)
-            self.ac_rms_window = config.get('ac_rms_window', 50)
-        return config
+        return self.kernel.config
 
     def save_config(self):
-        first = self.channels[0] if self.channels else None
-        config = {
-            # 兼容旧版单通道上位机：顶层换算/采样/校准字段取第 1 路的值
-            'acs_range': first.acs_range if first else self.acs_range,
-            'vcc': first.vcc if first else self.vcc,
-            'v_quiescent': first.v_quiescent if first else self.v_quiescent,
-            'divider_ratio': first.divider_ratio if first else self.divider_ratio,
-            'adc_bits': first.adc_bits if first else self.adc_bits,
-            'zero_cal_active': first.zero_cal_active if first else self.zero_cal_active,
-            'current_mode': self.current_mode,
-            'current_unit': self.current_unit,
-            'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
-            'ac_rms_window': self.ac_rms_window,
-            # 多路连接：每路的模式/串口/颜色/采样间隔/换算参数/图表显示
-            'channels': [
-                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
-                 'acs_range': ch.acs_range, 'vcc': ch.vcc,
-                 'v_quiescent': ch.v_quiescent,
-                 'divider_ratio': ch.divider_ratio, 'adc_bits': ch.adc_bits,
-                 'zero_cal_active': ch.zero_cal_active,
-                 'visible': ch.visible}
-                for ch in self.channels
-            ],
-        }
-        return save_sensor_config('current_sensor', config)
-
-    # ------------------------------------------------------------------
-    # 单位与换算
-    # ------------------------------------------------------------------
-    def to_current_unit(self, current_a):
-        """安培 → 当前单位"""
-        return current_a * self.UNIT_FACTORS.get(self.current_unit, 1.0)
-
-    def format_current(self, current_a):
-        """格式化显示：根据数量级自动选小数位"""
-        c = self.to_current_unit(current_a)
-        if self.current_unit == 'mA':
-            return f"{c:.2f}"
-        # 安培：按数量级
-        abs_c = abs(c)
-        if abs_c >= 1.0:
-            return f"{c:.4f}"
-        return f"{c:.6f}"
-
-    def _sensitivity_of(self, src):
-        return self.ACS712_RANGES.get(src['acs_range'], self.ACS712_RANGES['5A'])['sensitivity']
-
-    def _adc_param_source(self, channel=None):
-        """取一路 ACS712 换算参数字典：显式通道 > 参数卡当前选中路 > 第 1 路 > 模块级。
-
-        模块级字段（self.acs_range 等）始终与第 1 路保持镜像，
-        供旧版单通道调用方与配置顶层字段使用。
-        """
-        ch = channel
-        if ch is None:
-            ch = self._active_channel_obj()
-        if ch is None and self.channels:
-            ch = self.channels[0]
-        if ch is not None:
-            return {'acs_range': ch.acs_range, 'vcc': ch.vcc,
-                    'v_quiescent': ch.v_quiescent,
-                    'divider_ratio': ch.divider_ratio, 'adc_bits': ch.adc_bits,
-                    'zero_cal_active': ch.zero_cal_active}
-        return {'acs_range': self.acs_range, 'vcc': self.vcc,
-                'v_quiescent': self.v_quiescent,
-                'divider_ratio': self.divider_ratio, 'adc_bits': self.adc_bits,
-                'zero_cal_active': self.zero_cal_active}
-
-    def adc_to_vadc(self, adc_value, channel=None):
-        """ADC 输入端电压（ESP32 ADC 引脚处）。
-
-        多路连接时传 channel：按该路自己的 ADC 位数换算。
-        """
-        src = self._adc_param_source(channel)
-        max_adc = self.ADC_BITS_OPTIONS.get(src['adc_bits'], 4096) - 1
-        return (adc_value / max_adc) * self.VREF
-
-    def adc_to_vsensor(self, adc_value, channel=None):
-        """还原 ACS712 输出电压（扣除分压电路影响）。
-
-        多路连接时传 channel：按该路自己的分压比还原。
-        """
-        src = self._adc_param_source(channel)
-        return self.adc_to_vadc(adc_value, channel) * src['divider_ratio']
-
-    def adc_to_current(self, adc_value, channel=None):
-        """ADC 原始值 → 电流（安培，瞬时值）。
-
-        多路连接时传 channel：按该路自己的量程灵敏度与零点换算。
-        """
-        src = self._adc_param_source(channel)
-        v_sensor = self.adc_to_vsensor(adc_value, channel)
-        return (v_sensor - src['v_quiescent']) / self._sensitivity_of(src)
+        return self.kernel.save_config()
 
     # ------------------------------------------------------------------
     # UI 构建
@@ -403,14 +244,18 @@ class CurrentSensorWidget(QWidget):
         acs_card_layout.setContentsMargins(20, 4, 20, 16)
         acs_card_layout.setSpacing(12)
 
+        # 参数卡初始值取第 1 路（通道由内核恢复）
+        src = self.kernel.adc_param_source(
+            self.channels[0] if self.channels else None)
+
         # 量程选择
         range_row = QHBoxLayout()
         range_row.setSpacing(10)
         range_row.addWidget(BodyLabel("量程:"))
         self.range_combo = ComboBox()
         for key in ['5A', '20A', '30A']:
-            self.range_combo.addItem(self.ACS712_RANGES[key]['desc'])
-        range_idx = {'5A': 0, '20A': 1, '30A': 2}.get(self.acs_range, 0)
+            self.range_combo.addItem(self.kernel.ACS712_RANGES[key]['desc'])
+        range_idx = {'5A': 0, '20A': 1, '30A': 2}.get(src['acs_range'], 0)
         self.range_combo.setCurrentIndex(range_idx)
         self.range_combo.currentIndexChanged.connect(self.on_range_changed)
         range_row.addWidget(self.range_combo)
@@ -432,7 +277,7 @@ class CurrentSensorWidget(QWidget):
             "16 位 (0-65535)",
         ])
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16}
-        self.adc_bits_combo.setCurrentIndex({v: k for k, v in bits_map.items()}.get(self.adc_bits, 2))
+        self.adc_bits_combo.setCurrentIndex({v: k for k, v in bits_map.items()}.get(src['adc_bits'], 2))
         self.adc_bits_combo.currentIndexChanged.connect(self.on_adc_bits_changed)
         range_row.addWidget(self.adc_bits_combo)
         range_row.addStretch()
@@ -454,7 +299,7 @@ class CurrentSensorWidget(QWidget):
         self.vcc_spin.setRange(4.5, 5.5)
         self.vcc_spin.setDecimals(2)
         self.vcc_spin.setSingleStep(0.1)
-        self.vcc_spin.setValue(self.vcc)
+        self.vcc_spin.setValue(src['vcc'])
         self.vcc_spin.setSuffix(" V")
         self.vcc_spin.setMinimumWidth(90)
         self.vcc_spin.setFixedHeight(32)
@@ -469,7 +314,7 @@ class CurrentSensorWidget(QWidget):
         self.vquies_spin.setRange(0.0, 5.5)
         self.vquies_spin.setDecimals(3)
         self.vquies_spin.setSingleStep(0.01)
-        self.vquies_spin.setValue(self.v_quiescent)
+        self.vquies_spin.setValue(src['v_quiescent'])
         self.vquies_spin.setSuffix(" V")
         self.vquies_spin.setToolTip("零电流时 ACS712 输出电压，理论值 = VCC/2\n"
                                     "实际传感器有偏差，建议用“零点校准”按钮自动获取\n"
@@ -485,7 +330,7 @@ class CurrentSensorWidget(QWidget):
         self.divider_spin.setRange(1.0, 10.0)
         self.divider_spin.setDecimals(3)
         self.divider_spin.setSingleStep(0.01)
-        self.divider_spin.setValue(self.divider_ratio)
+        self.divider_spin.setValue(src['divider_ratio'])
         self.divider_spin.setSuffix(" x")
         self.divider_spin.setMinimumWidth(110)
         self.divider_spin.valueChanged.connect(self.on_divider_changed)
@@ -686,6 +531,27 @@ class CurrentSensorWidget(QWidget):
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)
 
+        # 内核事件队列：后台采集线程只入队，GUI 线程由 QTimer 消费
+        self._events = self.kernel.subscribe()
+        self._event_timer = QTimer(self)
+        self._event_timer.timeout.connect(self._drain_kernel_events)
+        self._event_timer.start(50)
+
+    # ------------------------------------------------------------------
+    # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
+    # ------------------------------------------------------------------
+    def _build_channels_from_kernel(self):
+        """按内核已有通道重建 UI 行（内核负责配置恢复与换算参数）。"""
+        for ch in self.channels:
+            self._build_channel_card(ch)
+            self._build_live_row(ch)
+        self._refresh_active_channel_combo()
+        self._refresh_chart_visibility_row()
+        self._update_delete_btns()
+        self._sync_compat_aliases()
+        self.update_zero_status_label()
+        self._refresh_summary_text()
+
     # ------------------------------------------------------------------
     # ACS712 参数按路独立：当前选中路辅助
     # ------------------------------------------------------------------
@@ -700,14 +566,10 @@ class CurrentSensorWidget(QWidget):
         return next((ch for ch in self.channels if ch.id == cid), None)
 
     def _write_acs_param(self, attr, value):
-        """把改动写入当前选中路；若为第 1 路同步模块级镜像字段。"""
+        """把参数改动写入当前选中路（保存由内核负责）。"""
         ch = self._active_channel_obj()
         if ch is not None:
             setattr(ch, attr, value)
-            if self.channels and ch is self.channels[0]:
-                setattr(self, attr, value)
-        else:
-            setattr(self, attr, value)  # 无路时（初始化期）写全局默认
 
     def _refresh_active_channel_combo(self, keep_id=None):
         """通道增删/改名后重建「当前连接」下拉，尽量保住原选中。"""
@@ -736,7 +598,7 @@ class CurrentSensorWidget(QWidget):
         """把 ACS712 参数卡控件同步为通道 ch 的值（blockSignals 防递归）。"""
         if ch is None:
             return
-        src = self._adc_param_source(ch)
+        src = self.kernel.adc_param_source(ch)
         combo = self._active_channel_combo
         combo.blockSignals(True)
         idx = next((i for i in range(combo.count())
@@ -777,17 +639,11 @@ class CurrentSensorWidget(QWidget):
         self.update_range_display()
 
     def on_current_mode_changed(self, index):
-        self.current_mode = 'DC' if index == 0 else 'AC'
-        self.ac_window_spin.setEnabled(self.current_mode == 'AC')
-        self.save_config()
+        self.kernel.set_mode('DC' if index == 0 else 'AC')
+        self._sync_module_settings()
         self.update_stats()
         self.update_chart()
-        # 模式切换后逐路刷新实时行
-        for ch in self.channels:
-            live = self._live_rows.get(ch.id)
-            if live and ch.current_data:
-                live['value_label'].setText(
-                    f"{self.format_current(ch.current_data[-1])} {self.current_unit}")
+        self._refresh_live_values()
         self._refresh_summary_text()
 
     def on_adc_bits_changed(self, index):
@@ -802,8 +658,6 @@ class CurrentSensorWidget(QWidget):
         # VCC 改变时，若该路未做零点校准则零点电压跟随 VCC/2
         if ch is not None and not ch.zero_cal_active:
             ch.v_quiescent = value / 2.0
-            if self.channels and ch is self.channels[0]:
-                self.v_quiescent = ch.v_quiescent
             self.vquies_spin.blockSignals(True)
             self.vquies_spin.setValue(ch.v_quiescent)
             self.vquies_spin.blockSignals(False)
@@ -824,26 +678,18 @@ class CurrentSensorWidget(QWidget):
         self.update_range_display()
 
     def on_unit_changed(self, index):
-        self.current_unit = 'A' if index == 0 else 'mA'
-        self.save_config()
+        self.kernel.set_unit('A' if index == 0 else 'mA')
+        self._sync_module_settings()
         self.update_stats()
         self.update_chart()
-        # 单位切换后逐路刷新实时行（内部电流值不变，只换显示单位）
-        for ch in self.channels:
-            live = self._live_rows.get(ch.id)
-            if not live:
-                continue
-            if ch.current_data:
-                live['value_label'].setText(
-                    f"{self.format_current(ch.current_data[-1])} {self.current_unit}")
-            else:
-                live['value_label'].setText(f"--.- {self.current_unit}")
+        self._refresh_live_values()
         self._refresh_summary_text()
 
     def on_ac_window_changed(self, value):
-        self.ac_rms_window = value
-        self.save_config()
+        self.kernel.set_rms_window(value)
+        self._sync_module_settings()
         self.update_stats()
+        self.update_chart()
 
     # ------------------------------------------------------------------
     # 零点校准（每路独立零点）
@@ -858,87 +704,71 @@ class CurrentSensorWidget(QWidget):
             self.zero_status_label.setStyleSheet("color: green; font-weight: bold;")
         else:
             first = self.channels[0] if self.channels else None
-            vcc = first.vcc if first else self.vcc
+            vcc = first.vcc if first else 5.0
             self.zero_status_label.setText(f"未校准（零点=VCC/2={vcc/2.0:.3f}V）")
             self.zero_status_label.setStyleSheet("color: #888; font-weight: bold;")
 
     def tare_now(self):
-        """去皮（零点校准）：取最近若干个实时采样点的 ACS712 输出电压均值作为零点。
-
-        与旧实现的区别（对齐电压传感器的去皮行为）：
-        1. 不要求先「开始采集」——设备连着、有数据流入即可去皮
-           （用各路 live_window 实时窗口，采集前后都在持续更新）；
-        2. 可反复点击，每点一次都以当前读数重新归零，没有「取消去皮」；
-        3. 零点按去皮前的传感器输出计算，重复去皮不会互相叠加；
-        4. 多路连接时对**所有有数据流入的通道**分别校准，各路零点独立
-           （不同 ACS712 的空载偏移不同）。
-        """
-        targets = [ch for ch in self.channels if ch.live_window]
-        if not targets:
-            fluent_message_box(self, "提示", "还没有收到数据，等数据流入后再去皮")
+        """去皮（零点校准）：委托内核按各路实时窗口计算零点并重算已采数据。"""
+        res = self.kernel.tare_now()
+        if not res.get('ok'):
+            fluent_message_box(self, "提示", res.get('message', '去皮失败'))
             return
-        parts = []
-        for ch in targets:
-            # 取最近 10 个采样点的传感器输出电压（未扣零点）平均值作为新零点
-            recent = [self.adc_to_vsensor(r, channel=ch) for r in ch.live_window]
-            ch.v_quiescent = float(np.mean(recent))
-            ch.zero_cal_active = True
-            parts.append(f"{ch.name} 零点={ch.v_quiescent:.4f}V")
-        log.info("去皮：%s", "; ".join(parts))
         # 零点电压输入框同步为当前选中路的新零点
         cur = self._active_channel_obj() or (self.channels[0] if self.channels else None)
-        if cur is not None and cur in targets:
+        if cur is not None:
             self.vquies_spin.blockSignals(True)
             self.vquies_spin.setValue(cur.v_quiescent)
             self.vquies_spin.blockSignals(False)
-        self.save_config()
         self.update_zero_status_label()
-        # 按新零点重算已采集的数据，曲线同步归零
-        self.recompute_current_data()
-
-    def api_actions(self):
-        """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
-        return ['zero_cal']
-
-    def api_command(self, action, params=None):
-        """执行模块特有控制动作（由 DataService 保证在 GUI 线程调用）。
-        通用动作（start/stop/clear/toggle）返回 None 交给通用动作表。"""
-        if action == 'zero_cal':
-            if not any(ch.live_window for ch in self.channels):
-                return {'ok': False, 'message': '还没有收到数据，等数据流入后再去皮'}
-            self.tare_now()
-            offsets = "; ".join(f"{ch.name}={ch.v_quiescent:.4f}V"
-                                for ch in self.channels if ch.zero_cal_active)
-            return {'ok': True,
-                    'message': f'已去皮（{offsets}）'}
-        return None
-
-    def recompute_current_data(self):
-        """零点变化后，按各通道已有 raw_data 重算 current_data"""
-        if not any(ch.raw_data for ch in self.channels):
-            return
-        for ch in self.channels:
-            ch.vsensor_data = [self.adc_to_vsensor(r, channel=ch) for r in ch.raw_data]
-            ch.current_data = [self.adc_to_current(r, channel=ch) for r in ch.raw_data]
         self.update_stats()
         self.update_chart()
-        # 逐路刷新实时行 + 汇总标签（去皮后显示值归零）
+        self._refresh_live_values()
+        self._refresh_summary_text()
+
+    def _sync_module_settings(self):
+        """把内核模块级设置（模式/单位/RMS 窗口）同步回界面控件。"""
+        self.current_mode = self.kernel.current_mode
+        self.current_unit = self.kernel.current_unit
+        self.ac_rms_window = self.kernel.ac_rms_window
+        combo = getattr(self, 'mode_type_combo', None)
+        if combo is not None:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0 if self.current_mode == 'DC' else 1)
+            combo.blockSignals(False)
+        combo = getattr(self, 'unit_combo', None)
+        if combo is not None:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0 if self.current_unit == 'A' else 1)
+            combo.blockSignals(False)
+        spin = getattr(self, 'ac_window_spin', None)
+        if spin is not None:
+            spin.blockSignals(True)
+            spin.setValue(self.ac_rms_window)
+            spin.blockSignals(False)
+            spin.setEnabled(self.current_mode == 'AC')
+
+    def _refresh_live_values(self):
+        """按当前模式/单位刷新每路实时行的大字电流值。"""
         for ch in self.channels:
             live = self._live_rows.get(ch.id)
-            if live and ch.current_data:
-                live['value_label'].setText(
-                    f"{self.format_current(ch.current_data[-1])} {self.current_unit}")
-        self._refresh_summary_text()
+            if not live:
+                continue
+            if not ch.current_data:
+                live['value_label'].setText(f"--.- {self.current_unit}")
+                continue
+            value = ch.current_data[-1]
+            if self.current_mode == 'AC':
+                rms = self.kernel.compute_ac_rms(ch)
+                if rms is not None:
+                    value = rms
+            live['value_label'].setText(
+                f"{self.kernel.format_current(value)} {self.current_unit}")
 
     def update_range_display(self):
         """可测范围标签按「当前连接」下拉所选路的参数刷新。"""
-        src = self._adc_param_source()
-        sensitivity = self._sensitivity_of(src)
-        max_adc = self.ADC_BITS_OPTIONS.get(src['adc_bits'], 4096) - 1
-        v_sensor_max = self.VREF * src['divider_ratio']  # ADC 满量程对应的传感器输出
-        i_pos = (v_sensor_max - src['v_quiescent']) / sensitivity
-        i_neg = (0.0 - src['v_quiescent']) / sensitivity
-        lo, hi = min(i_pos, i_neg), max(i_pos, i_neg)
+        lo, hi, max_adc, src = self.kernel.measurable_range(
+            self._active_channel_obj())
         self.actual_range_label.setText(
             f"可测范围: {lo:.2f}A ~ {hi:.2f}A "
             f"(ADC {max_adc}, 分压 {src['divider_ratio']:.3f}x, 受 ADC 量程限制)"
@@ -947,60 +777,17 @@ class CurrentSensorWidget(QWidget):
     # ============================================================
     # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
     # ============================================================
-    def _restore_channels(self):
-        """按配置重建通道行；旧版单通道配置自动迁移为一路通道。"""
-        saved = (self.config or {}).get('channels') or []
-        if saved:
-            for item in saved:
-                mode = item.get('mode', 'serial')
-                if mode != 'simulator' and not SERIAL_AVAILABLE:
-                    mode = 'simulator'   # pyserial 缺失时优雅降级
-                ch = self._make_channel(
-                    name=item.get('name') or None,
-                    color=item.get('color') or None,
-                    mode=mode, port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'),
-                    # 缺字段用模块级顶层值补齐（旧版多通道配置迁移）
-                    acs_params={**self._adc_param_source(), **item})
-        else:
-            # 旧版单通道配置迁移：顶层采样间隔/换算字段作为第 1 路初值
-            self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
-        self._refresh_active_channel_combo()
-        self._sync_acs_controls(self.channels[0] if self.channels else None)
-        # 顶层镜像字段刷新为第 1 路实际值（旧版顶层配置可能滞后于各路参数）
-        if self.channels:
-            first = self.channels[0]
-            self.acs_range = first.acs_range
-            self.vcc = first.vcc
-            self.v_quiescent = first.v_quiescent
-            self.divider_ratio = first.divider_ratio
-            self.adc_bits = first.adc_bits
-            self.zero_cal_active = first.zero_cal_active
-            self.sample_interval_ms = first.sample_interval_ms
-        self._sync_compat_aliases()
-        self.update_zero_status_label()
-        self._refresh_summary_text()
-
     def _make_channel(self, color=None, mode='serial', port='', name=None,
                       sample_interval_ms=None, acs_params=None):
-        """创建通道对象 + 对应 UI 行（不重复使用已删除通道的 id/name）。
+        """创建内核通道，并为它建立对应的 UI 子卡/实时行。
 
-        新建通道的换算参数缺省继承「参数卡当前选中路 / 第 1 路 / 模块级」。
+        新建通道的换算参数缺省继承参数卡当前选中路。
         """
-        cid = self._next_channel_id
-        self._next_channel_id += 1
-        seq = self._next_channel_seq
-        self._next_channel_seq += 1
-        if not color:
-            used = {ch.color for ch in self.channels}
-            color = next((c for c in CHANNEL_COLORS if c not in used),
-                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
         if acs_params is None:
-            acs_params = self._adc_param_source()
-        ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port,
-                      sample_interval_ms=sample_interval_ms or self.sample_interval_ms,
-                      acs_params=acs_params)
-        self.channels.append(ch)
+            acs_params = self.kernel.adc_param_source(self._active_channel_obj())
+        ch = self.kernel.add_channel(
+            color=color, mode=mode, port=port, name=name,
+            sample_interval_ms=sample_interval_ms, acs_params=acs_params)
         self._build_channel_card(ch)
         self._build_live_row(ch)
         self._refresh_chart_visibility_row()
@@ -1017,20 +804,19 @@ class CurrentSensorWidget(QWidget):
 
     def _delete_channel(self, ch):
         """删除一路连接（正在连接的通道须先断开；至少保留一路）。"""
-        if ch.thread and ch.thread.isRunning():
+        if getattr(ch, 'connected', False):
             fluent_message_box(self, "提示", f"{ch.name} 正在连接，请先断开再删除")
             return
         refs = self._rows.pop(ch.id, None)
         if refs:
             self.channels_layout.removeWidget(refs['card'])
             refs['card'].deleteLater()
-        self.channels.remove(ch)
+        self.kernel.remove_channel(ch.id)
         self._remove_live_row(ch)
         self._refresh_chart_visibility_row()
         self._update_delete_btns()
         self._sync_compat_aliases()
         self._refresh_active_channel_combo()
-        self.save_config()
         self._sync_conn_card_height()
 
     def _build_live_row(self, ch):
@@ -1110,7 +896,9 @@ class CurrentSensorWidget(QWidget):
         for ch in reversed(self.channels):
             if ch.current_data:
                 self.current_value_label.setText(
-                    f"{ch.name}: {self.format_current(ch.current_data[-1])} {self.current_unit}")
+                    f"{ch.name}: "
+                    f"{self.kernel.format_current(ch.current_data[-1])} "
+                    f"{self.current_unit}")
                 return
         self.current_value_label.setText(f"--.- {self.current_unit}")
 
@@ -1407,37 +1195,18 @@ class CurrentSensorWidget(QWidget):
             self._sync_conn_card_height()
 
     def _toggle_channel_connection(self, ch):
-        """单路的连接/断开按钮：按本路线程状态切换。"""
-        if ch.thread and ch.thread.isRunning():
+        """单路的连接/断开按钮：按本路连接状态切换。"""
+        if getattr(ch, 'connected', False):
             self._disconnect_channel(ch)
         else:
             self._connect_channel(ch)
 
     def _connect_channel(self, ch):
-        """连接单路：串口或模拟器（其余通道不受影响）。"""
-        try:
-            if ch.mode == 'simulator':
-                # 模拟器产生 0~满量程 的原始 ADC 值，中点≈零电流（按本路位数）
-                max_adc = self.ADC_BITS_OPTIONS.get(ch.adc_bits, 4096) - 1
-                th = SimulatorThread(value_min=0, value_max=max_adc,
-                                     interval_ms=ch.sample_interval_ms,
-                                     start_value=max_adc / 2.0)
-            else:
-                if not SERIAL_AVAILABLE:
-                    fluent_message_box(self, "提示", serial_unavailable_hint())
-                    return
-                port = self._rows[ch.id]['port_combo'].currentText()
-                if not port or "未安装" in port or "无可用" in port:
-                    fluent_message_box(self, "错误", f"{ch.name}: 请选择串口")
-                    return
-                ch.port = port
-                th = SerialThread(port)
-            th.data_received.connect(lambda d, c=ch: self.handle_data(d, c))
-            ch.thread = th
-            th.start()
-        except Exception as e:
-            ch.thread = None
-            fluent_message_box(self, "连接错误", f"{ch.name} 连接失败: {e}")
+        """连接单路：串口或模拟器（其余通道不受影响，传输由内核创建）。"""
+        res = self.kernel.connect(ch.id)
+        if not res.get('ok'):
+            fluent_message_box(self, "连接错误",
+                               res.get('message', f'{ch.name} 连接失败'))
             return
         refs = self._rows.get(ch.id)
         if refs:
@@ -1455,15 +1224,12 @@ class CurrentSensorWidget(QWidget):
 
     def _disconnect_channel(self, ch):
         """断开单路（其余通道不受影响）。"""
-        if ch.thread:
-            stop_thread(ch.thread, name=f"电流{ch.name}线程")
-            ch.thread = None
+        self.kernel.disconnect(ch.id)
         refs = self._rows.get(ch.id)
         if refs:
             refs['connect_btn'].setText("连接")
         log.info("%s 已断开", ch.name)
-        # 本路实时行复位 + 去皮窗口清空，其余路的显示保留
-        ch.live_window.clear()
+        # 本路实时行复位，其余路的显示保留
         live = self._live_rows.get(ch.id)
         if live:
             live['value_label'].setText(f"--.- {self.current_unit}")
@@ -1471,20 +1237,29 @@ class CurrentSensorWidget(QWidget):
             live['vadc_label'].setText("ADC端电压: --.- V")
             live['vsensor_label'].setText("传感器输出: --.- V")
         self._refresh_summary_text()
-        if not any(c.thread for c in self.channels):
+        if not self.kernel.connected_any():
             self._set_collect_enabled(False)
             self.zero_cal_btn.setEnabled(False)
 
     def connect_device(self):
         """连接全部未连接的通道（网页端 set_connection connect=true 走这里）。"""
+        self.kernel.connect_all()
         for ch in self.channels:
-            if not (ch.thread and ch.thread.isRunning()):
-                self._connect_channel(ch)
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText(
+                    "断开" if getattr(ch, 'connected', False) else "连接")
+        self._set_collect_enabled(self.kernel.connected_any())
 
     def disconnect_all(self):
         """断开全部通道（退出清理 / 网页端命令也走这里）。"""
-        for ch in list(self.channels):
-            self._disconnect_channel(ch)
+        self.kernel.disconnect_all()
+        for ch in self.channels:
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText("连接")
+        self._set_collect_enabled(False)
+        self.zero_cal_btn.setEnabled(False)
 
     # ------------------------------------------------------------------
     # 采集控制
@@ -1513,18 +1288,13 @@ class CurrentSensorWidget(QWidget):
         update_collect_btn(self.float_collect_btn, self._collecting)
 
     def start_collection(self):
-        for ch in self.channels:
-            ch.current_data.clear()
-            ch.vsensor_data.clear()
-            ch.time_data.clear()
-            ch.raw_data.clear()
-            ch.last_sample_s = None
-        self.data_text.clear()
-        # 主机统一时间基准：以采集期收到的**首个样本**为 t=0（各路共享）
-        self._t0_mono = None
+        """开始数据采集（数据清空与时间基准由内核负责）。"""
+        self.kernel.start_collection()
         self._collecting = True
+        self.data_text.clear()
         log.info("开始采集（已连接 %d 路）",
-                 sum(1 for ch in self.channels if ch.thread))
+                 sum(1 for ch in self.channels
+                     if getattr(ch, 'connected', False)))
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
         self.current_value_label.setText("电流: 采集中...")
@@ -1534,6 +1304,8 @@ class CurrentSensorWidget(QWidget):
                 live['raw_label'].setText(f"{ch.name} ADC: 采集中...")
 
     def stop_collection(self):
+        """停止数据采集。"""
+        self.kernel.stop_collection()
         self._collecting = False
         self._refresh_collect_btn()
         total = sum(len(ch.current_data) for ch in self.channels)
@@ -1542,135 +1314,136 @@ class CurrentSensorWidget(QWidget):
         if total > 0:
             # 汇总标签显示数据最多通道的均值
             main = max(self.channels, key=lambda c: len(c.current_data))
-            if main.current_data:
-                avg_c = np.mean(main.current_data)
+            stats = self.kernel.channel_stats(main)
+            if stats.get('count'):
                 self.current_value_label.setText(
-                    f"{main.name} 均值: {self.format_current(avg_c)} {self.current_unit}")
+                    f"{main.name} 均值: "
+                    f"{self.kernel.format_current(stats['mean'])} "
+                    f"{self.current_unit}")
 
     # ------------------------------------------------------------------
-    # 数据处理
+    # 内核事件 → UI（QTimer 在 GUI 线程消费，避免后台线程直接碰 QWidget）
     # ------------------------------------------------------------------
-    def handle_data(self, data, ch):
-        """一路连接的数据回调（SerialThread / SimulatorThread → 本模块）。
+    def _drain_kernel_events(self):
+        for event in self._events.drain(200):
+            if event is None:
+                return
+            self._handle_kernel_event(event)
 
-        多路连接下的约定：
-        - ERROR / START 按通道处理，出错只断开这一路；
-        - 记录用**主机统一时间戳**（time.monotonic），各路天然对齐在同一
-          时间轴（不同 ESP32 开机时刻不同，固件时间戳不可跨路比较）；
-        - 固件的 timestamp 字段只做格式解析，不参与记录。
-        """
-        if data.startswith("ERROR:"):
-            log.error("%s 设备错误: %s", ch.name, data[6:])
-            fluent_message_box(self, "连接错误", f"{ch.name}: {data[6:]}")
-            self._disconnect_channel(ch)
-            return
+    def _handle_kernel_event(self, event):
+        kind = event.kind
+        cid = event.channel_id
+        data = event.data or {}
+        ch = self.kernel.get_channel(cid) if cid is not None else None
 
-        if data == "START":
+        if kind == EVENT_SAMPLE_PREVIEW and ch is not None:
+            raw = data.get('raw')
+            value = data.get('value')
+            if raw is None or value is None:
+                return
+            v_adc = self.kernel.adc_to_vadc(raw, channel=ch)
+            v_sensor = self.kernel.adc_to_vsensor(raw, channel=ch)
+            display = value
+            if self.current_mode == 'AC':
+                rms = self.kernel.compute_ac_rms(ch)
+                if rms is not None:
+                    display = rms
             live = self._live_rows.get(ch.id)
             if live:
-                live['raw_label'].setText(f"{ch.name}: 设备就绪，等待数据...")
-            return
-
-        try:
-            if "," not in data:
-                return
-            parts = data.split(",")
-            if len(parts) != 2:
-                return
-            raw_value = int(parts[1])
-        except ValueError:
-            return
-
-        # 实时显示 + 去皮滚动窗口（未采集时也持续刷新）——只更新本路行
-        ch.live_window.append(raw_value)
-        v_adc = self.adc_to_vadc(raw_value, channel=ch)
-        v_sensor = self.adc_to_vsensor(raw_value, channel=ch)
-        current = self.adc_to_current(raw_value, channel=ch)
-        live = self._live_rows.get(ch.id)
-        if live:
-            live['raw_label'].setText(f"{ch.name} ADC: {raw_value}")
-            live['vadc_label'].setText(f"ADC端电压: {v_adc:.4f} V")
-            live['vsensor_label'].setText(f"传感器输出: {v_sensor:.4f} V")
-            if self.current_mode == 'AC':
-                # AC 模式：优先显示该路滚动窗口 RMS
-                rms = self._compute_ac_rms(ch)
-                if rms is not None:
-                    live['value_label'].setText(
-                        f"{self.format_current(rms)} {self.current_unit}")
-                else:
-                    live['value_label'].setText(
-                        f"{self.format_current(current)} {self.current_unit}")
-            else:
+                live['raw_label'].setText(f"{ch.name} ADC: {int(raw)}")
+                live['vadc_label'].setText(f"ADC端电压: {v_adc:.4f} V")
+                live['vsensor_label'].setText(f"传感器输出: {v_sensor:.4f} V")
                 live['value_label'].setText(
-                    f"{self.format_current(current)} {self.current_unit}")
-        # 隐藏摘要标签记最新活动的一路（仅供全屏浮动面板折叠态摘要读取）
-        self.current_value_label.setText(
-            f"{ch.name}: {self.format_current(current)} {self.current_unit}")
-
-        if not self._collecting:
+                    f"{self.kernel.format_current(display)} "
+                    f"{self.current_unit}")
+            self.current_value_label.setText(
+                f"{ch.name}: {self.kernel.format_current(value)} "
+                f"{self.current_unit}")
             return
 
-        # 主机统一时间戳：采集期首个到达样本定为 t=0
-        now = time.monotonic()
-        if self._t0_mono is None:
-            self._t0_mono = now
-        t_rel = now - self._t0_mono
-
-        # 采样频率控制（每路独立过滤，按本路设定的间隔）
-        if ch.last_sample_s is not None and \
-                (t_rel - ch.last_sample_s) * 1000 < ch.sample_interval_ms:
+        if kind == EVENT_SAMPLE_RECORDED and ch is not None:
+            raw = data.get('raw')
+            value = data.get('value')
+            if raw is None or value is None:
+                return
+            v_adc = self.kernel.adc_to_vadc(raw, channel=ch)
+            v_sensor = self.kernel.adc_to_vsensor(raw, channel=ch)
+            time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            self.data_text.append(
+                f"{time_str} | {ch.name} | ADC: {int(raw)} | "
+                f"ADC端: {v_adc:.4f}V | 传感器: {v_sensor:.4f}V | "
+                f"电流: {self.kernel.format_current(value)} "
+                f"{self.current_unit}")
+            self.data_text.verticalScrollBar().setValue(
+                self.data_text.verticalScrollBar().maximum())
+            self.update_stats()
             return
-        ch.last_sample_s = t_rel
 
-        ch.raw_data.append(raw_value)
-        ch.vsensor_data.append(v_sensor)
-        ch.current_data.append(current)
-        ch.time_data.append(t_rel)
+        if kind == EVENT_CHANNEL_STATE and ch is not None:
+            connected = bool(data.get('connected'))
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText("断开" if connected else "连接")
+            live = self._live_rows.get(ch.id)
+            if live:
+                if connected:
+                    msg = data.get('message') or '连接中...'
+                    live['value_label'].setText(f"--.- {self.current_unit}")
+                    live['raw_label'].setText(f"{ch.name}: {msg}")
+                    live['vadc_label'].setText("ADC端电压: --.- V")
+                    live['vsensor_label'].setText("传感器输出: --.- V")
+                else:
+                    live['value_label'].setText(f"--.- {self.current_unit}")
+                    live['raw_label'].setText(f"{ch.name} ADC: 已断开")
+                    live['vadc_label'].setText("ADC端电压: --.- V")
+                    live['vsensor_label'].setText("传感器输出: --.- V")
+            self._refresh_summary_text()
+            self._set_collect_enabled(self.kernel.connected_any())
+            return
 
-        time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        display_text = (f"{time_str} | {ch.name} | ADC: {raw_value} | "
-                        f"ADC端: {v_adc:.4f}V | 传感器: {v_sensor:.4f}V | "
-                        f"电流: {self.format_current(current)} {self.current_unit}")
-        self.data_text.append(display_text)
-        self.data_text.verticalScrollBar().setValue(
-            self.data_text.verticalScrollBar().maximum()
-        )
-        self.update_stats()
+        if kind == EVENT_COLLECTION_CHANGED:
+            self._collecting = bool(data.get('collecting'))
+            self._refresh_collect_btn()
+            if self._collecting:
+                self.save_btn.setEnabled(False)
+            else:
+                total = sum(len(c.current_data) for c in self.channels)
+                self.save_btn.setEnabled(total > 0)
+            return
 
-    def _compute_ac_rms(self, ch):
-        """计算 AC 模式下该通道滚动窗口的电流 RMS（安培）。"""
-        if not ch.current_data:
-            return None
-        window = ch.current_data[-self.ac_rms_window:]
-        arr = np.array(window, dtype=float)
-        return float(np.sqrt(np.mean(arr ** 2)))
+        if kind == EVENT_CHANNELS_CHANGED:
+            self._sync_module_settings()
+            self.update_zero_status_label()
+            self._refresh_live_values()
+            self._refresh_summary_text()
+            return
+
+        if kind == EVENT_ERROR and ch is not None:
+            message = data.get('message', '')
+            log.error("%s 设备错误: %s", ch.name, message)
+            fluent_message_box(self, "串口错误", f"{ch.name}: {message}")
+            return
 
     def update_stats(self):
         """统计栏：每路有数据的通道各显示一行统计（点数/均值/极值/σ 或 RMS）。"""
         parts = []
         u = self.current_unit
         for ch in self.channels:
-            if not ch.current_data:
+            stats = self.kernel.channel_stats(ch)
+            if not stats.get('count'):
                 continue
-            arr = np.array(ch.current_data, dtype=float)
             if self.current_mode == 'AC':
-                rms = float(np.sqrt(np.mean(arr ** 2)))
-                peak = float(np.max(np.abs(arr)))
                 parts.append(
-                    f"{ch.name}: 点数 {len(arr)} | "
-                    f"RMS={self.format_current(rms)}{u} | "
-                    f"峰值={self.format_current(peak)}{u}")
+                    f"{ch.name}: 点数 {stats['count']} | "
+                    f"RMS={self.kernel.format_current(stats['rms'])}{u} | "
+                    f"峰值={self.kernel.format_current(stats['peak'])}{u}")
             else:
-                avg = float(np.mean(arr))
-                mx = float(np.max(arr))
-                mn = float(np.min(arr))
-                std = float(np.std(arr))
                 parts.append(
-                    f"{ch.name}: 点数 {len(arr)} | "
-                    f"均={self.format_current(avg)}{u} | "
-                    f"最大={self.format_current(mx)}{u} | "
-                    f"最小={self.format_current(mn)}{u} | "
-                    f"σ={self.format_current(std)}{u}")
+                    f"{ch.name}: 点数 {stats['count']} | "
+                    f"均={self.kernel.format_current(stats['mean'])}{u} | "
+                    f"最大={self.kernel.format_current(stats['max'])}{u} | "
+                    f"最小={self.kernel.format_current(stats['min'])}{u} | "
+                    f"σ={self.kernel.format_current(stats['std'])}{u}")
         if parts:
             self.stats_label.setText("统计: " + " ‖ ".join(parts))
 
@@ -1691,18 +1464,19 @@ class CurrentSensorWidget(QWidget):
         label = f'电流 ({self.current_unit})'
         # 每路一条曲线：颜色 = 各通道行色块上选的颜色，图例 = 通道名
         for ch in active:
-            display_data = [self.to_current_unit(v) for v in ch.current_data]
+            display_data = [self.kernel.to_current_unit(v) for v in ch.current_data]
             c.plot(ch.time_data, display_data, color=ch.color, width=2,
                    label=f'{ch.name} ({self.current_unit})')
             all_t.extend(ch.time_data)
         # AC 模式：单路可见时叠加该路 RMS 参考线（多路时各路 RMS 不同，不画）
         if self.current_mode == 'AC' and len(active) == 1 and \
                 len(active[0].current_data) >= self.ac_rms_window:
-            rms = self._compute_ac_rms(active[0])
+            rms = self.kernel.compute_ac_rms(active[0])
             if rms is not None:
-                rms_disp = self.to_current_unit(rms)
+                rms_disp = self.kernel.to_current_unit(rms)
                 c.hline(rms_disp, color='#fd7e14', style='dash', width=1.5,
-                        label=f'RMS {self.format_current(rms)}{self.current_unit}')
+                        label=f'RMS {self.kernel.format_current(rms)}'
+                              f'{self.current_unit}')
                 c.hline(-rms_disp, color='#fd7e14', style='dash', width=1.5)
         c.hline(0, color='#aaaaaa', style='dot', width=1)
         c.set_labels('时间 (秒)', label)
@@ -1722,32 +1496,17 @@ class CurrentSensorWidget(QWidget):
         ch.sample_interval_ms = interval_ms
         if self.channels and ch is self.channels[0]:
             self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
+            self.kernel.sample_interval_ms = interval_ms
         self.save_config()
 
     def save_data(self):
+        """保存数据到文件（由内核生成 CSV）。"""
         total = sum(len(ch.current_data) for ch in self.channels)
         if total == 0:
             fluent_message_box(self, "警告", "没有数据可保存")
             return
         try:
-            filename = f"current_sensor_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            with open(filename, 'w', encoding='utf-8') as f:
-                # 长表格式：一行一个样本 + 通道名列。多路的时间轴天然对齐
-                # （主机统一时间戳），便于 Excel 透视/筛选按通道分组分析
-                f.write(f"# ACS712 模式={self.current_mode} 单位={self.current_unit} "
-                        f"AC RMS窗口={self.ac_rms_window}点\n")
-                f.write(f"channel,timestamp_s,raw_adc,v_adc,v_sensor,current_{self.current_unit.lower()}\n")
-                for ch in self.channels:
-                    src = self._adc_param_source(ch)
-                    f.write(f"# {ch.name}: 量程={ch.acs_range} "
-                            f"灵敏度={self._sensitivity_of(src)}V/A "
-                            f"零点={ch.v_quiescent:.4f}V 分压比={ch.divider_ratio}\n")
-                    for i, (t, current) in enumerate(zip(ch.time_data, ch.current_data)):
-                        raw = ch.raw_data[i] if i < len(ch.raw_data) else 0
-                        v_adc = self.adc_to_vadc(raw, channel=ch)
-                        v_sensor = self.adc_to_vsensor(raw, channel=ch)
-                        f.write(f"{ch.name},{t:.3f},{raw},{v_adc:.6f},{v_sensor:.6f},"
-                                f"{self.to_current_unit(current):.6f}\n")
+            filename = self.kernel.export_csv()
             log.info("数据已保存到: %s（%d 点）", filename, total)
             fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
@@ -1755,13 +1514,11 @@ class CurrentSensorWidget(QWidget):
             fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
-        for ch in self.channels:
-            ch.current_data.clear()
-            ch.vsensor_data.clear()
-            ch.time_data.clear()
-            ch.raw_data.clear()
-            ch.last_sample_s = None
-        self._t0_mono = None
+        """清除数据（由内核清空各通道缓存）。"""
+        if self.kernel.collecting:
+            self.kernel.stop_collection()
+        self.kernel.clear_data()
+        self._collecting = False
         self.data_text.clear()
         log.info("已清除数据")
         for ch in self.channels:
@@ -1777,82 +1534,41 @@ class CurrentSensorWidget(QWidget):
         self.save_btn.setEnabled(False)
 
     def _ai_data(self):
-        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。
-
-        多路连接时取**数据最多的通道**作为主分析序列，各通道概况与
-        每路零点写入 params，供模型理解多路对比背景。
-        """
-        active = [ch for ch in self.channels if ch.current_data]
-        if not active:
+        """AI 分析实验数据回调（数据由内核生成，View 只补系统提示词）。"""
+        data = self.kernel.ai_data()
+        if not data:
             return None
-        main = max(active, key=lambda c: len(c.current_data))
-        # 电路参数：电流分辨率与可测范围（受 ADC 量程、分压比与零点限制，按主分析通道）
-        src = self._adc_param_source(main)
-        sensitivity = self._sensitivity_of(src)
-        max_adc = self.ADC_BITS_OPTIONS.get(src['adc_bits'], 4096) - 1
-        res_i = (self.VREF / max_adc) * src['divider_ratio'] / sensitivity
-        v_sensor_max = self.VREF * src['divider_ratio']
-        i_pos = (v_sensor_max - src['v_quiescent']) / sensitivity
-        i_neg = (0.0 - src['v_quiescent']) / sensitivity
-        lo, hi = min(i_pos, i_neg), max(i_pos, i_neg)
-        channels_desc = "、".join(
-            f"{ch.name}[{len(ch.current_data)}点/量程{ch.acs_range}"
-            + ("/已校零" if ch.zero_cal_active else "/未校零")
-            + f"]" for ch in active)
-        return {
-            'title': '电流传感器',
-            'x_label': '时间 (秒)',
-            'y_label': f'电流 ({self.current_unit})',
-            'points': list(zip(main.time_data,
-                               [self.to_current_unit(c) for c in main.current_data])),
-            'params': (
-                f"传感器=ACS712 {src['acs_range']} 量程（灵敏度 {sensitivity:.3f} V/A）, "
-                f"VCC={src['vcc']}V, 零点电压={src['v_quiescent']:.4f}V"
-                f"(理论 VCC/2={src['vcc'] / 2:.4f}V), "
-                f"分压比={src['divider_ratio']}, ADC 位数={src['adc_bits']}, "
-                f"电流分辨率≈{res_i * 1000:.3f}mA/计数, "
-                f"可测范围≈{lo:.2f}~{hi:.2f}A（受 ADC 量程与分压限制）, "
-                f"模式={self.current_mode}, AC RMS 窗口={self.ac_rms_window}点, "
-                f"零点校准={'已校准' if src['zero_cal_active'] else '未校准'}, "
-                f"多路连接: 共{len(active)}路（{channels_desc}），"
-                f"主分析通道={main.name}, 各路量程/零点/分压独立, "
-                f"显示单位={self.current_unit}, "
-                f"采样间隔={main.sample_interval_ms}ms（各路独立）"),
-            'system_prompt': AI_SYSTEM_PROMPT,
-        }
+        data = dict(data)
+        data['system_prompt'] = AI_SYSTEM_PROMPT
+        return data
+
+    def api_actions(self):
+        """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
+        return self.kernel.actions()
+
+    def api_command(self, action, params=None):
+        """执行控制动作（由 DataService 在 GUI 线程调用）。"""
+        return self.kernel.command(action, params)
 
     def api_snapshot(self):
-        """当前实验数据快照（供 core.DataService 任意线程读取）。
-        禁止调用任何 Qt 方法：只读模块自身的 Python 数据。"""
-        d = self._ai_data() or {}
-        points = list(d.get('points') or [])
-        latest = None
-        main = max((ch for ch in self.channels if ch.current_data),
-                   key=lambda c: len(c.current_data), default=None)
-        if main is not None:
-            latest = {'t': main.time_data[-1],
-                      'y': self.to_current_unit(main.current_data[-1]),
-                      'raw': main.raw_data[-1] if main.raw_data else None}
-        return {
-            'key': 'current_sensor',
-            'name': '电流传感器',
-            'connected': any(ch.thread is not None for ch in self.channels),
-            'collecting': self._collecting,
-            'x_label': d.get('x_label', '时间 (秒)'),
-            'y_label': d.get('y_label', '电流 (A)'),
-            'params': d.get('params', {}),
-            'points': points,
-            'latest': latest,
-            # 多路连接明细（points 仍为主通道序列，前端单曲线不破）
-            'channels': [
-                {'name': ch.name, 'color': ch.color,
-                 'connected': ch.thread is not None,
-                 'points_n': len(ch.current_data),
-                 'zero_cal_active': ch.zero_cal_active,
-                 'latest_raw': ch.raw_data[-1] if ch.raw_data else None}
-                for ch in self.channels
-            ],
-        }
+        """当前实验数据快照（由内核生成，任意线程可读）。"""
+        return self.kernel.snapshot()
+
+    def api_csv(self):
+        """HTTP 导出用 CSV（避免 DataService 回退到单通道快照拼接）。"""
+        return self.kernel.csv_text()
+
+    def shutdown(self):
+        """退出清理：停止事件消费、关闭传输并关闭事件总线。"""
+        try:
+            self._event_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._events.close()
+        except Exception:
+            pass
+        self.kernel.shutdown()
 
     def showEvent(self, e):
         """首次显示后按子卡真实高度收敛连接控制卡（构建期 height() 不可靠）。"""
