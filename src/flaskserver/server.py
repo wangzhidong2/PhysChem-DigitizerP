@@ -2,7 +2,7 @@
 """
 flaskserver.server — Flask app、路由、token 校验、静态托管
 
-只做一件事：把 core.DataService 的方法翻译成 HTTP 端点。
+只做一件事：把 core.KernelRegistry 的方法翻译成 HTTP 端点。
 不持有数据、不认识任何具体传感器、不操作任何 Qt 控件。
 """
 
@@ -71,11 +71,11 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
     """构建 Flask app。
 
     Args:
-        service: core.DataService 实例（数据与控制总线）
+        service: core.KernelRegistry 实例（直接持有内核，不经过 QWidget）
         token: 访问密钥；空字符串表示写操作也免校验（不推荐）
         allow_lan: 局域网模式 —— 读操作也强制 token
         enable_cors: 是否允许跨域
-        app_cfg: core.app_cfg（网页字体等外观设置读写用）；None 时只读回退默认
+        app_cfg: core_ui.app_cfg（网页字体等外观设置读写用）；None 时只读回退默认
     """
     app = Flask(__name__, static_folder=str(_WEB_DIR), static_url_path='')
 
@@ -363,7 +363,7 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
         installed = []
         if app_cfg is not None:
             try:
-                from core import available_font_families
+                from core_ui import available_font_families
                 installed = available_font_families()
             except Exception:
                 installed = []

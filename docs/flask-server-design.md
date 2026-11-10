@@ -2,6 +2,10 @@
 
 ##  状态：[已经实现,版本1.8](https://gitcode.com/wangzhidong2/PhysChem-DigitizerP/releases/1.8)
 
+> 实现更新：`DataService` 已由 `core.KernelRegistry` 取代。Flask 现在直接持有并调用
+> 传感器内核（`SensorKernel`），不再经过 QWidget、`mode_combo` / `port_combo` 反射，
+> 也不再要求命令绕回 GUI 线程执行。下文涉及 `DataService` 的描述为历史设计记录。
+
 
 > 目标读者：本项目的开发者（含 AI Agent）
 

@@ -6,15 +6,34 @@
 
 - **禁止 `print`**：日志一律 `from core import get_logger` + `log = get_logger('模块名')`。控制台始终输出；「运行日志」开关只决定是否额外写入 `logs.json`。
 - **禁止直接 `import serial`**：串口一律走 `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`。pyserial 是可选依赖，未装时各模块须自动降级到模拟器模式。
-- **禁止用 matplotlib / pyqtgraph 原生控件画图**：不得创建 `Figure` / `FigureCanvas` / `pg.PlotWidget`，一律用 `core.ChartPanel`，否则设置页的引擎热切换对该模块失效。
+- **禁止用 matplotlib / pyqtgraph 原生控件画图**：不得创建 `Figure` / `FigureCanvas` / `pg.PlotWidget`，一律用 `core_ui.ChartPanel`，否则设置页的引擎热切换对该模块失效。
 - **禁止构造原生 Qt 控件**：不得使用 `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`，一律用 FluentWidgets 对应组件。
 - **禁止改 `main_legacy.py`**：迁移前的单文件存档，不再维护。新功能只改 `main.py` + 模块文件。
 - **禁止基于 `NavButton` / `SidebarWidget` 开发**：迁移前的遗留侧边栏，`MainWindow` 已改用 `FluentWindow` 自带导航。
 - **禁止在 `sensor_config.json` 之外散落校准数据**：校准参数统一经 `load_sensor_config()` / `save_sensor_config()` 读写。
 - **禁止把运行产物提交进仓库**：`sensor_config.json` / `app_config.json` / `logs.json` / `build/` / `dist/` 均已被 `.gitignore` 忽略。
 
-## 2. 新增传感器模块
+## 1.5 公共层分工
 
+```text
+main.py         只做 UI：入口、MainWindow、Home、Sidebar、Settings
+core.py         公共内核：日志、sensor_config、串口/模拟器传输、事件、SensorKernel、KernelRegistry
+core_ui.py      公共 UI：AppConfig、主题/字体/样式、ChartPanel、通用控件/对话框
+module_loader.py 模块与插件扫描加载（不含 UI）
+```
+
+依赖方向固定：
+
+- `main.py` → `core_ui.py` / `core.py` / `module_loader.py`
+- `core_ui.py` → `core.py`
+- `module_loader.py` → `core.py`
+- 传感器 View → `core.py`（内核 API）+ `core_ui.py`（UI API）
+- 传感器 `_kernel*.py` → **只允许** `core.py`，禁止 `core_ui` / PySide6 / qfluentwidgets
+- Flask / MCP / CLI → `core.KernelRegistry` → `SensorKernel`，**禁止**访问 QWidget 或通过 `mode_combo` / `port_combo` 反射
+
+`core.py` 必须保持纯 Python：不得 import PySide6、qfluentwidgets；日志开关和配置持久化开关由 `core_ui` 注入。
+
+## 2. 新增传感器模块
 **不改 `./src/main.py`**，只需两步：
 
 ### 2.1 建目录丢文件
@@ -44,10 +63,10 @@
 
 ### 2.3 模块必须实现
 
-- `self.chart = core.ChartPanel(...)`，并在 `__init__` 里 `self.chart.set_ai_data_provider(self._ai_data)`。
-- `apply_theme(self, theme)`：委托 `core.apply_module_theme(self, theme)`，再调 `self.chart.apply_chart_theme(isDarkTheme())`。
+- `self.chart = core_ui.ChartPanel(...)`，并在 `__init__` 里 `self.chart.set_ai_data_provider(self._ai_data)`。
+- `apply_theme(self, theme)`：委托 `core_ui.apply_module_theme(self, theme)`，再调 `self.chart.apply_chart_theme(isDarkTheme())`。
 - `_ai_data()`：返回 `{title, x_label, y_label, points, params, system_prompt}`，无数据返回 `None`；模块顶部定义 `AI_SYSTEM_PROMPT` 常量，经 `'system_prompt'` 键返回（旧键 `'prompt'` 兼容）。
-- 用 `core.stop_thread()` 回收自己起的通信线程，不要只调 `stop()`。
+- 用 `core_ui.stop_thread()` 回收自己起的通信线程，不要只调 `stop()`。
 
 ### 2.4 组件选型对照
 
@@ -57,8 +76,8 @@
 | 次要说明 / 统计小字（原先硬编码 `#666` 的灰色小字） | `CaptionLabel`（不设硬编码颜色） |
 | 数字输入 | `SpinBox` / `DoubleSpinBox` |
 | 模式开关 | `SwitchButton`，信号是 `checkedChanged`（**不是** `toggled`） |
-| 普通卡片（连接控制 / 参数 / 实时数据 / 操作按钮） | `core.FluentCard` |
-| 图表卡（需要全屏 / 浮动面板） | `core.CollapsibleCard` |
+| 普通卡片（连接控制 / 参数 / 实时数据 / 操作按钮） | `core_ui.FluentCard` |
+| 图表卡（需要全屏 / 浮动面板） | `core_ui.CollapsibleCard` |
 | 页面标题 | `TitleLabel` |
 | 滚动区 / 页面背景 | `scroll_area_style()` / `page_bg_style()` |
 
@@ -80,7 +99,7 @@
 - 不再新起 `SerialThread` / `SimulatorThread`；统一用 `core.SerialTransport` / `core.SimulatorTransport`。
 - PyInstaller spec 已收集 `src/sensors/**/_kernel*.py`，新增内核文件无需改 spec。
 
-## 3. 图表（`core.ChartPanel`）
+## 3. 图表（`core_ui.ChartPanel`）
 
 事务式 API，两种引擎行为一致：
 
@@ -103,7 +122,7 @@ c.end()
 ## 4. 主题
 
 - 所有模块须实现 `apply_theme(theme)`，亮 ↔ 暗双向可切。
-- `core.apply_module_theme()` 用缓存的 `_orig_qss` 动态属性实现双向切换，**不要自己重写样式替换逻辑**。
+- `core_ui.apply_module_theme()` 用缓存的 `_orig_qss` 动态属性实现双向切换，**不要自己重写样式替换逻辑**。
 - `FluentCard` 会被 `apply_module_theme` 跳过（它自带 Fluent 样式，套自定义 QSS 反而破坏背景）。
 
 ## 5. 环境与构建
@@ -155,7 +174,7 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 
 ### 线程回收
 
-- 断开模块线程一律用 `core.stop_thread()`：内部 `stop()` + 限时 `wait(2000)`，超时的线程收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃。
+- 断开模块线程一律用 `core_ui.stop_thread()`：内部 `stop()` + 限时 `wait(2000)`，超时的线程收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃。
 - 通信线程的 `running` 初值须为 `True`，并在 `run()` 首行检查，防止 `stop()` 先于 `run()` 执行导致线程永不退出、`wait()` 卡死。
 - `AIRequestThread` 不挂 parent，发送中关窗可自动收尾，避免 QThread 析构崩溃。
 

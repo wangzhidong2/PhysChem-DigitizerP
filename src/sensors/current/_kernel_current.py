@@ -466,7 +466,7 @@ class CurrentKernel(SensorKernel):
         return '\n'.join(lines) + '\n'
 
     def snapshot(self, points=0):
-        """当前实验数据快照（供 DataService 任意线程读取）。"""
+        """当前实验数据快照（供 KernelRegistry 任意线程读取）。"""
         d = self.ai_data() or {}
         pts = list(d.get('points') or [])
         total_points = len(pts)

@@ -2,7 +2,7 @@
 """
 flaskserver — 实验数据 HTTP 接口插件（传输层）
 
-把 core.DataService 的能力翻译成 HTTP 端点，供 AI Agent / 浏览器仪表盘使用。
+把 core.KernelRegistry 的能力翻译成 HTTP 端点，供 AI Agent / 浏览器仪表盘使用。
 本插件不含业务逻辑、不持有数据：删掉整个目录，主程序行为完全不变。
 
 # === PLUGIN META ===
@@ -34,8 +34,8 @@ class FlaskServerPlugin:
     """flaskserver 插件：生命周期 + HTTP 服务托管。"""
 
     def __init__(self):
-        self._service = None        # core.DataService
-        self._app_cfg = None        # core.app_cfg
+        self._service = None        # core.KernelRegistry
+        self._app_cfg = None        # core_ui.app_cfg
         self._started_at = None
         self._httpd = None
         self._thread = None
@@ -68,7 +68,7 @@ class FlaskServerPlugin:
 
     # ---- 生命周期 ----
     def attach(self, context):
-        """主程序注入依赖：{'service': DataService, 'app_cfg': AppConfig, 'log': logger}"""
+        """主程序注入依赖：{'service': KernelRegistry, 'app_cfg': AppConfig, 'log': logger}"""
         global log
         self._service = context.get('service')
         self._app_cfg = context.get('app_cfg')

@@ -266,8 +266,10 @@ PhysChem-DigitizerP/
 ├── docs/                       # 文档与文档图片（含操作手册、设计文档、README 截图）
 │   └── images/                 # 文档图片
 └── src/                        # 源码目录：主程序只从这里加载，运行时配置也在本目录生成
-    ├── main.py                 # 主程序：FluentWindow + 主页 + 动态加载器
-    ├── core.py                 # 公共模块：通信线程 / 配置 / 图表分析（拟合/离群点剔除）/ 对话框 / AI 分析 / 字体 / 现代样式
+    ├── main.py                 # 主程序 UI：FluentWindow + 主页 + 侧边栏 + 设置
+    ├── core.py                 # 公共内核（纯 Python）：日志 / 配置 / 串口与模拟器传输 / 事件 / SensorKernel / KernelRegistry
+    ├── core_ui.py              # 公共 UI：主题字体 / 样式 / ChartPanel / 通用控件对话框
+    ├── module_loader.py        # 传感器模块与插件扫描加载
     ├── test_serial.py          # 串口连接测试工具
     ├── sensor_config.json      # 传感器校准配置（运行时自动生成，.gitignore）
     ├── app_config.json         # 应用配置（主题/字体/引擎/置顶/日志等，运行时生成，.gitignore）

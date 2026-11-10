@@ -41,16 +41,34 @@ import numpy as np
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
-    fluent_message_box, ChartPanel,
-    SampleRateComboBox,
-    SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
-    EVENT_SAMPLE_PREVIEW, EVENT_SAMPLE_RECORDED, EVENT_CHANNEL_STATE,
-    EVENT_COLLECTION_CHANGED, EVENT_ERROR,
-    card_style, primary_btn_style, accent_btn_style, modern_combo_style,
-    CollapsibleCard, FluentCard, ExpandableTextEdit,
-    scroll_area_style, page_bg_style, apply_module_theme,
-    update_collect_btn, set_action_button_width,
     get_logger,
+    SERIAL_AVAILABLE,
+    list_serial_ports,
+    serial_unavailable_hint,
+    EVENT_SAMPLE_PREVIEW,
+    EVENT_SAMPLE_RECORDED,
+    EVENT_CHANNEL_STATE,
+    EVENT_COLLECTION_CHANGED,
+    EVENT_CHANNELS_CHANGED,
+    EVENT_ERROR,
+)
+from core_ui import (
+    sync_kernel_channel_row,
+    fluent_message_box,
+    ChartPanel,
+    SampleRateComboBox,
+    card_style,
+    primary_btn_style,
+    accent_btn_style,
+    modern_combo_style,
+    CollapsibleCard,
+    FluentCard,
+    ExpandableTextEdit,
+    scroll_area_style,
+    page_bg_style,
+    apply_module_theme,
+    update_collect_btn,
+    set_action_button_width,
 )
 
 log = get_logger("ultrasonic_velocity")
@@ -561,9 +579,9 @@ class UltrasonicVelocityWidget(QWidget):
                 refs['delete_btn'].setEnabled(not single)
 
     def _sync_compat_aliases(self):
-        """DataService / 网页端兼容：对外仍暴露单一 mode_combo/port_combo。
+        """KernelRegistry / 网页端兼容：对外仍暴露单一 mode_combo/port_combo。
 
-        core.DataService.connection_info / _apply_connection 依赖这两个属性
+        core.KernelRegistry.connection_info / _apply_connection 依赖这两个属性
         读写连接方式与端口；多路化后让它们指向第 1 路的行控件，
         set_connection('模拟器'/.../串口端口) 即作用于第 1 路，
         connect=true 连接全部、断开连接全部，网页端不破。
@@ -972,6 +990,11 @@ class UltrasonicVelocityWidget(QWidget):
                 self.save_btn.setEnabled(total > 0)
             return
 
+        if kind == EVENT_CHANNELS_CHANGED:
+            for ch in self.channels:
+                sync_kernel_channel_row(self._rows.get(ch.id), ch)
+            return
+
         if kind == EVENT_ERROR and ch is not None:
             message = data.get('message', '')
             log.error("%s 设备错误: %s", ch.name, message)
@@ -1086,11 +1109,11 @@ class UltrasonicVelocityWidget(QWidget):
         return data
 
     def api_actions(self):
-        """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
+        """本模块支持的控制动作（供 KernelRegistry / HTTP 层展示）。"""
         return self.kernel.actions()
 
     def api_command(self, action, params=None):
-        """执行控制动作（由 DataService 在 GUI 线程调用）。"""
+        """执行控制动作（由 KernelRegistry 直接调用内核）。"""
         return self.kernel.command(action, params)
 
     def api_snapshot(self):
@@ -1098,7 +1121,7 @@ class UltrasonicVelocityWidget(QWidget):
         return self.kernel.snapshot()
 
     def api_csv(self):
-        """HTTP 导出用 CSV（避免 DataService 回退到单通道快照拼接）。"""
+        """HTTP 导出用 CSV（避免 KernelRegistry 回退到单通道快照拼接）。"""
         return self.kernel.csv_text()
 
     def shutdown(self):
