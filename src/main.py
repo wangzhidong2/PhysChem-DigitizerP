@@ -338,6 +338,46 @@ def parse_module_meta(file_path):
     return meta
 
 
+def load_module_kernel(module_file, meta):
+    """按 MODULE META 的 kernel 字段加载同目录内核类。
+
+    格式：
+        # kernel: _kernel_displacement:DisplacementKernel
+    没有 kernel 字段时返回 None（旧模块继续走原 QWidget 逻辑）。
+    """
+    spec_text = str(meta.get('kernel') or '').strip()
+    if not spec_text:
+        return None
+    if ':' in spec_text:
+        rel_path, cls_name = spec_text.split(':', 1)
+    else:
+        rel_path, cls_name = spec_text, 'Kernel'
+    rel_path = rel_path.strip()
+    cls_name = cls_name.strip()
+    if not rel_path.endswith('.py'):
+        rel_path += '.py'
+    kernel_path = os.path.join(os.path.dirname(module_file), rel_path)
+    if not os.path.isfile(kernel_path):
+        log.warning("模块内核文件不存在: %s", kernel_path)
+        return None
+    mod_name = '_sensor_kernel_%s' % os.path.splitext(
+        os.path.basename(kernel_path))[0].lstrip('_')
+    try:
+        spec = importlib.util.spec_from_file_location(mod_name, kernel_path)
+        if spec is None or spec.loader is None:
+            log.warning("无法加载模块内核: %s", kernel_path)
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[mod_name] = mod
+        spec.loader.exec_module(mod)
+        kernel_cls = getattr(mod, cls_name)
+        log.info("✓ 已加载内核: %s (%s)", cls_name, kernel_path)
+        return kernel_cls
+    except Exception as e:
+        log.error("模块内核加载失败 %s: %s", kernel_path, e)
+        return None
+
+
 def scan_modules(modules_dir):
     """扫描模块目录，发现并加载所有传感器模块。
 
@@ -398,12 +438,14 @@ def scan_modules(modules_dir):
 
             discovered.append({
                 'name': meta['name'],
+                'key': meta.get('key'),
                 'icon': meta['icon'],
                 'icon_file': meta.get('icon_file'),
                 'category': meta['category'],
                 'class_name': class_name,
                 'module': mod,
                 'file_path': py_file,
+                'kernel_class': load_module_kernel(py_file, meta),
             })
             log.info("✓ 已加载模块: %s (%s) <- %s",
                      meta['name'], meta['category'], base)
@@ -2683,8 +2725,16 @@ class MainWindow(FluentWindow):
 
         for info in discovered:
             cls = getattr(info['module'], info['class_name'])
+            kernel = None
+            kernel_cls = info.get('kernel_class')
+            if kernel_cls is not None:
+                try:
+                    kernel = kernel_cls()
+                except Exception as e:
+                    log.error("实例化模块内核 %s 失败: %s", info['name'], e)
+                    continue
             try:
-                widget = cls()
+                widget = cls(kernel) if kernel is not None else cls()
             except Exception as e:
                 log.error("实例化模块 %s 失败: %s", info['name'], e)
                 continue
@@ -3039,7 +3089,7 @@ class MainWindow(FluentWindow):
         for name, widget in self.modules.items():
             if name in ("主页", "设置"):
                 continue
-            for meth in ("disconnect_all", "disconnect_serial"):
+            for meth in ("shutdown", "disconnect_all", "disconnect_serial"):
                 dispose = getattr(widget, meth, None)
                 if callable(dispose):
                     try:

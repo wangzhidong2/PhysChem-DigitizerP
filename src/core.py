@@ -28,6 +28,7 @@ import threading
 import importlib
 import importlib.util
 from collections import deque
+from dataclasses import dataclass, field
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
@@ -3522,6 +3523,757 @@ class SimulatorThread(QThread):
 
 
 # ============================================================
+# 内核公共层（纯 Python）
+#
+# 这一层的职责是把“设备通信 / 采样 / 缓存 / 事件”从 QWidget 中拿出来。
+# 传感器 _kernel.py 只依赖这里的纯 API；View 只依赖上面的 UI 公共区。
+# 注意：当前 core.py 顶部仍有 Qt 导入，所以这是“代码职责分离”；
+# 做 CLI/TUI 前再把纯区拆到 core_runtime.py，core.py 变门面即可。
+# ============================================================
+
+#: 内核事件类型
+EVENT_SAMPLE_PREVIEW = 'sample_preview'
+EVENT_SAMPLE_RECORDED = 'sample_recorded'
+EVENT_CHANNEL_STATE = 'channel_state'
+EVENT_COLLECTION_CHANGED = 'collection_changed'
+EVENT_CHANNELS_CHANGED = 'channels_changed'
+EVENT_ERROR = 'error'
+
+
+@dataclass
+class ChannelSpec:
+    """一路连接的最小配置（可持久化部分）。"""
+    id: int
+    name: str
+    color: str
+    mode: str = 'serial'          # serial | simulator
+    port: str = ''
+    sample_interval_ms: int = 100
+    visible: bool = True
+    sensor_params: dict = field(default_factory=dict)
+
+
+@dataclass
+class Sample:
+    """内核里的一个样本。"""
+    channel_id: int
+    seq: int
+    t: float
+    raw: float
+    value: float
+
+
+@dataclass
+class KernelEvent:
+    """内核向前端推送的事件。"""
+    kind: str
+    channel_id: int | None = None
+    data: dict = field(default_factory=dict)
+
+
+class EventSubscription:
+    """一个订阅者的有界事件队列。
+
+    - 后台线程只 put，不碰 Qt；
+    - View/TUI/CLI 在自己的线程里 get/drain；
+    - 队列满时优先丢弃 sample_preview，保留状态/错误事件。
+    """
+
+    def __init__(self, maxsize=1024):
+        self._queue = queue.Queue(maxsize=max(1, int(maxsize)))
+        self._closed = False
+
+    def put(self, event):
+        if self._closed:
+            return
+        try:
+            self._queue.put_nowait(event)
+            return
+        except queue.Full:
+            pass
+        if event.kind == EVENT_SAMPLE_PREVIEW:
+            return
+        # 状态/错误事件优先：丢掉最旧的一条，再尝试放入
+        try:
+            self._queue.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            self._queue.put_nowait(event)
+        except queue.Full:
+            pass
+
+    def get(self, timeout=None):
+        return self._queue.get(timeout=timeout)
+
+    def get_nowait(self):
+        return self._queue.get_nowait()
+
+    def drain(self, limit=200):
+        """一次取出最多 limit 条事件（GUI 线程用）。"""
+        out = []
+        for _ in range(max(0, int(limit))):
+            try:
+                out.append(self._queue.get_nowait())
+            except queue.Empty:
+                break
+        return out
+
+    def close(self):
+        self._closed = True
+        try:
+            self._queue.put_nowait(None)
+        except queue.Full:
+            pass
+
+    def __iter__(self):
+        while True:
+            event = self.get()
+            if event is None:
+                return
+            yield event
+
+
+class EventBus:
+    """内核事件总线：多个前端可以同时订阅。"""
+
+    def __init__(self):
+        self._subs = []
+        self._lock = threading.Lock()
+
+    def subscribe(self, maxsize=1024):
+        sub = EventSubscription(maxsize)
+        with self._lock:
+            self._subs.append(sub)
+        return sub
+
+    def publish(self, event):
+        with self._lock:
+            subs = list(self._subs)
+        for sub in subs:
+            sub.put(event)
+
+    def close(self):
+        with self._lock:
+            subs = list(self._subs)
+            self._subs = []
+        for sub in subs:
+            sub.close()
+
+
+class _CallbackTransport:
+    """普通 threading.Thread 传输基类（不依赖 QThread）。"""
+
+    def __init__(self):
+        self._thread = None
+        # 初始即为运行态：stop() 先于 run() 执行时不会被覆盖（沿用旧版约定）
+        self.running = True
+
+    def start(self):
+        # 不重置 running：若 stop() 先于 start() 执行，run() 首行会立即退出
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self.running = False
+        self._join()
+
+    def _join(self, timeout=2.0):
+        t = self._thread
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout)
+
+    def is_running(self):
+        t = self._thread
+        return bool(self.running and t is not None and t.is_alive())
+
+    # 兼容旧 View 的 QThread 风格调用
+    def isRunning(self):
+        return self.is_running()
+
+    def send(self, data):
+        """向设备写数据；只有真实串口实现。"""
+        return False
+
+    def _run(self):
+        raise NotImplementedError
+
+
+class SerialTransport(_CallbackTransport):
+    """真实串口传输：普通后台线程，回调字符串行。"""
+
+    def __init__(self, port, baudrate=115200, on_line=None):
+        super().__init__()
+        self.port = port
+        self.baudrate = baudrate
+        self.on_line = on_line
+        self.serial = None
+
+    def _emit(self, line):
+        if self.on_line is not None:
+            try:
+                self.on_line(line)
+            except Exception as e:
+                log.error("SerialTransport 回调失败: %s", e)
+
+    def _run(self):
+        if not SERIAL_AVAILABLE:
+            self._emit("ERROR:pyserial 未安装")
+            return
+        if not self.running:
+            return
+        try:
+            self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
+            if not self.running:
+                try:
+                    self.serial.close()
+                except Exception:
+                    pass
+                return
+            self.serial.reset_input_buffer()
+            log.info("串口已打开: %s", self.port)
+            while self.running:
+                try:
+                    if self.serial.in_waiting > 0:
+                        line = self.serial.readline().decode(
+                            'utf-8', errors='ignore').strip()
+                        if line:
+                            self._emit(line)
+                    else:
+                        time.sleep(0.01)
+                except Exception as e:
+                    log.error("读取串口数据错误: %s", e)
+                    break
+        except Exception as e:
+            log.error("串口错误: %s", e)
+            self._emit(f"ERROR:{e}")
+        finally:
+            try:
+                if self.serial and self.serial.is_open:
+                    self.serial.close()
+            except Exception:
+                pass
+
+    def stop(self):
+        self.running = False
+        try:
+            if self.serial:
+                self.serial.close()
+        except Exception:
+            pass
+        self._join()
+
+    def send(self, data):
+        try:
+            ser = self.serial
+            if ser and ser.is_open:
+                ser.write(data)
+                return True
+        except Exception as e:
+            log.warning("串口写入失败: %s", e)
+        return False
+
+
+class SimulatorTransport(_CallbackTransport):
+    """模拟器传输：输出格式与固件一致，先发 START，再发 timestamp,raw。"""
+
+    def __init__(self, value_min=0, value_max=4095, interval_ms=100,
+                 start_value=None, timestamp_scale=1, on_line=None):
+        super().__init__()
+        self.value_min = int(value_min)
+        self.value_max = int(value_max)
+        self.interval_ms = max(10, int(interval_ms))
+        self.timestamp_scale = max(1, int(timestamp_scale))
+        self.on_line = on_line
+        span = self.value_max - self.value_min
+        self._value = (float(start_value) if start_value is not None
+                       else self.value_min + span / 2.0)
+        self._drift_step = max(1.0, span * 0.005)
+        self._noise_amp = max(1.0, span * 0.01)
+
+    def _emit(self, line):
+        if self.on_line is not None:
+            try:
+                self.on_line(line)
+            except Exception as e:
+                log.error("SimulatorTransport 回调失败: %s", e)
+
+    def _run(self):
+        if not self.running:
+            return
+        self._emit("START")
+        start_s = time.time()
+        while self.running:
+            self._value += random.uniform(-self._drift_step, self._drift_step)
+            if self._value < self.value_min:
+                self._value = self.value_min + abs(self._value - self.value_min) * 0.5
+            elif self._value > self.value_max:
+                self._value = self.value_max - abs(self._value - self.value_max) * 0.5
+            raw = self._value + random.uniform(-self._noise_amp, self._noise_amp)
+            raw = int(round(max(self.value_min, min(self.value_max, raw))))
+            elapsed = int((time.time() - start_s) * 1000 * self.timestamp_scale)
+            self._emit(f"{elapsed},{raw}")
+            slept = 0.0
+            while self.running and slept < self.interval_ms / 1000.0:
+                time.sleep(0.02)
+                slept += 0.02
+
+    def stop(self):
+        self.running = False
+        self._join()
+
+
+#: 退出清理时未在限时内结束的普通线程（保活引用，避免被 Python 回收）
+_retired_transports = []
+
+
+def stop_transport(transport, timeout=2000, name="通信线程"):
+    """停止普通线程传输并限时等待；超时的保留引用。"""
+    if transport is None:
+        return
+    try:
+        transport.stop()
+    except Exception as e:
+        log.warning("停止%s失败: %s", name, e)
+    t = getattr(transport, '_thread', None)
+    if t is not None and t.is_alive() and t is not threading.current_thread():
+        try:
+            t.join(timeout / 1000.0)
+        except Exception as e:
+            log.warning("等待%s退出失败: %s", name, e)
+        if t.is_alive():
+            log.warning("%s未在 %dms 内退出，保留引用", name, timeout)
+            _retired_transports.append(transport)
+
+
+class SensorKernel:
+    """多路传感器内核基类。
+
+    子类只需要实现物理差异：
+    - load_config / save_config
+    - make_channel
+    - decode_line / convert
+    - simulator_spec
+    - append_sample / channel_values
+    - ai_data / channel_info / csv_text
+    - sensor_actions / sensor_command
+    """
+
+    key = ''
+    title = ''
+    x_label = '时间 (秒)'
+    y_label = ''
+
+    def __init__(self):
+        self.channels = []
+        self.collecting = False
+        self.sample_interval_ms = 100
+        self._t0_mono = None
+        self._seq = 0
+        self._next_channel_id = 1
+        self._next_channel_seq = 1
+        self._lock = threading.RLock()
+        self._bus = EventBus()
+
+    # ---------------- 子类钩子 ----------------
+    def load_config(self):
+        return {}
+
+    def save_config(self):
+        return True
+
+    def make_channel(self, color=None, mode='serial', port='', name=None,
+                     sample_interval_ms=None, visible=True, **params):
+        raise NotImplementedError
+
+    def decode_line(self, line, channel):
+        raise NotImplementedError
+
+    def convert(self, channel, raw):
+        raise NotImplementedError
+
+    def simulator_spec(self, channel):
+        """返回 SimulatorTransport 参数 dict；None 表示不支持模拟器。"""
+        return None
+
+    def append_sample(self, channel, t, raw, value):
+        channel.time_data.append(t)
+        channel.raw_data.append(raw)
+        channel.value_data.append(value)
+
+    def clear_channel_data(self, channel):
+        channel.time_data.clear()
+        channel.raw_data.clear()
+        channel.value_data.clear()
+        channel.last_sample_s = None
+
+    def channel_values(self, channel):
+        return channel.value_data
+
+    def channel_info(self, channel):
+        values = self.channel_values(channel)
+        return {
+            'id': channel.id,
+            'name': channel.name,
+            'color': channel.color,
+            'mode': channel.mode,
+            'port': channel.port,
+            'sample_interval_ms': channel.sample_interval_ms,
+            'visible': channel.visible,
+            'connected': bool(getattr(channel, 'connected', False)),
+            'points_n': len(values),
+            'latest_raw': (channel.raw_data[-1]
+                           if getattr(channel, 'raw_data', None) else None),
+        }
+
+    def ai_data(self):
+        return None
+
+    def csv_text(self):
+        return ''
+
+    def sensor_actions(self):
+        return []
+
+    def sensor_command(self, action, params):
+        return None
+
+    # ---------------- 事件 ----------------
+    def subscribe(self, callback=None, maxsize=1024):
+        sub = self._bus.subscribe(maxsize)
+        if callback is not None:
+            def _consume():
+                for event in sub:
+                    try:
+                        callback(event)
+                    except Exception as e:
+                        log.error("内核事件回调失败: %s", e)
+            threading.Thread(target=_consume, daemon=True).start()
+        return sub
+
+    def _publish(self, kind, channel_id=None, data=None):
+        self._bus.publish(KernelEvent(kind, channel_id, data or {}))
+
+    # ---------------- 通道 ----------------
+    def get_channel(self, cid):
+        for ch in self.channels:
+            if ch.id == cid:
+                return ch
+        return None
+
+    def add_channel(self, color=None, mode='serial', port='', name=None,
+                    sample_interval_ms=None, visible=True, **params):
+        ch = self.make_channel(
+            color=color, mode=mode, port=port, name=name,
+            sample_interval_ms=sample_interval_ms, visible=visible, **params)
+        self.channels.append(ch)
+        self.save_config()
+        self._publish(EVENT_CHANNELS_CHANGED)
+        return ch
+
+    def update_channel(self, cid, **fields):
+        ch = self.get_channel(cid)
+        if ch is None:
+            return False
+        for k, v in fields.items():
+            if hasattr(ch, k):
+                setattr(ch, k, v)
+        self.save_config()
+        self._publish(EVENT_CHANNELS_CHANGED, cid)
+        return True
+
+    def remove_channel(self, cid):
+        ch = self.get_channel(cid)
+        if ch is None:
+            return False
+        if getattr(ch, 'connected', False):
+            self.disconnect(cid)
+        self.channels.remove(ch)
+        self.save_config()
+        self._publish(EVENT_CHANNELS_CHANGED)
+        return True
+
+    def is_connected(self, cid):
+        ch = self.get_channel(cid)
+        return bool(ch and getattr(ch, 'connected', False))
+
+    def connected_any(self):
+        return any(getattr(ch, 'connected', False) for ch in self.channels)
+
+    # ---------------- 连接 ----------------
+    def _make_transport(self, channel):
+        if channel.mode == 'simulator':
+            spec = self.simulator_spec(channel) or {}
+            return SimulatorTransport(on_line=None, **spec)
+        if not SERIAL_AVAILABLE:
+            raise RuntimeError(serial_unavailable_hint())
+        port = (channel.port or '').strip()
+        if not port or '未安装' in port or '无可用' in port:
+            raise RuntimeError('请先选择串口')
+        return SerialTransport(port)
+
+    def connect(self, cid):
+        ch = self.get_channel(cid)
+        if ch is None:
+            return {'ok': False, 'error': 'channel_not_found',
+                    'message': '通道不存在'}
+        if getattr(ch, 'connected', False):
+            return {'ok': True, 'message': f'{ch.name} 已连接'}
+        try:
+            transport = self._make_transport(ch)
+        except Exception as e:
+            return {'ok': False, 'error': 'connect_failed', 'message': str(e)}
+        transport.on_line = lambda line, cid=cid: self._handle_line(cid, line)
+        ch.thread = transport
+        ch.connected = True
+        try:
+            transport.start()
+        except Exception as e:
+            ch.thread = None
+            ch.connected = False
+            return {'ok': False, 'error': 'connect_failed',
+                    'message': f'{ch.name} 连接失败: {e}'}
+        self._publish(EVENT_CHANNEL_STATE, cid,
+                      {'connected': True, 'message': '已连接'})
+        return {'ok': True, 'message': f'{ch.name} 已连接'}
+
+    def disconnect(self, cid):
+        ch = self.get_channel(cid)
+        if ch is None:
+            return {'ok': False, 'error': 'channel_not_found',
+                    'message': '通道不存在'}
+        transport = getattr(ch, 'thread', None)
+        if transport is not None:
+            stop_transport(transport, name=f'{self.title}{ch.name}线程')
+        ch.thread = None
+        ch.connected = False
+        self._publish(EVENT_CHANNEL_STATE, cid,
+                      {'connected': False, 'message': '已断开'})
+        return {'ok': True, 'message': f'{ch.name} 已断开'}
+
+    def connect_all(self):
+        for ch in list(self.channels):
+            if not getattr(ch, 'connected', False):
+                self.connect(ch.id)
+
+    def disconnect_all(self):
+        for ch in list(self.channels):
+            if getattr(ch, 'connected', False) or getattr(ch, 'thread', None):
+                self.disconnect(ch.id)
+
+    # ---------------- 采集 ----------------
+    def start_collection(self):
+        with self._lock:
+            for ch in self.channels:
+                self.clear_channel_data(ch)
+            self._t0_mono = None
+            self._seq = 0
+            self.collecting = True
+        self._publish(EVENT_COLLECTION_CHANGED, None, {'collecting': True})
+        return {'ok': True, 'message': '已开始采集'}
+
+    def stop_collection(self):
+        with self._lock:
+            self.collecting = False
+        self._publish(EVENT_COLLECTION_CHANGED, None, {'collecting': False})
+        return {'ok': True, 'message': '已停止采集'}
+
+    def toggle_collection(self):
+        return (self.stop_collection() if self.collecting
+                else self.start_collection())
+
+    def clear_data(self):
+        with self._lock:
+            for ch in self.channels:
+                self.clear_channel_data(ch)
+            self._t0_mono = None
+            self._seq = 0
+        self._publish(EVENT_CHANNELS_CHANGED)
+        return {'ok': True, 'message': '已清除数据'}
+
+    def _handle_line(self, cid, line):
+        ch = self.get_channel(cid)
+        if ch is None:
+            return
+        if line.startswith('ERROR:'):
+            message = line[6:]
+            log.error('%s 设备错误: %s', ch.name, message)
+            self._publish(EVENT_ERROR, cid, {'message': message})
+            self.disconnect(cid)
+            return
+        if line == 'START':
+            self._publish(EVENT_CHANNEL_STATE, cid,
+                          {'connected': True, 'message': '设备已启动，等待数据...'})
+            return
+        try:
+            raw = self.decode_line(line, ch)
+        except Exception as e:
+            log.warning('%s 数据解析失败: %s', ch.name, e)
+            return
+        if raw is None:
+            return
+        try:
+            value = self.convert(ch, raw)
+        except Exception as e:
+            log.warning('%s 换算失败: %s', ch.name, e)
+            return
+
+        with self._lock:
+            now = time.monotonic()
+            if self._t0_mono is None:
+                self._t0_mono = now
+            t_rel = now - self._t0_mono
+            self._publish(EVENT_SAMPLE_PREVIEW, cid, {
+                't': t_rel, 'raw': raw, 'value': value,
+            })
+            if not self.collecting:
+                return
+            if (ch.last_sample_s is not None and
+                    (t_rel - ch.last_sample_s) * 1000 < ch.sample_interval_ms):
+                return
+            ch.last_sample_s = t_rel
+            self._seq += 1
+            seq = self._seq
+            self.append_sample(ch, t_rel, raw, value)
+        self._publish(EVENT_SAMPLE_RECORDED, cid, {
+            'seq': seq, 't': t_rel, 'raw': raw, 'value': value,
+        })
+
+    # ---------------- 读取 / 导出 ----------------
+    def snapshot(self, points=0):
+        ai = self.ai_data() or {}
+        pts = list(ai.get('points') or [])
+        total_points = len(pts)
+        if points and len(pts) > points:
+            step = len(pts) / float(points)
+            pts = [pts[int(i * step)] for i in range(points)]
+        latest = None
+        if pts:
+            t, y = pts[-1]
+            latest = {'t': t, 'y': y}
+        return {
+            'key': self.key,
+            'name': self.title,
+            'connected': self.connected_any(),
+            'collecting': self.collecting,
+            'x_label': ai.get('x_label', self.x_label),
+            'y_label': ai.get('y_label', self.y_label),
+            'params': ai.get('params', ''),
+            'points': pts,
+            'total_points': total_points,
+            'latest': latest,
+            'channels': [self.channel_info(ch) for ch in self.channels],
+        }
+
+    def series(self, cid=None, limit=2000):
+        if cid is None:
+            ch = next((c for c in self.channels if self.channel_values(c)), None)
+        else:
+            ch = self.get_channel(cid)
+        if ch is None:
+            return []
+        pairs = list(zip(ch.time_data, self.channel_values(ch)))
+        if limit and len(pairs) > limit:
+            pairs = pairs[-int(limit):]
+        return pairs
+
+    def stats(self):
+        out = {}
+        for ch in self.channels:
+            values = list(self.channel_values(ch))
+            if not values:
+                out[ch.id] = {'count': 0}
+                continue
+            out[ch.id] = {
+                'count': len(values),
+                'mean': sum(values) / len(values),
+                'min': min(values),
+                'max': max(values),
+            }
+        return out
+
+    def export_csv(self, path=None):
+        text = self.csv_text()
+        if not text:
+            raise ValueError('没有数据可保存')
+        if not path:
+            stamp = time.strftime('%Y%m%d_%H%M%S')
+            path = f'{self.key}_data_{stamp}.csv'
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        return os.path.abspath(path)
+
+    # ---------------- 命令 ----------------
+    def actions(self):
+        return [
+            'start', 'stop', 'toggle', 'clear',
+            'refresh_ports', 'set_sample_interval',
+            'set_connection', 'export_csv',
+        ] + list(self.sensor_actions())
+
+    def command(self, action, params=None):
+        params = params or {}
+        try:
+            if action == 'start':
+                return self.start_collection()
+            if action == 'stop':
+                return self.stop_collection()
+            if action == 'toggle':
+                return self.toggle_collection()
+            if action == 'clear':
+                return self.clear_data()
+            if action == 'refresh_ports':
+                return {'ok': True, 'ports': [
+                    {'device': d, 'description': desc}
+                    for d, desc in list_serial_ports()]}
+            if action == 'set_sample_interval':
+                ms = params.get('ms', params.get('sample_interval_ms'))
+                if ms is None:
+                    return {'ok': False, 'message': '缺少采样间隔'}
+                cid = params.get('channel_id', params.get('cid'))
+                targets = ([self.get_channel(cid)] if cid is not None
+                           else list(self.channels))
+                for ch in targets:
+                    if ch is not None:
+                        ch.sample_interval_ms = max(10, int(ms))
+                self.save_config()
+                return {'ok': True, 'message': f'采样间隔已设为 {int(ms)}ms'}
+            if action == 'set_connection':
+                cid = params.get('channel_id', params.get('cid'))
+                ch = (self.get_channel(cid) if cid is not None
+                      else (self.channels[0] if self.channels else None))
+                if ch is None:
+                    return {'ok': False, 'message': '通道不存在'}
+                mode = str(params.get('mode', '')).strip()
+                if mode in ('串口', 'serial', '有线串口'):
+                    ch.mode = 'serial'
+                elif mode in ('模拟器', 'simulator'):
+                    ch.mode = 'simulator'
+                if params.get('port'):
+                    ch.port = str(params['port'])
+                self.save_config()
+                if params.get('connect'):
+                    self.disconnect(ch.id)
+                    return self.connect(ch.id)
+                return {'ok': True, 'message': f'{ch.name} 连接方式已更新'}
+            if action == 'export_csv':
+                path = self.export_csv(params.get('path'))
+                return {'ok': True, 'message': path, 'path': path}
+            res = self.sensor_command(action, params)
+            if res is not None:
+                return res
+            return {'ok': False, 'error': 'unsupported_action',
+                    'message': f'不支持的命令: {action}'}
+        except Exception as e:
+            log.error('内核命令失败 %s/%s: %s', self.key, action, e)
+            return {'ok': False, 'error': 'execution_failed', 'message': str(e)}
+
+    def shutdown(self):
+        self.disconnect_all()
+        self._bus.close()
+
+
+# ============================================================
 # 可展开/收起的文本记录区
 # ============================================================
 class ExpandableTextEdit(QWidget):
@@ -6694,6 +7446,12 @@ DATA_SERVICE_GENERIC_ACTIONS = {
 }
 
 
+def _is_kernel_object(obj):
+    """判断注册对象是 SensorKernel 还是旧 QWidget。"""
+    return all(hasattr(obj, name)
+               for name in ('channels', 'snapshot', 'command', 'subscribe'))
+
+
 class DataService(QObject):
     """实验数据与控制总线（与传输方式无关）。
 
@@ -6757,7 +7515,9 @@ class DataService(QObject):
         if widget is None:
             return None
         try:
-            if hasattr(widget, 'api_snapshot'):
+            if _is_kernel_object(widget):
+                snap = dict(widget.snapshot() or {})
+            elif hasattr(widget, 'api_snapshot'):
                 snap = dict(widget.api_snapshot() or {})
             elif hasattr(widget, '_ai_data'):
                 d = widget._ai_data() or {}
@@ -6780,11 +7540,14 @@ class DataService(QObject):
         snap.setdefault('name', self._names.get(key, key))
         # 降采样：等间隔抽取（与 _format_ai_data 一致）
         pts = snap.get('points') or []
+        total_points = snap.get('total_points')
+        if total_points is None:
+            total_points = len(pts)
         if points and len(pts) > points:
             step = len(pts) / float(points)
             pts = [pts[int(i * step)] for i in range(points)]
         snap['points'] = pts
-        snap['total_points'] = len(pts)
+        snap['total_points'] = total_points
         snap['actions'] = self.actions(key)
         snap['connection'] = self.connection_info(key)
         return snap
@@ -6802,6 +7565,8 @@ class DataService(QObject):
         widget = self._modules.get(key)
         if widget is None:
             return None
+        if _is_kernel_object(widget):
+            return widget.csv_text()
         if hasattr(widget, 'api_csv'):
             try:
                 text = widget.api_csv()
@@ -6825,6 +7590,8 @@ class DataService(QObject):
         widget = self._modules.get(key)
         if widget is None:
             return []
+        if _is_kernel_object(widget):
+            return sorted(set(widget.actions()))
         acts = set(DATA_SERVICE_GENERIC_ACTIONS.keys())
         try:
             extra = getattr(widget, 'api_actions', None)
@@ -6845,6 +7612,23 @@ class DataService(QObject):
         widget = self._modules.get(key)
         if widget is None:
             return None
+        if _is_kernel_object(widget):
+            if not widget.channels:
+                return None
+            first = widget.channels[0]
+            ports = [device for device, _desc in list_serial_ports()]
+            if not ports:
+                ports = (['未安装 pyserial'] if not SERIAL_AVAILABLE
+                         else ['无可用串口'])
+            return {
+                'modes': [
+                    {'text': '有线串口', 'enabled': bool(SERIAL_AVAILABLE)},
+                    {'text': '模拟器', 'enabled': True},
+                ],
+                'mode': '模拟器' if first.mode == 'simulator' else '有线串口',
+                'ports': ports,
+                'port': first.port or '',
+            }
         try:
             mc = getattr(widget, 'mode_combo', None)
             if mc is None:
@@ -6878,6 +7662,8 @@ class DataService(QObject):
             connect: bool  可选，true 时立即 disconnect_all() + connect_device()
         """
         mc = getattr(widget, 'mode_combo', None)
+        if _is_kernel_object(widget):
+            return widget.command('set_connection', params)
         if mc is None or mc.count() == 0:
             return {'ok': False, 'error': 'unsupported',
                     'message': '该模块不支持连接方式切换'}
@@ -6935,6 +7721,9 @@ class DataService(QObject):
         if key not in self._modules:
             return {'ok': False, 'error': 'module_not_found',
                     'message': '模块不存在: %s' % key}
+        kernel = self._modules.get(key)
+        if _is_kernel_object(kernel):
+            return kernel.command(action, params or {})
         result_box = {}
         done = threading.Event()
         self._queue.put((key, action, params or {}, result_box, done))
@@ -6961,6 +7750,8 @@ class DataService(QObject):
             return {'ok': False, 'error': 'module_not_found',
                     'message': '模块不存在: %s' % key}
         try:
+            if _is_kernel_object(widget):
+                return widget.command(action, params)
             handler = getattr(widget, 'api_command', None)
             if callable(handler):
                 res = handler(action, params)

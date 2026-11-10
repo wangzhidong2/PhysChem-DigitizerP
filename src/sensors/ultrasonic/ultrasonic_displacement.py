@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
+# key: ultrasonic_displacement
 # icon: x
 # icon_file: icon.svg
 # name: 超声波位移
 # category: physics
 # class: UltrasonicWidget
+# kernel: _kernel_displacement:DisplacementKernel
 # ===================
 
 # -*- coding: utf-8 -*-
@@ -19,7 +21,7 @@
 
 import sys
 import os
-import time
+import importlib.util
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
@@ -40,10 +42,10 @@ import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
     fluent_message_box, ChartPanel,
-    SerialThread, SampleRateComboBox, SimulatorThread,
-    stop_thread,
-    load_sensor_config, save_sensor_config,
+    SampleRateComboBox,
     SERIAL_AVAILABLE, list_serial_ports, serial_unavailable_hint,
+    EVENT_SAMPLE_PREVIEW, EVENT_SAMPLE_RECORDED, EVENT_CHANNEL_STATE,
+    EVENT_COLLECTION_CHANGED, EVENT_ERROR,
     card_style, primary_btn_style, accent_btn_style,
     modern_combo_style, CollapsibleCard, FluentCard, ExpandableTextEdit,
     scroll_area_style, page_bg_style, apply_module_theme,
@@ -133,77 +135,40 @@ class _FlowWrapBox(QWidget):
         self.updateGeometry()
 
 
-class _Channel:
-    """一路连接的数据模型（纯 Python 对象，不持有任何 Qt 控件）。
-
-    每路连接独立选择「有线串口 / 模拟器」、独立串口、独立曲线颜色；
-    数据按主机统一时间戳记录（见 handle_data）。
-    超声波为单通道固件，多路 = 多个 ESP32。
-    UI 行控件引用由模块统一保管在 _rows[channel.id] 里。
-    """
-
-    def __init__(self, cid, name, color, mode='serial', port='',
-                 sample_interval_ms=100):
-        self.id = cid                      # 稳定 id（信号绑定用，删除后不复用）
-        self.name = name                    # 显示名（可自定义，留空回退默认名）
-        self.default_name = name            # 默认名（通道N，创建时定序）
-        self.color = color                  # 曲线颜色
-        self.mode = mode                    # 'serial' | 'simulator'
-        self.port = port                    # 串口模式下选中的端口
-        self.thread = None                  # SerialThread / SimulatorThread
-        self.sample_interval_ms = sample_interval_ms  # 本路采样间隔（每路独立）
-        self.visible = True                 # 图表显示开关（勾选框控制）
-        # 采集数据
-        self.time_data = []                 # 相对时间（秒，主机统一时间戳）
-        self.data_points = []               # 距离（厘米）
-        self.echo_data = []                 # 原始回波时间（µs）
-        # 上次记录样本的主机相对秒（采样间隔过滤，每路独立）
-        self.last_sample_s = None
-
-
 class UltrasonicWidget(QWidget):
     """超声波位移模块界面（多路连接）"""
 
-    def __init__(self):
+    def __init__(self, kernel=None):
         super().__init__()
-        self._collecting = False  # 当前是否在采集（合并开始/停止按钮状态）
-        # 多路连接：每路一个 _Channel（独立模式/串口/颜色/数据）
-        self.channels = []
+        # 内核由加载器注入；直接实例化时用同目录 _kernel_displacement.py 兜底
+        self.kernel = kernel or self._create_default_kernel()
+        self.channels = self.kernel.channels
+        self._collecting = False
         self._rows = {}              # channel.id -> 行控件引用 dict
-        self._next_channel_id = 1   # 稳定 id 分配器（删除后不复用）
-        self._next_channel_seq = 1  # 显示名序号（通道N）
-        self._t0_mono = None        # 采集期主机统一时间基准（首个样本时刻）
+        self.sample_interval_ms = self.kernel.sample_interval_ms
 
-        # 采样频率设置（毫秒）—— 模块级镜像字段（始终与第 1 路一致）
-        self.sample_interval_ms = 100  # 默认 100ms (10Hz)
-
-        self.config = self.load_config()
         self.init_ui()
-        # 恢复上次的通道列表（含模式/串口/颜色）；无记录时建一路默认通道
-        self._restore_channels()
+        self._build_channels_from_kernel()
+
+    @staticmethod
+    def _create_default_kernel():
+        """不经过 main.py 加载器时，直接加载同目录内核文件。"""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            '_kernel_displacement.py')
+        spec = importlib.util.spec_from_file_location(
+            '_sensor_kernel_ultrasonic_displacement', path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.DisplacementKernel()
 
     # ------------------------------------------------------------------
-    # 配置读写
+    # 配置（委托内核）
     # ------------------------------------------------------------------
     def load_config(self):
-        config = load_sensor_config('ultrasonic_displacement')
-        if config:
-            self.sample_interval_ms = config.get('sample_interval_ms', 100)
-        return config
+        return self.kernel.config
 
     def save_config(self):
-        first = self.channels[0] if self.channels else None
-        config = {
-            'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
-            # 多路连接：每路的模式/串口/颜色/采样间隔/图表显示
-            'channels': [
-                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
-                 'visible': ch.visible}
-                for ch in self.channels
-            ],
-        }
-        return save_sensor_config('ultrasonic_displacement', config)
+        return self.kernel.save_config()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -383,45 +348,31 @@ class UltrasonicWidget(QWidget):
         self.timer.timeout.connect(self.update_chart)
         self.timer.start(100)
 
+        # 内核事件队列：后台采集线程只入队，GUI 线程由 QTimer 消费
+        self._events = self.kernel.subscribe()
+        self._event_timer = QTimer(self)
+        self._event_timer.timeout.connect(self._drain_kernel_events)
+        self._event_timer.start(50)
+
     # ============================================================
     # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
     # ============================================================
-    def _restore_channels(self):
-        """按配置重建通道行；无记录时建一路默认通道。"""
-        saved = (self.config or {}).get('channels') or []
-        if saved:
-            for item in saved:
-                mode = item.get('mode', 'serial')
-                if mode != 'simulator' and not SERIAL_AVAILABLE:
-                    mode = 'simulator'   # pyserial 缺失时优雅降级
-                self._make_channel(
-                    name=item.get('name') or None,
-                    color=item.get('color') or None,
-                    mode=mode, port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'),
-                    visible=item.get('visible', True))
-        else:
-            self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
-        if self.channels:
-            self.sample_interval_ms = self.channels[0].sample_interval_ms
+    def _build_channels_from_kernel(self):
+        """按内核已有通道重建 UI 行（内核负责配置恢复）。"""
+        for ch in self.channels:
+            self._build_channel_card(ch)
+            self._build_live_row(ch)
+        self._refresh_chart_visibility_row()
+        self._update_delete_btns()
         self._sync_compat_aliases()
         self._refresh_summary_text()
 
     def _make_channel(self, color=None, mode='serial', port='', name=None,
                       sample_interval_ms=None, visible=True):
-        """创建通道对象 + 对应 UI 行（不重复使用已删除通道的 id/name）。"""
-        cid = self._next_channel_id
-        self._next_channel_id += 1
-        seq = self._next_channel_seq
-        self._next_channel_seq += 1
-        if not color:
-            used = {ch.color for ch in self.channels}
-            color = next((c for c in CHANNEL_COLORS if c not in used),
-                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
-        ch = _Channel(cid, name or f"通道{seq}", color, mode=mode, port=port,
-                      sample_interval_ms=sample_interval_ms or self.sample_interval_ms)
-        ch.visible = bool(visible)
-        self.channels.append(ch)
+        """创建内核通道，并为它建立对应的 UI 子卡/实时行。"""
+        ch = self.kernel.add_channel(
+            color=color, mode=mode, port=port, name=name,
+            sample_interval_ms=sample_interval_ms, visible=visible)
         self._build_channel_card(ch)
         self._build_live_row(ch)
         self._refresh_chart_visibility_row()
@@ -433,23 +384,21 @@ class UltrasonicWidget(QWidget):
         """「新建连接」按钮：增加一路连接（默认有线串口，缺 pyserial 时为模拟器）。"""
         self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
         self._sync_compat_aliases()
-        self.save_config()
 
     def _delete_channel(self, ch):
         """删除一路连接（正在连接的通道须先断开；至少保留一路）。"""
-        if ch.thread and ch.thread.isRunning():
+        if getattr(ch, 'connected', False):
             fluent_message_box(self, "提示", f"{ch.name} 正在连接，请先断开再删除")
             return
         refs = self._rows.pop(ch.id, None)
         if refs:
             self.channels_layout.removeWidget(refs['card'])
             refs['card'].deleteLater()
-        self.channels.remove(ch)
+        self.kernel.remove_channel(ch.id)
         self._remove_live_row(ch)
         self._refresh_chart_visibility_row()
         self._update_delete_btns()
         self._sync_compat_aliases()
-        self.save_config()
         self._sync_conn_card_height()
 
     def _build_live_row(self, ch):
@@ -814,39 +763,29 @@ class UltrasonicWidget(QWidget):
             self._sync_conn_card_height()
 
     def _toggle_channel_connection(self, ch):
-        """单路的连接/断开按钮：按本路线程状态切换。"""
-        if ch.thread and ch.thread.isRunning():
+        """单路的连接/断开按钮：按本路连接状态切换。"""
+        if getattr(ch, 'connected', False):
             self._disconnect_channel(ch)
         else:
             self._connect_channel(ch)
 
     def _connect_channel(self, ch):
         """连接单路：串口或模拟器（其余通道不受影响）。"""
-        try:
-            if ch.mode == 'simulator':
-                # echo_time 100~60000µs（约 1.7cm~1m），在 11600µs(约20cm)附近漂移
-                th = SimulatorThread(
-                    value_min=100, value_max=60000,
-                    interval_ms=ch.sample_interval_ms,
-                    start_value=11600, timestamp_scale=1000)
-            else:
-                if not SERIAL_AVAILABLE:
-                    fluent_message_box(self, "提示", serial_unavailable_hint())
-                    return
-                port = self._rows[ch.id]['port_combo'].currentText()
-                if not port or "未安装" in port or "无可用" in port:
-                    fluent_message_box(self, "错误", f"{ch.name}: 请选择串口")
-                    return
-                ch.port = port
-                th = SerialThread(port)
-            th.data_received.connect(lambda d, c=ch: self.handle_data(d, c))
-            ch.thread = th
-            th.start()
-        except Exception as e:
-            ch.thread = None
-            fluent_message_box(self, "连接错误", f"{ch.name} 连接失败: {e}")
-            return
         refs = self._rows.get(ch.id)
+        if ch.mode == 'serial':
+            if not SERIAL_AVAILABLE:
+                fluent_message_box(self, "提示", serial_unavailable_hint())
+                return
+            port = refs['port_combo'].currentText() if refs else ch.port
+            if not port or "未安装" in port or "无可用" in port:
+                fluent_message_box(self, "错误", f"{ch.name}: 请选择串口")
+                return
+            ch.port = port
+        res = self.kernel.connect(ch.id)
+        if not res.get('ok'):
+            fluent_message_box(self, "连接错误",
+                               res.get('message', f'{ch.name} 连接失败'))
+            return
         if refs:
             refs['connect_btn'].setText("断开")
         log.info("%s 已连接（%s）", ch.name,
@@ -859,9 +798,7 @@ class UltrasonicWidget(QWidget):
 
     def _disconnect_channel(self, ch):
         """断开单路（其余通道不受影响）。"""
-        if ch.thread:
-            stop_thread(ch.thread, name=f"超声波位移{ch.name}线程")
-            ch.thread = None
+        self.kernel.disconnect(ch.id)
         refs = self._rows.get(ch.id)
         if refs:
             refs['connect_btn'].setText("连接")
@@ -872,19 +809,27 @@ class UltrasonicWidget(QWidget):
             live['dist_label'].setText("--.-- cm")
             live['echo_label'].setText(f"{ch.name} 回波: 已断开")
         self._refresh_summary_text()
-        if not any(c.thread for c in self.channels):
+        if not self.kernel.connected_any():
             self._set_collect_enabled(False)
 
     def connect_device(self):
         """连接全部未连接的通道（网页端 set_connection connect=true 走这里）。"""
+        self.kernel.connect_all()
         for ch in self.channels:
-            if not (ch.thread and ch.thread.isRunning()):
-                self._connect_channel(ch)
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText(
+                    "断开" if getattr(ch, 'connected', False) else "连接")
+        self._set_collect_enabled(self.kernel.connected_any())
 
     def disconnect_all(self):
         """断开全部通道（退出清理 / 网页端命令也走这里）。"""
-        for ch in list(self.channels):
-            self._disconnect_channel(ch)
+        self.kernel.disconnect_all()
+        for ch in self.channels:
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText("连接")
+        self._set_collect_enabled(False)
 
     def toggle_collection(self):
         """合并的开始/停止按钮：按当前采集状态切换。"""
@@ -904,22 +849,15 @@ class UltrasonicWidget(QWidget):
         update_collect_btn(self.float_collect_btn, self._collecting)
 
     def start_collection(self):
-        """开始数据采集"""
-        for ch in self.channels:
-            ch.data_points.clear()
-            ch.time_data.clear()
-            ch.echo_data.clear()
-            ch.last_sample_s = None
-        self.data_text.clear()
-        # 主机统一时间基准：以采集期收到的**首个样本**为 t=0（各路共享）
-        self._t0_mono = None
-
+        """开始数据采集（数据清空与时间基准由内核负责）。"""
+        self.kernel.start_collection()
         self._collecting = True
-        log.info("开始采集（已连接 %d 路）",
-                 sum(1 for ch in self.channels if ch.thread))
+        self.data_text.clear()
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
-
+        log.info("开始采集（已连接 %d 路）",
+                 sum(1 for ch in self.channels
+                     if getattr(ch, 'connected', False)))
         self.current_data_label.setText("采集进行中...")
         for ch in self.channels:
             live = self._live_rows.get(ch.id)
@@ -927,96 +865,89 @@ class UltrasonicWidget(QWidget):
                 live['echo_label'].setText(f"{ch.name} 回波: 采集中...")
 
     def stop_collection(self):
-        """停止数据采集"""
+        """停止数据采集。"""
+        self.kernel.stop_collection()
         self._collecting = False
         self._refresh_collect_btn()
         total = sum(len(ch.data_points) for ch in self.channels)
         self.save_btn.setEnabled(total > 0)
         log.info("停止采集，共 %d 个数据点", total)
-
         self.current_data_label.setText("采集已停止")
 
-    def handle_data(self, data, ch):
-        """一路连接的数据回调（SerialThread / SimulatorThread → 本模块）。
+    # ------------------------------------------------------------------
+    # 内核事件 → UI（QTimer 在 GUI 线程消费，避免后台线程直接碰 QWidget）
+    # ------------------------------------------------------------------
+    def _drain_kernel_events(self):
+        for event in self._events.drain(200):
+            if event is None:
+                return
+            self._handle_kernel_event(event)
 
-        多路连接下的约定：
-        - ERROR / START 按通道处理，出错只断开这一路；
-        - 记录用**主机统一时间戳**（time.monotonic），各路天然对齐在同一
-          时间轴（不同 ESP32 开机时刻不同，固件时间戳不可跨路比较）；
-        - 固件的 timestamp 字段只做格式解析，不参与记录。
-        """
-        # 检查是否是错误信息
-        if data.startswith("ERROR:"):
-            log.error("%s 设备错误: %s", ch.name, data[6:])
-            fluent_message_box(self, "串口错误", f"{ch.name}: {data[6:]}")
-            self._disconnect_channel(ch)
+    def _handle_kernel_event(self, event):
+        kind = event.kind
+        cid = event.channel_id
+        data = event.data or {}
+        ch = self.kernel.get_channel(cid) if cid is not None else None
+
+        if kind == EVENT_SAMPLE_PREVIEW and ch is not None:
+            value = data.get('value')
+            raw = data.get('raw')
+            live = self._live_rows.get(ch.id)
+            if live and value is not None:
+                live['dist_label'].setText(f"{value:.2f} cm")
+                live['echo_label'].setText(
+                    f"{ch.name} 回波: {int(raw)}µs")
+            if value is not None:
+                self.current_data_label.setText(f"{ch.name}: {value:.2f}cm")
             return
 
-        # 检查是否是启动信号
-        if data == "START":
+        if kind == EVENT_SAMPLE_RECORDED and ch is not None:
+            value = data.get('value')
+            raw = data.get('raw')
+            if value is None:
+                return
+            time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            self.data_text.append(
+                f"{time_str} | {ch.name} | 回波: {int(raw)}µs | "
+                f"距离: {value:.2f}cm")
+            self.data_text.verticalScrollBar().setValue(
+                self.data_text.verticalScrollBar().maximum())
+            self.update_stats()
+            return
+
+        if kind == EVENT_CHANNEL_STATE and ch is not None:
+            connected = bool(data.get('connected'))
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText("断开" if connected else "连接")
             live = self._live_rows.get(ch.id)
             if live:
-                live['echo_label'].setText(f"{ch.name}: 设备已启动，等待数据...")
+                if connected:
+                    msg = data.get('message') or '连接中...'
+                    live['dist_label'].setText("--.-- cm")
+                    live['echo_label'].setText(f"{ch.name}: {msg}")
+                else:
+                    live['dist_label'].setText("--.-- cm")
+                    live['echo_label'].setText(f"{ch.name} 回波: 已断开")
+            self._refresh_summary_text()
+            self._set_collect_enabled(self.kernel.connected_any())
             return
 
-        try:
-            # 解析数据格式: timestamp,echo_time
-            if "," not in data:
-                return
-            parts = data.split(",")
-            if len(parts) != 2:
-                return
-            echo_time = int(parts[1])
-        except ValueError:
-            return  # 忽略无法解析的数据
-
-        # 过滤无效数据（回波时间过小或过大）
-        if echo_time < 100 or echo_time > 60000:  # 100µs - 60ms
+        if kind == EVENT_COLLECTION_CHANGED:
+            self._collecting = bool(data.get('collecting'))
+            self._refresh_collect_btn()
+            if self._collecting:
+                self.save_btn.setEnabled(False)
+            else:
+                total = sum(len(c.data_points) for c in self.channels)
+                self.save_btn.setEnabled(total > 0)
             return
 
-        # 计算距离（厘米）
-        distance_cm = echo_time / 58.0
-
-        # 实时显示（未采集时也持续刷新）——只更新本路行
-        live = self._live_rows.get(ch.id)
-        if live:
-            live['dist_label'].setText(f"{distance_cm:.2f} cm")
-            live['echo_label'].setText(f"{ch.name} 回波: {echo_time}µs")
-        # 隐藏摘要标签记最新活动的一路（仅供全屏浮动面板折叠态摘要读取）
-        self.current_data_label.setText(f"{ch.name}: {distance_cm:.2f}cm")
-
-        if not self._collecting:
+        if kind == EVENT_ERROR and ch is not None:
+            message = data.get('message', '')
+            log.error("%s 设备错误: %s", ch.name, message)
+            fluent_message_box(self, "串口错误", f"{ch.name}: {message}")
             return
-
-        # 主机统一时间戳：采集期首个到达样本定为 t=0
-        now = time.monotonic()
-        if self._t0_mono is None:
-            self._t0_mono = now
-        t_rel = now - self._t0_mono
-
-        # 采样频率控制（每路独立过滤，按本路设定的间隔）
-        if ch.last_sample_s is not None and \
-                (t_rel - ch.last_sample_s) * 1000 < ch.sample_interval_ms:
-            return
-        ch.last_sample_s = t_rel
-
-        # 记录数据
-        ch.data_points.append(distance_cm)
-        ch.time_data.append(t_rel)
-        ch.echo_data.append(echo_time)
-
-        time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        display_text = (f"{time_str} | {ch.name} | 回波: {echo_time}µs | "
-                        f"距离: {distance_cm:.2f}cm")
-        self.data_text.append(display_text)
-
-        # 自动滚动到底部
-        self.data_text.verticalScrollBar().setValue(
-            self.data_text.verticalScrollBar().maximum()
-        )
-
-        # 更新统计信息
-        self.update_stats()
 
     def update_stats(self):
         """更新统计信息：每路有数据的通道各显示一行统计。"""
@@ -1080,26 +1011,17 @@ class UltrasonicWidget(QWidget):
         ch.sample_interval_ms = interval_ms
         if self.channels and ch is self.channels[0]:
             self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
+            self.kernel.sample_interval_ms = interval_ms
         self.save_config()
 
     def save_data(self):
-        """保存数据到文件（长表：一行一个样本 + 通道名列）"""
+        """保存数据到文件（由内核生成 CSV）。"""
         total = sum(len(ch.data_points) for ch in self.channels)
         if total == 0:
             fluent_message_box(self, "警告", "没有数据可保存")
             return
         try:
-            filename = f"ultrasonic_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            with open(filename, 'w', encoding='utf-8') as f:
-                # 长表格式：一行一个样本 + 通道名列。多路的时间轴天然对齐
-                # （主机统一时间戳），便于 Excel 透视/筛选按通道分组分析
-                f.write("channel,timestamp_s,echo_us,distance_cm\n")
-                for ch in self.channels:
-                    for i, (timestamp, distance) in enumerate(
-                            zip(ch.time_data, ch.data_points)):
-                        echo = ch.echo_data[i] if i < len(ch.echo_data) else 0
-                        f.write(f"{ch.name},{timestamp:.3f},{echo},{distance:.3f}\n")
-
+            filename = self.kernel.export_csv()
             log.info("数据已保存到: %s（%d 点）", filename, total)
             fluent_message_box(self, "成功", f"数据已保存到: {filename}")
         except Exception as e:
@@ -1107,13 +1029,9 @@ class UltrasonicWidget(QWidget):
             fluent_message_box(self, "错误", f"保存失败: {e}")
 
     def clear_data(self):
-        """清除数据"""
-        for ch in self.channels:
-            ch.data_points.clear()
-            ch.time_data.clear()
-            ch.echo_data.clear()
-            ch.last_sample_s = None
-        self._t0_mono = None
+        """清除数据。"""
+        self.kernel.clear_data()
+        self._collecting = False
         self.data_text.clear()
         self.stats_label.setText("暂无数据")
         for ch in self.channels:
@@ -1127,62 +1045,41 @@ class UltrasonicWidget(QWidget):
         self.save_btn.setEnabled(False)
 
     def _ai_data(self):
-        """AI 分析实验数据回调（图表卡「AI分析实验」按钮调用）。
-
-        多路连接时取**数据最多的通道**作为主分析序列，各通道概况
-        写入 params，供模型理解多路对比背景。
-        """
-        active = [ch for ch in self.channels if ch.data_points]
-        if not active:
+        """AI 分析实验数据回调（数据由内核生成，View 只补系统提示词）。"""
+        data = self.kernel.ai_data()
+        if not data:
             return None
-        main = max(active, key=lambda c: len(c.data_points))
-        channels_desc = "、".join(
-            f"{ch.name}[{len(ch.data_points)}点]" for ch in active)
-        return {
-            'title': '超声波位移',
-            'x_label': '时间 (秒)',
-            'y_label': '距离 (厘米)',
-            'points': list(zip(main.time_data, main.data_points)),
-            'params': (
-                f"传感器=HC-SR04 超声波, 距离换算=回波时间(µs)/58, "
-                f"声速假设=340m/s（温度每变化 1℃ 约 ±0.17%）, "
-                f"固件有效回波窗口=100~60000µs（约 2~100cm）, "
-                f"最小触发间隔=20ms, "
-                f"多路连接: 共{len(active)}路（{channels_desc}），"
-                f"主分析通道={main.name}, "
-                f"时间轴=主机统一时间戳（各路对齐）, "
-                f"采样间隔={main.sample_interval_ms}ms（各路独立）"),
-            'system_prompt': AI_SYSTEM_PROMPT,
-        }
+        data = dict(data)
+        data['system_prompt'] = AI_SYSTEM_PROMPT
+        return data
+
+    def api_actions(self):
+        """本模块支持的控制动作（供 DataService / HTTP 层展示）。"""
+        return self.kernel.actions()
+
+    def api_command(self, action, params=None):
+        """执行控制动作（由 DataService 在 GUI 线程调用）。"""
+        return self.kernel.command(action, params)
 
     def api_snapshot(self):
-        """当前实验数据快照（供 core.DataService 任意线程读取）。
-        禁止调用任何 Qt 方法：只读模块自身的 Python 数据。"""
-        d = self._ai_data() or {}
-        points = list(d.get('points') or [])
-        latest = None
-        if points:
-            t, y = points[-1]
-            latest = {'t': t, 'y': y}
-        return {
-            'key': 'ultrasonic_displacement',
-            'name': '超声波位移',
-            'connected': any(ch.thread is not None for ch in self.channels),
-            'collecting': self._collecting,
-            'x_label': d.get('x_label', '时间 (秒)'),
-            'y_label': d.get('y_label', '距离 (厘米)'),
-            'params': d.get('params', {}),
-            'points': points,
-            'latest': latest,
-            # 多路连接明细（points 仍为主通道序列，前端单曲线不破）
-            'channels': [
-                {'name': ch.name, 'color': ch.color,
-                 'connected': ch.thread is not None,
-                 'points_n': len(ch.data_points),
-                 'latest_raw': ch.echo_data[-1] if ch.echo_data else None}
-                for ch in self.channels
-            ],
-        }
+        """当前实验数据快照（由内核生成，任意线程可读）。"""
+        return self.kernel.snapshot()
+
+    def api_csv(self):
+        """HTTP 导出用 CSV（避免 DataService 回退到单通道快照拼接）。"""
+        return self.kernel.csv_text()
+
+    def shutdown(self):
+        """退出清理：停止事件消费、关闭传输并关闭事件总线。"""
+        try:
+            self._event_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._events.close()
+        except Exception:
+            pass
+        self.kernel.shutdown()
 
     def showEvent(self, e):
         """首次显示后按子卡真实高度收敛连接控制卡（构建期 height() 不可靠）。"""
