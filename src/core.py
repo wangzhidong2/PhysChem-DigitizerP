@@ -1195,6 +1195,79 @@ class SensorKernel:
                     self.disconnect(ch.id)
                     return self.connect(ch.id)
                 return {'ok': True, 'message': f'{ch.name} 连接方式已更新'}
+            if action == 'add_channel':
+                mode = str(params.get('mode', 'serial')).strip()
+                if mode in ('模拟器', 'simulator'):
+                    mode = 'simulator'
+                elif mode in ('串口', 'serial', '有线串口'):
+                    mode = 'serial'
+                extra = params.get('sensor_params') or {}
+                if not isinstance(extra, dict):
+                    extra = {}
+                try:
+                    ch = self.add_channel(
+                        color=params.get('color'),
+                        mode=mode,
+                        port=str(params.get('port') or ''),
+                        name=params.get('name'),
+                        sample_interval_ms=params.get('sample_interval_ms'),
+                        visible=bool(params.get('visible', True)),
+                        **extra)
+                except Exception as e:
+                    return {'ok': False, 'error': 'add_channel_failed',
+                            'message': f'新增通道失败: {e}'}
+                result = {'ok': True, 'message': f'{ch.name} 已新增',
+                          'channel': self.channel_info(ch)}
+                if params.get('connect'):
+                    result.update(self.connect(ch.id))
+                return result
+            if action == 'remove_channel':
+                cid = params.get('channel_id', params.get('cid'))
+                if cid is None:
+                    return {'ok': False, 'message': '缺少 channel_id'}
+                ch = self.get_channel(cid)
+                if ch is None:
+                    return {'ok': False, 'message': '通道不存在'}
+                name = ch.name
+                self.remove_channel(cid)
+                return {'ok': True, 'message': f'{name} 已删除'}
+            if action == 'update_channel':
+                cid = params.get('channel_id', params.get('cid'))
+                if cid is None:
+                    return {'ok': False, 'message': '缺少 channel_id'}
+                ch = self.get_channel(cid)
+                if ch is None:
+                    return {'ok': False, 'message': '通道不存在'}
+                fields = params.get('fields') or {
+                    k: v for k, v in params.items()
+                    if k not in ('channel_id', 'cid', 'connect', 'fields')}
+                if not isinstance(fields, dict):
+                    return {'ok': False, 'message': 'fields 必须是对象'}
+                if 'mode' in fields:
+                    mode = str(fields['mode']).strip()
+                    if mode in ('模拟器', 'simulator'):
+                        fields['mode'] = 'simulator'
+                    elif mode in ('串口', 'serial', '有线串口'):
+                        fields['mode'] = 'serial'
+                self.update_channel(cid, **fields)
+                result = {'ok': True, 'message': f'{ch.name} 已更新',
+                          'channel': self.channel_info(ch)}
+                if 'connect' in params:
+                    result.update(self.connect(cid) if params.get('connect')
+                                  else self.disconnect(cid))
+                return result
+            if action == 'connect':
+                cid = params.get('channel_id', params.get('cid'))
+                if cid is None:
+                    self.connect_all()
+                    return {'ok': True, 'message': '已连接全部通道'}
+                return self.connect(cid)
+            if action == 'disconnect':
+                cid = params.get('channel_id', params.get('cid'))
+                if cid is None:
+                    self.disconnect_all()
+                    return {'ok': True, 'message': '已断开全部通道'}
+                return self.disconnect(cid)
             if action == 'export_csv':
                 path = self.export_csv(params.get('path'))
                 return {'ok': True, 'message': path, 'path': path}
@@ -1279,6 +1352,37 @@ class KernelRegistry:
     def series(self, key, limit=2000):
         snap = self.snapshot(key, points=limit)
         return snap.get('points', []) if snap else []
+
+    def channels(self, key):
+        """返回模块全部通道的元数据（不包含曲线点）。"""
+        kernel = self.get(key)
+        if kernel is None:
+            return []
+        try:
+            return [kernel.channel_info(ch) for ch in kernel.channels]
+        except Exception as e:
+            log.error("KernelRegistry.channels(%s) 失败: %s", key, e)
+            return []
+
+    def series_channels(self, key, limit=2000):
+        """按通道返回曲线点，供网页端多通道绘图。"""
+        kernel = self.get(key)
+        if kernel is None:
+            return []
+        out = []
+        for ch in list(kernel.channels):
+            try:
+                points = kernel.series(ch.id, limit=limit)
+            except Exception as e:
+                log.warning("读取通道 %s/%s 序列失败: %s", key, ch.id, e)
+                points = []
+            out.append({
+                'id': ch.id,
+                'name': ch.name,
+                'color': ch.color,
+                'points': points,
+            })
+        return out
 
     def csv(self, key):
         kernel = self.get(key)

@@ -47,7 +47,13 @@ pip install mcp
 | GET | `/api/auth/check` | 登录探测：按写级别校验、无副作用，正确返回 200，错误 401 |
 | GET | `/api/modules` | 模块列表与状态摘要 |
 | GET | `/api/modules/<key>` | 单模块快照，`?points=N` 附带序列；含 `connection` 连接信息 |
-| GET | `/api/modules/<key>/series?limit=N` | 降采样序列（默认 2000 点） |
+| GET | `/api/modules/<key>/series?limit=N` | 降采样序列（默认 2000 点）；`channels` 字段含每路曲线 |
+| GET | `/api/modules/<key>/channels` | 通道列表（模式 / 端口 / 采样间隔 / 连接状态） |
+| POST | `/api/modules/<key>/channels` | 新增通道，如 `{"name":"通道2","mode":"模拟器","sample_interval_ms":100,"connect":true}` |
+| PATCH | `/api/modules/<key>/channels/<cid>` | 修改单路参数，如 `{"sample_interval_ms":200}` 或 `{"mode":"串口","port":"COM3","connect":true}` |
+| DELETE | `/api/modules/<key>/channels/<cid>` | 删除通道 |
+| POST | `/api/modules/<key>/channels/<cid>/connect` | 连接指定通道 |
+| POST | `/api/modules/<key>/channels/<cid>/disconnect` | 断开指定通道 |
 | GET | `/api/modules/<key>/export.csv` | CSV 导出（含参数注释头） |
 | POST | `/api/modules/<key>/collect` | `{"action":"start"\|"stop"\|"toggle"}` |
 | POST | `/api/modules/<key>/command` | `{"action":"tare",...}`；连接管理：`{"action":"set_connection","params":{"mode":"模拟器"\|"串口","port":"COM3","connect":true}}`、`{"action":"refresh_ports"}` |

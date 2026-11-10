@@ -166,6 +166,80 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
         snap['ok'] = True
         return jsonify(snap)
 
+    @app.route('/api/modules/<key>/channels')
+    def module_channels(key):
+        r = _check_token(write=False)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        return jsonify({'ok': True, 'key': key,
+                        'channels': service.channels(key)})
+
+    @app.route('/api/modules/<key>/channels', methods=['POST'])
+    def module_channel_add(key):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        body = _json_body()
+        res = service.submit_command(key, 'add_channel', body,
+                                     timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
+    @app.route('/api/modules/<key>/channels/<int:cid>', methods=['PATCH'])
+    def module_channel_update(key, cid):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        body = _json_body()
+        body['channel_id'] = cid
+        res = service.submit_command(key, 'update_channel', body,
+                                     timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
+    @app.route('/api/modules/<key>/channels/<int:cid>', methods=['DELETE'])
+    def module_channel_remove(key, cid):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        res = service.submit_command(
+            key, 'remove_channel', {'channel_id': cid},
+            timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
+    @app.route('/api/modules/<key>/channels/<int:cid>/connect', methods=['POST'])
+    def module_channel_connect(key, cid):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        res = service.submit_command(
+            key, 'connect', {'channel_id': cid}, timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
+    @app.route('/api/modules/<key>/channels/<int:cid>/disconnect', methods=['POST'])
+    def module_channel_disconnect(key, cid):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        res = service.submit_command(
+            key, 'disconnect', {'channel_id': cid}, timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
     @app.route('/api/modules/<key>/series')
     def module_series(key):
         r = _check_token(write=False)
@@ -177,8 +251,10 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
             limit = int(request.args.get('limit', 2000))
         except ValueError:
             return _error(400, 'bad_request', 'limit 必须是整数')
+        limit = max(1, limit)
         return jsonify({'ok': True, 'key': key,
-                        'points': service.series(key, limit=max(1, limit))})
+                        'points': service.series(key, limit=limit),
+                        'channels': service.series_channels(key, limit=limit)})
 
     @app.route('/api/modules/<key>/export.csv')
     def module_csv(key):
