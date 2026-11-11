@@ -17,7 +17,7 @@ import numpy as np
 
 from core import (
     SensorKernel, load_sensor_config, save_sensor_config,
-    SERIAL_AVAILABLE, get_logger,
+    SERIAL_AVAILABLE, EVENT_CHANNELS_CHANGED, get_logger,
 )
 
 log = get_logger('voltage_sensor_kernel')
@@ -371,6 +371,7 @@ class VoltageKernel(SensorKernel):
             self.recompute_voltage_data()
         log.info("去皮：%s", "; ".join(parts))
         self.save_config()
+        self._publish(EVENT_CHANNELS_CHANGED)
         return {'ok': True, 'message': f'已去皮（{"; ".join(parts)}）'}
 
     def recompute_voltage_data(self):

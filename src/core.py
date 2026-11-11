@@ -1053,7 +1053,8 @@ class SensorKernel:
                 self.clear_channel_data(ch)
             self._t0_mono = None
             self._seq = 0
-        self._publish(EVENT_CHANNELS_CHANGED)
+        # cleared=True 供 View 区分「清空数据」与普通通道变更，重置数据展示控件
+        self._publish(EVENT_CHANNELS_CHANGED, None, {'cleared': True})
         return {'ok': True, 'message': '已清除数据'}
 
     def _handle_line(self, cid, line):

@@ -6314,6 +6314,30 @@ def sync_kernel_channel_row(refs, channel):
         connected = bool(getattr(channel, 'connected', False))
         btn.setText("断开" if connected else "连接")
 
+    name_edit = refs.get('name_edit')
+    if name_edit is not None and name_edit.hasFocus():
+        name_edit = None
+    if name_edit is not None and name_edit.text() != channel.name:
+        name_edit.blockSignals(True)
+        name_edit.setText(channel.name or '')
+        name_edit.blockSignals(False)
+
+    card = refs.get('card')
+    if card is not None:
+        # FluentCard 的标题在内部 HeaderSettingCard 上（card.card.titleLabel）
+        try:
+            card.card.setTitle(channel.name)
+        except Exception:
+            pass
+
+    color_combo = refs.get('color_combo')
+    if color_combo is not None:
+        idx = color_combo.findData(channel.color)
+        if idx >= 0 and color_combo.currentIndex() != idx:
+            color_combo.blockSignals(True)
+            color_combo.setCurrentIndex(idx)
+            color_combo.blockSignals(False)
+
 
 def sync_kernel_channels(view):
     """按内核通道列表增删 View 的连接卡/实时行。
@@ -6353,6 +6377,24 @@ def sync_kernel_channels(view):
             view._build_channel_card(ch)
             view._build_live_row(ch)
         sync_kernel_channel_row(rows.get(ch.id), ch)
+        apply_mode = getattr(view, '_apply_channel_mode_visibility', None)
+        if callable(apply_mode):
+            try:
+                apply_mode(ch)
+            except Exception:
+                pass
+        live = live_rows.get(ch.id)
+        if live:
+            label = live.get('name_label')
+            if label is not None and label.text() != ch.name:
+                label.setText(ch.name)
+        # 各模块可选钩子：把通道颜色同步到实时行的大字标签
+        apply_color = getattr(view, '_apply_channel_color', None)
+        if callable(apply_color):
+            try:
+                apply_color(ch)
+            except Exception:
+                pass
 
     for name in (
         '_refresh_chart_visibility_row', '_update_delete_btns',

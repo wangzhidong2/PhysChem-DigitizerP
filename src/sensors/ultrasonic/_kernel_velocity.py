@@ -13,7 +13,8 @@ View（ultrasonic_velocity.py）只负责控件；本文件负责：
 
 from core import (
     SensorKernel, load_sensor_config, save_sensor_config,
-    SERIAL_AVAILABLE, EVENT_SAMPLE_RECORDED, get_logger,
+    SERIAL_AVAILABLE, EVENT_SAMPLE_RECORDED, EVENT_CHANNELS_CHANGED,
+    get_logger,
 )
 
 log = get_logger('ultrasonic_velocity_kernel')
@@ -277,6 +278,7 @@ class VelocityKernel(SensorKernel):
         except (TypeError, ValueError):
             return {'ok': False, 'message': '采样窗口无效'}
         self.save_config()
+        self._publish(EVENT_CHANNELS_CHANGED)
         return {'ok': True, 'window_size': self.window_size,
                 'message': f'采样窗口已设为 {self.window_size} 点'}
 

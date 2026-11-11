@@ -515,8 +515,20 @@ class ForceSensorWidget(QWidget):
 
     def on_unit_changed(self, index):
         unit_list = ["g", "kg", "N"]
-        self.current_unit = unit_list[index]
-        self.kernel.set_unit(self.current_unit)
+        self.kernel.set_unit(unit_list[index])
+        self._sync_module_settings()
+        self.update_stats()
+        self.update_chart()
+
+    def _sync_module_settings(self):
+        """把内核模块级设置（显示单位）同步回界面。"""
+        self.current_unit = self.kernel.current_unit
+        combo = getattr(self, 'unit_combo', None)
+        if combo is not None:
+            idx = {"g": 0, "kg": 1, "N": 2}.get(self.current_unit, 0)
+            combo.blockSignals(True)
+            combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
         main = self._main_channel()
         calibrated = main.calibrated if main is not None else False
         self.current_unit_label.setText(
@@ -524,13 +536,10 @@ class ForceSensorWidget(QWidget):
             + ("（未校准则显示原始值）" if not calibrated
                else f"（校准比例={main.scale:.6f}）")
         )
-        # 逐路刷新实时行（显示单位变了，换算后的显示值要跟着变）
         for ch in self.channels:
             live = self._live_rows.get(ch.id)
             if live and ch.force_data:
                 live['force_label'].setText(self._format_force_value(ch))
-        self.update_stats()
-        self.update_chart()
 
     # ============================================================
     # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
@@ -857,6 +866,12 @@ class ForceSensorWidget(QWidget):
         combo.setCurrentIndex(idx if idx >= 0 else 0)
         combo.blockSignals(False)
 
+    def _apply_channel_color(self, ch):
+        """把通道曲线颜色同步到该路实时行的大字标签。"""
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['force_label'].setStyleSheet(f"color: {ch.color};")
+
     def _on_channel_color_changed(self, ch, index):
         """颜色下拉选中：预设色直接生效；「自定义…」弹 Fluent 取色对话框。"""
         refs = self._rows.get(ch.id)
@@ -901,7 +916,7 @@ class ForceSensorWidget(QWidget):
         refs = self._rows.get(ch.id)
         if refs:
             try:
-                refs['card'].titleLabel.setText(ch.name)
+                refs['card'].card.setTitle(ch.name)
             except Exception:
                 pass
         live = self._live_rows.get(ch.id)
@@ -1220,6 +1235,10 @@ class ForceSensorWidget(QWidget):
     def start_collection(self):
         """开始数据采集（数据清空与时间基准由内核负责）。"""
         self.kernel.start_collection()
+        self._apply_started_ui()
+
+    def _apply_started_ui(self):
+        """采集已开始：清空上一轮显示并切到采集状态。"""
         self._collecting = True
         self.data_text.clear()
         log.info("开始采集（已连接 %d 路）",
@@ -1227,7 +1246,6 @@ class ForceSensorWidget(QWidget):
                      if getattr(ch, 'connected', False)))
         self._refresh_collect_btn()
         self.save_btn.setEnabled(False)
-
         self.current_force_label.setText("力/质量: 采集中...")
         for ch in self.channels:
             live = self._live_rows.get(ch.id)
@@ -1237,12 +1255,15 @@ class ForceSensorWidget(QWidget):
     def stop_collection(self):
         """停止数据采集。"""
         self.kernel.stop_collection()
+        self._apply_stopped_ui()
+
+    def _apply_stopped_ui(self):
+        """采集已停止：刷新按钮与汇总标签。"""
         self._collecting = False
         self._refresh_collect_btn()
         total = sum(len(ch.force_data) for ch in self.channels)
         self.save_btn.setEnabled(total > 0)
         log.info("停止采集，共 %d 个数据点", total)
-
         if total > 0:
             main = self._main_channel()
             if main is not None and main.force_data:
@@ -1324,13 +1345,11 @@ class ForceSensorWidget(QWidget):
             return
 
         if kind == EVENT_COLLECTION_CHANGED:
-            self._collecting = bool(data.get('collecting'))
-            self._refresh_collect_btn()
-            if self._collecting:
-                self.save_btn.setEnabled(False)
-            else:
-                total = sum(len(c.force_data) for c in self.channels)
-                self.save_btn.setEnabled(total > 0)
+            collecting = bool(data.get('collecting'))
+            if collecting and not self._collecting:
+                self._apply_started_ui()
+            elif not collecting and self._collecting:
+                self._apply_stopped_ui()
             return
 
         if kind == 'tare_done' and ch is not None:
@@ -1350,6 +1369,12 @@ class ForceSensorWidget(QWidget):
 
         if kind == EVENT_CHANNELS_CHANGED:
             sync_kernel_channels(self)
+            if data.get('cleared'):
+                self._apply_cleared_ui()
+            self._sync_module_settings()
+            self.update_cal_status_label()
+            self.update_stats()
+            self.update_chart()
             return
 
         if kind == EVENT_ERROR and ch is not None:
@@ -1439,8 +1464,15 @@ class ForceSensorWidget(QWidget):
     def clear_data(self):
         """清除数据（由内核清空各通道缓存）。"""
         self.kernel.clear_data()
-        self.data_text.clear()
+        self._apply_cleared_ui()
         log.info("已清除数据")
+
+    def _apply_cleared_ui(self):
+        """数据已清空：重置本模块的数据展示控件。"""
+        # 内核 clear 不清采集状态；按钮跟随内核，避免显示与实际相反
+        self._collecting = bool(getattr(self.kernel, 'collecting', False))
+        self._refresh_collect_btn()
+        self.data_text.clear()
         self.stats_label.setText("统计信息: 暂无数据")
         for ch in self.channels:
             live = self._live_rows.get(ch.id)
