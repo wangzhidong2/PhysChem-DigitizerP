@@ -6314,3 +6314,56 @@ def sync_kernel_channel_row(refs, channel):
         connected = bool(getattr(channel, 'connected', False))
         btn.setText("断开" if connected else "连接")
 
+
+def sync_kernel_channels(view):
+    """按内核通道列表增删 View 的连接卡/实时行。
+
+    桌面 UI 原本只在本地 add_channel 时创建卡片；网页端直接调内核新增通道后，
+    View 必须在这里补建/移除对应控件，才能真正与内核保持一致。
+    """
+    kernel = getattr(view, 'kernel', None)
+    if kernel is None:
+        return
+    rows = getattr(view, '_rows', None)
+    live_rows = getattr(view, '_live_rows', None)
+    if rows is None or live_rows is None:
+        return
+
+    current_ids = {ch.id for ch in kernel.channels}
+
+    # 删除内核里已经不存在的通道控件
+    for cid in list(rows.keys()):
+        if cid in current_ids:
+            continue
+        refs = rows.pop(cid, None) or {}
+        card = refs.get('card')
+        layout = getattr(view, 'channels_layout', None)
+        if card is not None and layout is not None:
+            layout.removeWidget(card)
+            card.deleteLater()
+        live = live_rows.pop(cid, None)
+        live_layout = getattr(view, '_live_layout', None)
+        if live is not None and live_layout is not None:
+            live_layout.removeWidget(live['row'])
+            live['row'].deleteLater()
+
+    # 补建缺失通道，并同步已有通道的控件状态
+    for ch in kernel.channels:
+        if ch.id not in rows:
+            view._build_channel_card(ch)
+            view._build_live_row(ch)
+        sync_kernel_channel_row(rows.get(ch.id), ch)
+
+    for name in (
+        '_refresh_chart_visibility_row', '_update_delete_btns',
+        '_sync_compat_aliases', '_refresh_active_channel_combo',
+        '_refresh_summary_text', '_refresh_data_card_height',
+        '_sync_conn_card_height',
+    ):
+        fn = getattr(view, name, None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception:
+                pass
+

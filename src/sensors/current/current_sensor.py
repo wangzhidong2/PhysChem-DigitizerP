@@ -51,6 +51,7 @@ from core import (
 )
 from core_ui import (
     sync_kernel_channel_row,
+    sync_kernel_channels,
     fluent_message_box,
     ChartPanel,
     SampleRateComboBox,
@@ -1429,8 +1430,7 @@ class CurrentSensorWidget(QWidget):
             return
 
         if kind == EVENT_CHANNELS_CHANGED:
-            for ch in self.channels:
-                sync_kernel_channel_row(self._rows.get(ch.id), ch)
+            sync_kernel_channels(self)
             self._sync_module_settings()
             self.update_zero_status_label()
             self._refresh_live_values()

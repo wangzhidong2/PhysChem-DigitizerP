@@ -949,6 +949,8 @@ class SensorKernel:
         ch = self.get_channel(cid)
         if ch is None:
             return False
+        if len(self.channels) <= 1:
+            return False
         if getattr(ch, 'connected', False):
             self.disconnect(cid)
         self.channels.remove(ch)
@@ -1255,7 +1257,9 @@ class SensorKernel:
                 if ch is None:
                     return {'ok': False, 'message': '通道不存在'}
                 name = ch.name
-                self.remove_channel(cid)
+                if not self.remove_channel(cid):
+                    return {'ok': False,
+                            'message': '至少保留一个通道，无法删除'}
                 return {'ok': True, 'message': f'{name} 已删除'}
             if action == 'update_channel':
                 cid = params.get('channel_id', params.get('cid'))
