@@ -253,6 +253,8 @@ def get_logger(name='core'):
 
 #: core.py 自身日志（来源显示为 core；子 logger 通过根 logger 的 handler 输出）
 log = get_logger('core')
+
+
 def get_log_file_path():
     """logs.json 的绝对路径（src/ 源码目录，与 sensor_config.json 同目录）。
 
@@ -262,11 +264,15 @@ def get_log_file_path():
     if override:
         return override
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), LOG_FILENAME)
+
+
 def _apply_log_level():
     level = _current_log_level()
     for h in (_console_log_handler, _json_log_handler):
         if h is not None:
             h.setLevel(level)
+
+
 def _get_config_file_path():
     """获取统一配置文件的绝对路径。
 
@@ -275,6 +281,40 @@ def _get_config_file_path():
     # core.py 与 main.py 同在 src/ 目录，直接用其所在目录。
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(here, CONFIG_FILENAME)
+
+
+#: 进程内配置读写锁：UI / Flask / 各模块内核共用同一个 sensor_config.json
+_config_lock = threading.RLock()
+
+
+def _atomic_write_json(path, data):
+    """原子写入 JSON：同目录临时文件 → fsync → os.replace。
+
+    读方只会看到完整的旧文件或完整的新文件，不会读到写了一半的 JSON。
+    Windows 上目标文件正被读取时 os.replace 可能短暂失败，做几次短重试。
+    """
+    import tempfile
+    directory = os.path.dirname(path)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, path)
+                return
+            except PermissionError:
+                if attempt >= 4:
+                    raise
+                time.sleep(0.02)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def load_sensor_config(module_name):
@@ -327,16 +367,15 @@ def save_sensor_config(module_name, config_dict):
 
     config_path = _get_config_file_path()
     try:
-        if os.path.exists(config_path):
-            with open(config_path, 'r', encoding='utf-8') as f:
-                all_config = json.load(f)
-        else:
-            all_config = {}
+        with _config_lock:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    all_config = json.load(f)
+            else:
+                all_config = {}
 
-        all_config[module_name] = config_dict
-
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(all_config, f, ensure_ascii=False, indent=2)
+            all_config[module_name] = config_dict
+            _atomic_write_json(config_path, all_config)
 
         log.info("[%s] 配置已保存到 %s", module_name, config_path)
         return True
@@ -361,8 +400,9 @@ def export_sensor_config(target_dir):
     if not os.path.exists(config_path):
         return False, "配置文件不存在，无需导出"
     try:
-        dest = os.path.join(target_dir, CONFIG_FILENAME)
-        shutil.copy2(config_path, dest)
+        with _config_lock:
+            dest = os.path.join(target_dir, CONFIG_FILENAME)
+            shutil.copy2(config_path, dest)
         log.info("配置已导出到 %s", dest)
         return True, dest
     except Exception as e:
@@ -394,21 +434,8 @@ def import_sensor_config(source_file):
 
     config_path = _get_config_file_path()
     try:
-        # 先写临时文件再重命名，避免 Windows 文件锁导致 PermissionError
-        import tempfile
-        dir_name = os.path.dirname(config_path)
-        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, config_path)
-        except Exception:
-            # 清理临时文件
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        with _config_lock:
+            _atomic_write_json(config_path, data)
         log.info("配置已从 %s 导入到 %s", source_file, config_path)
         return True, f"已导入 {len(data)} 个模块的配置"
     except Exception as e:
@@ -427,17 +454,16 @@ def clear_sensor_config():
     """
     config_path = _get_config_file_path()
     try:
-        if os.path.exists(config_path):
-            os.remove(config_path)
-            log.info("已清除用户配置文件：%s", config_path)
-        else:
-            log.info("配置文件不存在，无需清除")
+        with _config_lock:
+            if os.path.exists(config_path):
+                os.remove(config_path)
+                log.info("已清除用户配置文件：%s", config_path)
+            else:
+                log.info("配置文件不存在，无需清除")
         return True
     except Exception as e:
         log.warning("清除配置文件失败: %s", e)
         return False
-
-
 
 
 def list_serial_ports():

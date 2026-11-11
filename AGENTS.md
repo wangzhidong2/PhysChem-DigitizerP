@@ -10,7 +10,7 @@
 - **禁止构造原生 Qt 控件**：不得使用 `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`，一律用 FluentWidgets 对应组件。
 - **禁止改 `main_legacy.py`**：迁移前的单文件存档，不再维护。新功能只改 `main.py` + 模块文件。
 - **禁止基于 `NavButton` / `SidebarWidget` 开发**：迁移前的遗留侧边栏，`MainWindow` 已改用 `FluentWindow` 自带导航。
-- **禁止在 `sensor_config.json` 之外散落校准数据**：校准参数统一经 `load_sensor_config()` / `save_sensor_config()` 读写。
+- **禁止在 `sensor_config.json` 之外散落校准数据**：校准参数统一经 `load_sensor_config()` / `save_sensor_config()` 读写。`save_sensor_config()` 内部有进程内锁 + 临时文件原子替换，禁止绕过它直接写该文件。
 - **禁止把运行产物提交进仓库**：`sensor_config.json` / `app_config.json` / `logs.json` / `build/` / `dist/` 均已被 `.gitignore` 忽略。
 
 ## 1.5 公共层分工
