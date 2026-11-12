@@ -770,17 +770,17 @@ class VoltageSensorWidget(QWidget):
         if src['adc_bits'] != 16 and src['ads1115_mode']:
             self.ads1115_check.setChecked(False)
         self._sync_adc_mode_panels(self._adc_param_source(ch))
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_divider_changed(self, value):
         self._write_adc_param('divider_ratio', value)
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_amp_changed(self, value):
         self._write_adc_param('amp_ratio', value)
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_hx711_mode_changed(self, checked):
@@ -794,17 +794,17 @@ class VoltageSensorWidget(QWidget):
             self.adc_bits_combo.setCurrentIndex(8)
             self._write_adc_param('adc_bits', 24)
         self._sync_adc_mode_panels(self._adc_param_source(ch))
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_hx711_avdd_changed(self, value):
         self._write_adc_param('hx711_avdd', value)
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_hx711_channel_changed(self, index):
         self._write_adc_param('hx711_channel', 'B' if index == 0 else 'A')
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_ads1115_mode_changed(self, checked):
@@ -816,26 +816,26 @@ class VoltageSensorWidget(QWidget):
         if checked:
             self.adc_bits_combo.setCurrentIndex(4)  # 16 位（触发 on_adc_bits_changed 写回）
         self._sync_adc_mode_panels(self._adc_param_source(ch))
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_ads1115_pga_changed(self, index):
         """切换 ADS1115 PGA 量程"""
         self._write_adc_param('ads1115_pga', self.ads1115_pga_combo.itemText(index))
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_ads1115_channel_changed(self, index):
         """切换 ADS1115 输入通道（MUX）"""
         self._write_adc_param('ads1115_channel', self.ads1115_channel_combo.itemText(index))
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_unit_changed(self, index):
         """切换显示单位：kV / V / mV。内部数据不变，仅刷新显示"""
         unit_map = {0: 'kV', 1: 'V', 2: 'mV'}
         self.current_unit = unit_map.get(index, 'V')
-        self.save_config()
+        self.kernel.notify_change()
         # 刷新实时数据/统计/图表的显示
         self.update_stats()
         self.update_chart()
@@ -1118,7 +1118,7 @@ class VoltageSensorWidget(QWidget):
     def _on_channel_visible_toggled(self, ch, checked):
         """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
         ch.visible = bool(checked)
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _sync_conn_card_height(self):
@@ -1277,6 +1277,12 @@ class VoltageSensorWidget(QWidget):
         combo.setCurrentIndex(idx if idx >= 0 else 0)
         combo.blockSignals(False)
 
+    def _apply_channel_color(self, ch):
+        """把通道曲线颜色同步到该路实时行的大字标签。"""
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['voltage_label'].setStyleSheet(f"color: {ch.color};")
+
     def _on_channel_color_changed(self, ch, index):
         """颜色下拉选中：预设色直接生效；「自定义…」弹 Fluent 取色对话框。"""
         refs = self._rows.get(ch.id)
@@ -1307,7 +1313,7 @@ class VoltageSensorWidget(QWidget):
             combo.blockSignals(False)
         else:
             ch.color = data
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _on_channel_name_edited(self, ch, text):
@@ -1326,7 +1332,7 @@ class VoltageSensorWidget(QWidget):
             live['raw_label'].setText(f"{ch.name} ADC: ------")
         self._refresh_active_channel_combo()
         self._refresh_chart_visibility_row()
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _fill_channel_ports(self, ch, combo):
@@ -1355,7 +1361,7 @@ class VoltageSensorWidget(QWidget):
     def _on_channel_mode_changed(self, ch, index):
         ch.mode = 'simulator' if index == 1 else 'serial'
         self._apply_channel_mode_visibility(ch)
-        self.save_config()
+        self.kernel.notify_change(ch.id)
 
     def _apply_channel_mode_visibility(self, ch):
         """模拟器模式下隐藏本路的串口标签/下拉与刷新按钮。"""
@@ -1652,7 +1658,7 @@ class VoltageSensorWidget(QWidget):
         ch.sample_interval_ms = interval_ms
         if self.channels and ch is self.channels[0]:
             self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
-        self.save_config()
+        self.kernel.notify_change(ch.id)
 
     def save_data(self):
         """保存数据到文件（由内核生成 CSV）。"""

@@ -6,11 +6,13 @@ flaskserver.server — Flask app、路由、token 校验、静态托管
 不持有数据、不认识任何具体传感器、不操作任何 Qt 控件。
 """
 
+import json
 import os
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify, request, Response, send_file
+from flask import (Flask, jsonify, request, Response, send_file,
+                   stream_with_context)
 
 _WEB_DIR = Path(__file__).parent / 'web'
 #: 内嵌字体目录：与主程序共用 src/assets/fonts/（本文件在 src/flaskserver/ 下，上溯两级为 src/）
@@ -165,6 +167,56 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
             return _error(404, 'module_not_found', '模块不存在: %s' % key)
         snap['ok'] = True
         return jsonify(snap)
+
+    # --------------------------------------------------------
+    # 事件推送（SSE）：桌面 GUI / 网页 / CLI 任一处改内核都会广播
+    #
+    # 事件统一为 {seq, key, kind, channel_id, data, ts}：
+    # - channels_changed / collection_changed / channel_state / error 为状态事件
+    # - data 为高频采样合并后的「有新数据」通知（每路最多 2 次/秒）
+    # 客户端按 Last-Event-ID 断线续传；落后超过环形缓冲时收到 reset 事件。
+    # --------------------------------------------------------
+    @app.route('/api/events')
+    def events():
+        r = _check_token(write=False)
+        if r is not None:
+            return r
+        wait_events = getattr(service, 'wait_events', None)
+        if not callable(wait_events):
+            return _error(503, 'not_supported', '当前服务不支持事件推送')
+        current_seq = getattr(service, 'current_seq', None)
+        start = current_seq() if callable(current_seq) else 0
+        raw = request.args.get('since')
+        if raw is None or raw == '':
+            raw = request.headers.get('Last-Event-ID')
+        try:
+            since = int(raw) if raw not in (None, '') else start
+        except (TypeError, ValueError):
+            since = start
+
+        def _stream():
+            cursor = since
+            yield 'retry: 3000\n\n'
+            while True:
+                batch, seq, gap = wait_events(cursor, timeout=15.0)
+                if gap:
+                    cursor = seq
+                    yield 'event: reset\ndata: {}\n\n'
+                    continue
+                if not batch:
+                    # 心跳：保持连接不被代理/浏览器掐断
+                    yield ': ping %d\n\n' % int(time.time())
+                    continue
+                for event in batch:
+                    cursor = event.get('seq', cursor)
+                    yield 'id: %d\nevent: kernel\ndata: %s\n\n' % (
+                        cursor, json.dumps(event, ensure_ascii=False))
+
+        resp = Response(stream_with_context(_stream()),
+                        mimetype='text/event-stream')
+        resp.headers['Cache-Control'] = 'no-cache'
+        resp.headers['X-Accel-Buffering'] = 'no'
+        return resp
 
     @app.route('/api/modules/<key>/channels')
     def module_channels(key):

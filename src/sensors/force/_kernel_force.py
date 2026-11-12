@@ -240,6 +240,7 @@ class ForceKernel(SensorKernel):
         if self.channels and ch is self.channels[0]:
             self.sample_interval_ms = ch.sample_interval_ms
         self.save_config()
+        self._publish(EVENT_CHANNELS_CHANGED, ch.id)
         return {'ok': True, 'sample_interval_ms': ch.sample_interval_ms}
 
     # ---------------- 物理 ----------------

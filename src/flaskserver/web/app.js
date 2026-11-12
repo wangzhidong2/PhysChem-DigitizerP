@@ -184,6 +184,8 @@ function setToken(t) {
   } catch (e) { /* localStorage 不可用时仅本次会话有效 */ }
   tokenInput.value = t || '';
   updateAuthUI();
+  // 密钥变化后重建事件流（局域网模式下读操作也要带 token）
+  if (pollingStarted) startEventStream();
 }
 
 /* ---------- 数据源（唯一出口） ---------- */
@@ -653,6 +655,87 @@ function togglePanel() {
   else closePanel();
 }
 
+/* ---------- 实时事件（SSE） ----------
+   桌面 GUI / 网页 / CLI 任一处的修改都由内核广播；这里收到后立即刷新
+   对应窗口，轮询退化为兜底（SSE 正常且刚有事件时不重复拉取）。 */
+let sse = null;
+let sseAlive = false;
+let lastKernelEventAt = 0;
+const dirtyKeys = new Set();       // 页面隐藏期间待刷新的窗口
+const eventTimers = new Map();     // key -> 合并密集事件的定时器
+let overviewTimer = null;
+
+function startEventStream() {
+  if (typeof EventSource === 'undefined') return;
+  if (sse) {
+    try { sse.close(); } catch (e) { /* 忽略 */ }
+    sse = null;
+  }
+  let url = '/api/events';
+  const tok = getToken();
+  if (tok) url += '?token=' + encodeURIComponent(tok);
+  try {
+    sse = new EventSource(url);
+  } catch (e) {
+    sse = null;
+    return;
+  }
+  sse.addEventListener('open', () => { sseAlive = true; });
+  sse.addEventListener('error', () => { sseAlive = false; });
+  sse.addEventListener('reset', () => {   // 落后太多：整页状态重新拉取
+    sseAlive = true;
+    refreshOverview();
+    refreshAllWindows();
+  });
+  sse.addEventListener('kernel', (ev) => {
+    sseAlive = true;
+    lastKernelEventAt = Date.now();
+    let data;
+    try { data = JSON.parse(ev.data || '{}'); } catch (e) { return; }
+    onKernelEvent(data);
+  });
+}
+
+function onKernelEvent(ev) {
+  const kind = ev.kind || '';
+  if (kind === 'error') {
+    const m = moduleMap.get(ev.key);
+    toast(((m && m.name) || ev.key || '模块') + ' 设备错误：' +
+      ((ev.data && ev.data.message) || '未知错误'));
+  }
+  if (kind === 'channels_changed' || kind === 'collection_changed' ||
+      kind === 'channel_state' || kind === 'error') {
+    scheduleOverview();
+  }
+  if (ev.key) scheduleWindowRefresh(ev.key);
+}
+
+/** 模块列表/图标状态刷新（500ms 去抖，避免连续事件打爆请求） */
+function scheduleOverview() {
+  if (overviewTimer) return;
+  overviewTimer = setTimeout(() => {
+    overviewTimer = null;
+    refreshOverview();
+  }, 500);
+}
+
+/** 单个窗口立即刷新（120ms 内同一窗口的密集事件合并为一次） */
+function scheduleWindowRefresh(key, delay) {
+  if (!windows.has(key)) return;
+  if (document.hidden) {             // 隐藏时不刷新，回到前台再补
+    dirtyKeys.add(key);
+    return;
+  }
+  if (eventTimers.has(key)) return;
+  eventTimers.set(key, setTimeout(() => {
+    eventTimers.delete(key);
+    const w = windows.get(key);
+    if (!w) return;
+    if (w.busy) { scheduleWindowRefresh(key, 150); return; }
+    refreshWindow(w);
+  }, delay === undefined ? 120 : delay));
+}
+
 /* ---------- 窗口数据刷新 ---------- */
 function refreshAllWindows() {
   windows.forEach((w) => refreshWindow(w));
@@ -1008,7 +1091,8 @@ function drawChart(w, points, xLabel, yLabel, channels) {
   const split = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)';
   const c = getChart(w);
 
-  const channelList = Array.isArray(channels) ? channels : [];
+  const channelList = (Array.isArray(channels) ? channels : [])
+    .filter((ch) => ch.visible !== false);   // 桌面端隐藏的通道网页端也隐藏
   const seriesList = channelList.length
     ? channelList.map((ch) => ({
         name: ch.name || ('通道' + ch.id),
@@ -1179,15 +1263,28 @@ function startPolling() {
   pollingStarted = true;
   refreshOverview();
   refreshWebSettings();          // 字体设置：进桌面后拉一次并填充下拉框
+  startEventStream();            // 实时推送：任一端的修改立即反映到各端
   setInterval(refreshOverview, POLL_OVERVIEW_MS);
   setInterval(() => {
     if (document.hidden) return;
+    // SSE 正常且刚收到事件时跳过：事件已触发定向刷新，避免重复请求
+    if (sseAlive && Date.now() - lastKernelEventAt < 5000) return;
     refreshAllWindows();
   }, POLL_DETAIL_MS);
 }
 
 function bindEvents() {
   startBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
+  // 切回前台：补刷后台期间攒下的窗口，并重建已关闭的事件流
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (dirtyKeys.size) {
+      const keys = [...dirtyKeys];
+      dirtyKeys.clear();
+      keys.forEach((k) => scheduleWindowRefresh(k));
+    }
+    if (sse && sse.readyState === 2) startEventStream();
+  });
   $('panel-close').addEventListener('click', closePanel);
   authBtn.addEventListener('click', (e) => {
     e.stopPropagation();

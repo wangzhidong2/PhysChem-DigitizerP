@@ -653,7 +653,7 @@ class CurrentSensorWidget(QWidget):
     def on_range_changed(self, index):
         key_map = {0: '5A', 1: '20A', 2: '30A'}
         self._write_acs_param('acs_range', key_map.get(index, '5A'))
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_current_mode_changed(self, index):
@@ -667,7 +667,7 @@ class CurrentSensorWidget(QWidget):
     def on_adc_bits_changed(self, index):
         bits_map = {0: 8, 1: 10, 2: 12, 3: 14, 4: 16}
         self._write_acs_param('adc_bits', bits_map.get(index, 12))
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_vcc_changed(self, value):
@@ -680,7 +680,7 @@ class CurrentSensorWidget(QWidget):
             self.vquies_spin.setValue(ch.v_quiescent)
             self.vquies_spin.blockSignals(False)
             self.update_zero_status_label()
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_vquiescent_changed(self, value):
@@ -688,11 +688,11 @@ class CurrentSensorWidget(QWidget):
         self._write_acs_param('v_quiescent', value)
         self._write_acs_param('zero_cal_active', True)
         self.update_zero_status_label()
-        self.save_config()
+        self.kernel.notify_change()
 
     def on_divider_changed(self, value):
         self._write_acs_param('divider_ratio', value)
-        self.save_config()
+        self.kernel.notify_change()
         self.update_range_display()
 
     def on_unit_changed(self, index):
@@ -955,7 +955,7 @@ class CurrentSensorWidget(QWidget):
     def _on_channel_visible_toggled(self, ch, checked):
         """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
         ch.visible = bool(checked)
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _sync_conn_card_height(self):
@@ -1150,7 +1150,7 @@ class CurrentSensorWidget(QWidget):
             combo.blockSignals(False)
         else:
             ch.color = data
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
         # 实时行大字颜色同步为新通道色
         live = self._live_rows.get(ch.id)
@@ -1173,7 +1173,7 @@ class CurrentSensorWidget(QWidget):
             live['raw_label'].setText(f"{ch.name} ADC: ------")
         self._refresh_active_channel_combo()
         self._refresh_chart_visibility_row()
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _fill_channel_ports(self, ch, combo):
@@ -1202,7 +1202,7 @@ class CurrentSensorWidget(QWidget):
     def _on_channel_mode_changed(self, ch, index):
         ch.mode = 'simulator' if index == 1 else 'serial'
         self._apply_channel_mode_visibility(ch)
-        self.save_config()
+        self.kernel.notify_change(ch.id)
 
     def _apply_channel_mode_visibility(self, ch):
         """模拟器模式下隐藏本路的串口标签/下拉与刷新按钮。"""
@@ -1530,7 +1530,7 @@ class CurrentSensorWidget(QWidget):
         if self.channels and ch is self.channels[0]:
             self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
             self.kernel.sample_interval_ms = interval_ms
-        self.save_config()
+        self.kernel.notify_change(ch.id)
 
     def save_data(self):
         """保存数据到文件（由内核生成 CSV）。"""

@@ -525,7 +525,7 @@ class UltrasonicWidget(QWidget):
     def _on_channel_visible_toggled(self, ch, checked):
         """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
         ch.visible = bool(checked)
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _sync_conn_card_height(self):
@@ -720,7 +720,7 @@ class UltrasonicWidget(QWidget):
             combo.blockSignals(False)
         else:
             ch.color = data
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
         # 实时行大字颜色同步为新通道色
         live = self._live_rows.get(ch.id)
@@ -742,7 +742,7 @@ class UltrasonicWidget(QWidget):
             live['name_label'].setText(ch.name)
             live['echo_label'].setText(f"{ch.name} 回波: ---- µs")
         self._refresh_chart_visibility_row()
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _fill_channel_ports(self, ch, combo):
@@ -771,7 +771,7 @@ class UltrasonicWidget(QWidget):
     def _on_channel_mode_changed(self, ch, index):
         ch.mode = 'simulator' if index == 1 else 'serial'
         self._apply_channel_mode_visibility(ch)
-        self.save_config()
+        self.kernel.notify_change(ch.id)
 
     def _apply_channel_mode_visibility(self, ch):
         """模拟器模式下隐藏本路的串口标签/下拉与刷新按钮。"""
@@ -1049,7 +1049,7 @@ class UltrasonicWidget(QWidget):
         if self.channels and ch is self.channels[0]:
             self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
             self.kernel.sample_interval_ms = interval_ms
-        self.save_config()
+        self.kernel.notify_change(ch.id)
 
     def save_data(self):
         """保存数据到文件（由内核生成 CSV）。"""

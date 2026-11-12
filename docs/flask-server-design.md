@@ -379,6 +379,13 @@ def api_command(self, action, params):
 | `GET` | `/api/modules/<key>` | 单模块快照（含 `latest` / `params` / `actions`），`?points=N` 附带序列 |
 | `GET` | `/api/modules/<key>/series?limit=N` | 仅序列，默认降采样到 2000 点 |
 | `GET` | `/api/modules/<key>/export.csv` | 当前数据导出（含参数注释头，与模块 `save_data` 同格式） |
+| `GET` | `/api/events?since=N` | 实时事件流（SSE，`text/event-stream`）；不传 `since` 表示从当前时刻开始，断线可用 `Last-Event-ID` 续传 |
+
+`/api/events` 推送 `{seq, key, kind, channel_id, data, ts}`：
+
+- `kind` 取值与内核事件一致：`channels_changed` / `collection_changed` / `channel_state` / `error`（状态事件），以及 `data`（高频采样合并后的「有新数据」通知，每路最多 2 次/秒）。
+- 桌面 GUI、网页、CLI 任一处修改内核状态都会进入同一条事件流；View 的本地修改通过 `SensorKernel.notify_change()` 发布。
+- 客户端落后超过 512 条环形缓冲时收到 `event: reset`，应整页重拉后从最新 `seq` 续传；空闲时每 15 秒收到一行注释心跳。
 
 ### 10.2 控制（需要 token）
 

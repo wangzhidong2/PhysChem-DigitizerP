@@ -25,6 +25,7 @@ import random
 import logging
 import queue
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 
 # pyserial 为可选依赖：未安装时程序仍可运行（模拟器模式不受影响），
@@ -945,6 +946,16 @@ class SensorKernel:
         self._publish(EVENT_CHANNELS_CHANGED, cid)
         return True
 
+    def notify_change(self, cid=None):
+        """本地 UI 直接改了内核状态后调用：保存配置并广播刷新事件。
+
+        View 的本地修改（改名、改色、换模式、改采样间隔、校准、显隐等）
+        与 HTTP / CLI 的修改走同一条事件链路，保证各端（桌面其余窗口、
+        网页、将来的 TUI）都能立即收到刷新通知。
+        """
+        self.save_config()
+        self._publish(EVENT_CHANNELS_CHANGED, cid)
+
     def remove_channel(self, cid):
         ch = self.get_channel(cid)
         if ch is None:
@@ -1321,28 +1332,46 @@ class KernelRegistry:
 
     UI 只负责创建内核并把同一个内核实例注册进来；HTTP 等外部接口直接操作
     内核，不再通过 QWidget、mode_combo、port_combo 等控件反射。
+
+    同时承担进程内的事件汇聚：register() 时订阅该内核的事件总线，把事件
+    追加到带单调序号的环形日志，供 SSE / 长轮询按 Last-Event-ID 续传。
+    这样桌面 GUI、网页、CLI 任一处改内核，其他端都能立即收到刷新通知。
     """
+
+    #: 事件环形缓冲长度；客户端落后超过此长度时下发 reset 让它整页刷新
+    EVENT_LOG_MAX = 512
+    #: 采样事件（每路 10Hz）合并为 data 通知的最小间隔（秒）
+    DATA_EVENT_INTERVAL = 0.5
 
     def __init__(self):
         self._kernels = {}
         self._names = {}
         self._icons = {}
         self._lock = threading.RLock()
+        self._cond = threading.Condition(self._lock)
+        self._seq = 0
+        self._events = deque(maxlen=self.EVENT_LOG_MAX)
+        self._consumers = {}
+        self._data_ts = {}
 
     # ---- 注册 ----
     def register(self, key, name, kernel, icon_path=None):
-        with self._lock:
+        with self._cond:
             self._kernels[key] = kernel
             self._names[key] = name
             if icon_path:
                 self._icons[key] = icon_path
+        self._start_consumer(key, kernel)
         log.info("KernelRegistry 注册模块: %s (%s)", name, key)
 
     def unregister(self, key):
-        with self._lock:
+        with self._cond:
             self._kernels.pop(key, None)
             self._names.pop(key, None)
             self._icons.pop(key, None)
+            consumer = self._consumers.pop(key, None)
+        if consumer:
+            consumer['stop'].set()
 
     def get(self, key):
         with self._lock:
@@ -1354,6 +1383,97 @@ class KernelRegistry:
 
     def icon_path(self, key):
         return self._icons.get(key)
+
+    # ---- 事件汇聚（SSE / 长轮询数据源） ----
+    def _start_consumer(self, key, kernel):
+        """订阅内核事件总线，把事件并入 registry 事件日志。"""
+        try:
+            sub = kernel.subscribe(maxsize=2048)
+        except Exception as e:
+            log.warning("订阅内核事件失败 %s: %s", key, e)
+            return
+        stop = threading.Event()
+
+        def _run():
+            while not stop.is_set():
+                try:
+                    event = sub.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                except Exception:
+                    break
+                try:
+                    self._ingest(key, event)
+                except Exception as e:
+                    log.error("内核事件入队失败 %s: %s", key, e)
+
+        thread = threading.Thread(target=_run, daemon=True,
+                                  name='kernel-events-%s' % key)
+        thread.start()
+        with self._cond:
+            old = self._consumers.get(key)
+            self._consumers[key] = {'thread': thread, 'stop': stop, 'sub': sub}
+        if old:
+            old['stop'].set()
+
+    def _ingest(self, key, event):
+        """把一条内核事件写入环形日志；高频采样事件合并为 data 通知。"""
+        kind = getattr(event, 'kind', '') or ''
+        now = time.time()
+        if kind in (EVENT_SAMPLE_PREVIEW, EVENT_SAMPLE_RECORDED):
+            with self._cond:
+                if now - self._data_ts.get(key, 0.0) < self.DATA_EVENT_INTERVAL:
+                    return
+                self._data_ts[key] = now
+            entry = {'key': key, 'kind': 'data', 'channel_id': None, 'data': {}}
+        else:
+            entry = {'key': key, 'kind': kind,
+                     'channel_id': getattr(event, 'channel_id', None),
+                     'data': dict(getattr(event, 'data', None) or {})}
+        entry['ts'] = round(now, 3)
+        with self._cond:
+            self._seq += 1
+            entry['seq'] = self._seq
+            self._events.append(entry)
+            self._cond.notify_all()
+
+    def current_seq(self):
+        with self._cond:
+            return self._seq
+
+    def wait_events(self, since=0, timeout=20.0, limit=200):
+        """等待序号大于 since 的事件（阻塞至多 timeout 秒）。
+
+        Returns:
+            (events, seq, gap)：events 为事件列表（最多 limit 条）；
+            seq 为当前最新序号；gap=True 表示 since 已落后于环形缓冲，
+            客户端应先整页刷新，再从 seq 续传。
+        """
+        try:
+            since = int(since)
+        except (TypeError, ValueError):
+            since = 0
+        try:
+            limit = max(1, int(limit))
+        except (TypeError, ValueError):
+            limit = 200
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._cond:
+            while True:
+                if since > self._seq:
+                    # 服务重启后客户端仍带旧序号：直接让它从头同步
+                    return [], self._seq, True
+                if self._events:
+                    oldest = self._events[0].get('seq', 0)
+                    gap = since + 1 < oldest
+                    events = [e for e in self._events
+                              if e.get('seq', 0) > since][:limit]
+                    if events or gap:
+                        return events, self._seq, gap
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    return [], self._seq, False
+                self._cond.wait(remain)
 
     # ---- 只读 ----
     def modules(self):
@@ -1411,6 +1531,7 @@ class KernelRegistry:
                 'id': ch.id,
                 'name': ch.name,
                 'color': ch.color,
+                'visible': bool(getattr(ch, 'visible', True)),
                 'points': points,
             })
         return out

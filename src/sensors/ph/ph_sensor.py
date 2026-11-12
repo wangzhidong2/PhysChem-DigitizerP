@@ -569,7 +569,7 @@ class PhSensorWidget(QWidget):
     def _on_channel_visible_toggled(self, ch, checked):
         """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
         ch.visible = bool(checked)
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _sync_conn_card_height(self):
@@ -764,7 +764,7 @@ class PhSensorWidget(QWidget):
             combo.blockSignals(False)
         else:
             ch.color = data
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
         # 实时行大字颜色同步为新通道色
         live = self._live_rows.get(ch.id)
@@ -787,7 +787,7 @@ class PhSensorWidget(QWidget):
             live['adc_label'].setText(f"{ch.name} ADC: ----")
         self._refresh_active_channel_combo()
         self._refresh_chart_visibility_row()
-        self.save_config()
+        self.kernel.notify_change(ch.id)
         self.update_chart()
 
     def _fill_channel_ports(self, ch, combo):
@@ -816,7 +816,7 @@ class PhSensorWidget(QWidget):
     def _on_channel_mode_changed(self, ch, index):
         ch.mode = 'simulator' if index == 1 else 'serial'
         self._apply_channel_mode_visibility(ch)
-        self.save_config()
+        self.kernel.notify_change(ch.id)
 
     def _apply_channel_mode_visibility(self, ch):
         """模拟器模式下隐藏本路的串口标签/下拉与刷新按钮。"""
@@ -1158,7 +1158,7 @@ class PhSensorWidget(QWidget):
         if self.channels and ch is self.channels[0]:
             self.sample_interval_ms = interval_ms
             self.kernel.sample_interval_ms = interval_ms
-        self.save_config()
+        self.kernel.notify_change(ch.id)
 
     def clear_data(self):
         """清除数据。"""

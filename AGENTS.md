@@ -96,6 +96,7 @@ module_loader.py 模块与插件扫描加载（不含 UI）
 - View 负责：控件、通道卡、实时行、图表、对话框、主题；数据与采集全部委托 `self.kernel`。
 - View 构造函数统一为 `__init__(self, kernel=None)`，无注入时从同目录内核文件兜底。
 - View 用 `kernel.subscribe()` + `QTimer` 在 GUI 线程消费事件，禁止后台线程直接操作 QWidget。
+- View 本地修改内核状态（改名/改色/换模式/改采样间隔/校准/显隐等）后必须调用 `kernel.notify_change(cid)`（或 `kernel.update_channel(...)`），**禁止只 `save_config()`**：只存盘不发事件会导致网页/CLI 端看不到变化。`KernelRegistry` 会汇聚各内核事件并通过 `/api/events`（SSE）广播给网页端。
 - 不再新起 `SerialThread` / `SimulatorThread`；统一用 `core.SerialTransport` / `core.SimulatorTransport`。
 - PyInstaller spec 已收集 `src/sensors/**/_kernel*.py`，新增内核文件无需改 spec。
 
