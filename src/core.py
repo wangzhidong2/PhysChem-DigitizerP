@@ -686,6 +686,7 @@ class SerialTransport(_CallbackTransport):
             return
         if not self.running:
             return
+        opened = False
         try:
             self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
             if not self.running:
@@ -695,6 +696,7 @@ class SerialTransport(_CallbackTransport):
                     pass
                 return
             self.serial.reset_input_buffer()
+            opened = True
             log.info("串口已打开: %s", self.port)
             while self.running:
                 try:
@@ -711,12 +713,19 @@ class SerialTransport(_CallbackTransport):
         except Exception as e:
             log.error("串口错误: %s", e)
             self._emit(f"ERROR:{e}")
+            opened = False     # 已报错，finally 不再重复通知
         finally:
             try:
                 if self.serial and self.serial.is_open:
                     self.serial.close()
             except Exception:
                 pass
+            # 非主动 stop() 却退出循环（设备拔出 / 虚拟串口对端销毁）：
+            # 必须通知内核断开，否则界面会一直显示「已连接」但不再有数据
+            if opened and self.running:
+                self.running = False
+                log.warning("串口连接已断开: %s", self.port)
+                self._emit("ERROR:串口连接已断开")
 
     def stop(self):
         self.running = False
@@ -789,6 +798,33 @@ class SimulatorTransport(_CallbackTransport):
 
 #: 退出清理时未在限时内结束的普通线程（保活引用，避免被 Python 回收）
 _retired_transports = []
+
+#: 进程内串口占用表：port -> (owner, 展示名)
+#: 同一串口只能被一路打开（跨模块也生效），否则两路会平分同一数据流
+_port_claims = {}
+_port_claims_lock = threading.Lock()
+
+
+def claim_serial_port(port, owner, label=''):
+    """尝试占用串口。返回 None 成功；否则返回当前占用者的展示名。"""
+    if not port:
+        return None
+    with _port_claims_lock:
+        cur = _port_claims.get(port)
+        if cur is not None and cur[0] != owner:
+            return cur[1] or cur[0]
+        _port_claims[port] = (owner, label or owner)
+        return None
+
+
+def release_serial_port(port, owner):
+    """释放串口占用（只有占用者本人能释放）。"""
+    if not port:
+        return
+    with _port_claims_lock:
+        cur = _port_claims.get(port)
+        if cur is not None and cur[0] == owner:
+            _port_claims.pop(port, None)
 
 
 def stop_transport(transport, timeout=2000, name="通信线程"):
@@ -995,18 +1031,41 @@ class SensorKernel:
                     'message': '通道不存在'}
         if getattr(ch, 'connected', False):
             return {'ok': True, 'message': f'{ch.name} 已连接'}
+        owner = '%s#%s' % (self.key, cid)
+        claimed = ''
+        # 同一串口不允许被两路同时打开（含跨模块）：Linux 下可重复 open，
+        # 两路会平分数据流；Windows 则直接报占用
+        if ch.mode == 'serial':
+            port = (ch.port or '').strip()
+            if port and '未安装' not in port and '无可用' not in port:
+                holder = claim_serial_port(
+                    port, owner, '%s %s' % (self.title, ch.name))
+                if holder is not None:
+                    return {'ok': False, 'error': 'port_in_use',
+                            'message': f'串口 {port} 已被「{holder}」占用'}
+                claimed = port
         try:
             transport = self._make_transport(ch)
         except Exception as e:
+            release_serial_port(claimed, owner)
             return {'ok': False, 'error': 'connect_failed', 'message': str(e)}
         transport.on_line = lambda line, cid=cid: self._handle_line(cid, line)
         ch.thread = transport
         ch.connected = True
+        if claimed:
+            ch._claimed_port = claimed
+            ch._claim_owner = owner
         try:
             transport.start()
         except Exception as e:
             ch.thread = None
             ch.connected = False
+            release_serial_port(claimed, owner)
+            for attr in ('_claimed_port', '_claim_owner'):
+                try:
+                    delattr(ch, attr)
+                except AttributeError:
+                    pass
             return {'ok': False, 'error': 'connect_failed',
                     'message': f'{ch.name} 连接失败: {e}'}
         self._publish(EVENT_CHANNEL_STATE, cid,
@@ -1023,6 +1082,14 @@ class SensorKernel:
             stop_transport(transport, name=f'{self.title}{ch.name}线程')
         ch.thread = None
         ch.connected = False
+        claimed = getattr(ch, '_claimed_port', '')
+        if claimed:
+            release_serial_port(claimed, getattr(ch, '_claim_owner', ''))
+            for attr in ('_claimed_port', '_claim_owner'):
+                try:
+                    delattr(ch, attr)
+                except AttributeError:
+                    pass
         self._publish(EVENT_CHANNEL_STATE, cid,
                       {'connected': False, 'message': '已断开'})
         return {'ok': True, 'message': f'{ch.name} 已断开'}

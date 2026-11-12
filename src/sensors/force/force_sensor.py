@@ -803,7 +803,8 @@ class ForceSensorWidget(QWidget):
         port_combo = ComboBox()
         port_combo.setMinimumWidth(80)
         self._fill_channel_ports(ch, port_combo)
-        port_combo.currentTextChanged.connect(lambda t, c=ch: setattr(c, 'port', t))
+        port_combo.currentTextChanged.connect(
+            lambda t, c=ch: self._on_channel_port_changed(c, t))
         port_label = BodyLabel("串口")
         row1.addWidget(port_label)
         row1.addWidget(port_combo)
@@ -931,15 +932,31 @@ class ForceSensorWidget(QWidget):
     def _fill_channel_ports(self, ch, combo):
         """重填串口列表，尽量保住该通道上次选中的端口。"""
         want = ch.port
-        combo.clear()
-        ports = list_serial_ports()
-        for device, _desc in ports:
-            combo.addItem(device)
-        if not ports:
-            combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
-        if want and combo.findText(want) >= 0:
-            combo.setCurrentText(want)
-        ch.port = combo.currentText()
+        # 重填期间屏蔽信号：否则 addItem/setCurrentText 会把占位项写进通道
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            ports = list_serial_ports()
+            for device, _desc in ports:
+                combo.addItem(device)
+            if not ports:
+                combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
+            if want and combo.findText(want) >= 0:
+                combo.setCurrentText(want)
+        finally:
+            combo.blockSignals(False)
+        # 占位项（未安装/无可用）不写回通道，避免覆盖已保存的端口
+        current = combo.currentText()
+        if current and '未安装' not in current and '无可用' not in current:
+            ch.port = current
+
+    def _on_channel_port_changed(self, ch, text):
+        """用户选择串口：忽略占位项，写回通道并广播（网页端同步）。"""
+        t = (text or '').strip()
+        if not t or '未安装' in t or '无可用' in t or ch.port == t:
+            return
+        ch.port = t
+        self.kernel.notify_change(ch.id)
 
     def refresh_ports(self):
         """刷新所有通道的串口列表（网页端 refresh_ports 命令也走这里）。"""
