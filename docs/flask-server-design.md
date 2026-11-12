@@ -313,6 +313,10 @@ self._httpd.shutdown()      # 可靠关闭，端口立即释放
 
 **不使用 `app.run()`** —— 它没有干净的停机手段（无法释放端口、无法在同一进程内重启）。`make_server` 提供 `shutdown()`，这是"按钮可以反复启停"的前提。
 
+SSE 长连接同样跑在 `threaded=True` 的 werkzeug 里：每个 `/api/events` 客户端占一个线程，
+阻塞在 `KernelRegistry.wait_events()` 上；`shutdown()` 时连接随服务一起结束。
+事件汇聚线程（每个内核一个）由 `KernelRegistry.register()` 启动，均为 daemon 线程。
+
 另需把 `werkzeug` 日志级别压到 `ERROR`（默认每请求打一行，会污染控制台，违反项目"控制台整洁"的取向）。
 
 ---
@@ -441,9 +445,11 @@ token 通过 `X-Auth-Token` 请求头或 `?token=` 传递。
   - 选中模块的曲线图（Canvas 绘制，滚动窗口）
   - 控制条：按 `/api/modules/<key>` 返回的 `actions` **动态生成按钮**
   - token 输入框（写操作用，存 `localStorage`）
-- 轮询而非 WebSocket：`GET /api/modules/<key>/series?limit=...`，间隔 1 s（可调）
-  - 理由：实现简单、无长连接状态、局域网延迟足够；后续如需高频再评估 SSE
-- *预留*：`app.js` 把数据源封装成一个函数，将来换 SSE 只改这一处
+- 实时推送用 **SSE**：`GET /api/events`（`text/event-stream`），不是 WebSocket
+  - 理由：纯 HTTP、无需额外依赖（浏览器原生 `EventSource`），断线自动重连 + `Last-Event-ID` 续传
+  - 事件源是 `KernelRegistry` 的带序号环形日志：桌面 GUI、网页、CLI 任一处改内核都会广播
+  - 每个客户端占用一个 werkzeug 线程（`threaded=True`），空闲 15 s 一次心跳注释
+- 轮询保留为兜底：SSE 正常且 5 s 内收到过事件时跳过 1 s 轮询；断线立即恢复轮询
 
 ---
 

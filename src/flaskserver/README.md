@@ -34,8 +34,24 @@ pip install mcp
 ### 连接管理（串口 / 模拟器）
 
 仪表盘每个模块窗口内可选择连接方式（模拟器 / 串口）与串口设备，
-点「应用」立即生效并自动连接——由 `DataService` 把命令投递到 GUI 线程，
-复用与主程序完全相同的连接控件与重连逻辑，插件本身不含连接业务。
+点「应用」立即生效并自动连接——HTTP 层直接调用 `KernelRegistry` 里的内核，
+与桌面端共用同一个内核实例与同一套连接逻辑，插件本身不含连接业务。
+
+## 实时同步
+
+桌面 GUI、浏览器仪表盘、CLI/MCP 改的是**同一份内核状态**，通过
+`GET /api/events`（SSE，`text/event-stream`）实时广播：
+
+- 桌面改名/改色/换模式/改采样间隔/校准/显隐 → 网页立即刷新；
+- 网页新增/删除通道、连接/断开、改参数 → 桌面立即刷新（≈10–20 ms）；
+- 事件 `{seq, key, kind, channel_id, data, ts}` 带单调序号，断线用
+  `Last-Event-ID` 续传；落后超过 512 条时收到 `event: reset`，前端整页重拉；
+- 采样事件合并为 `data` 通知（每路最多 2 次/秒），网页在 SSE 正常时
+  自动跳过 1 s 轮询，掉线后回落到轮询兜底。
+
+```bash
+curl -N "http://127.0.0.1:8765/api/events?since=0"
+```
 
 ## REST API
 
@@ -45,6 +61,7 @@ pip install mcp
 |---|---|---|
 | GET | `/api/health` | 存活探测（含 `auth_enabled` 鉴权状态） |
 | GET | `/api/auth/check` | 登录探测：按写级别校验、无副作用，正确返回 200，错误 401 |
+| GET | `/api/events?since=N` | 实时事件流（SSE），断线可用 `Last-Event-ID` 续传 |
 | GET | `/api/modules` | 模块列表与状态摘要 |
 | GET | `/api/modules/<key>` | 单模块快照，`?points=N` 附带序列；含 `connection` 连接信息 |
 | GET | `/api/modules/<key>/series?limit=N` | 降采样序列（默认 2000 点）；`channels` 字段含每路曲线 |

@@ -1,6 +1,6 @@
 # UI 与内核分离 —— 设计方案
 
-> 状态：草案（待评审）
+> 状态：已实现（2026-11-12，`feat/kernel-ui-split-rest`）；第 5 节的部分命名与提案不同，见「实现说明」
 > 日期：2026-11-09
 > 基线：`main` @ `09190c2`
 > 相关文档：[多路连接设计](multi-channel-design.md)、[flaskserver 插件设计](flask-server-design.md)、[项目约束](../AGENTS.md)
@@ -190,6 +190,13 @@ ChannelsChanged       通道增删改
 ```
 
 事件在后台线程产生，`QtKernelBridge` 负责跨线程投递；内核本身不创建任何 `QObject`。
+
+**实现说明（落地版本）**：没有引入 `QtKernelBridge` 类，实际用 `core.EventBus` +
+`EventSubscription`（有界队列，满时优先丢 `sample_preview`）；View 订阅后由
+`QTimer(50ms)` 在 GUI 线程批量 `drain()`。`channels_changed` 不只在通道增删时发出：
+View 的本地修改（改名/改色/换模式/改采样间隔/校准/显隐）必须调用
+`kernel.notify_change()` 发布，保证网页与 CLI 端同步。`KernelRegistry` 会订阅每个
+内核的事件总线，汇总成带单调序号的环形日志，供 `GET /api/events`（SSE）推送。
 
 ### 5.3 通道配置与持久化
 

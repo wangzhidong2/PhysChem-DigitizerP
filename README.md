@@ -434,9 +434,15 @@ python ./src/main.py
 | 能力 | 说明 |
 |------|------|
 | **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器，与主程序复用同一套逻辑） |
+| **实时双向同步** | 桌面端与网页端操作的是同一份内核状态：任一端改名/改色/换模式/改采样间隔/校准/显隐/增删通道/启停采集，另一端立即刷新（桌面 ≈10–20 ms，网页走 SSE 推送） |
 | **仪表盘登录** | 开启鉴权后先显示登录页，输对密钥才进桌面；登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
-| **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`，以及 `collect`／`command`／`params` 控制端点 |
+| **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`、`/events`，以及 `collect`／`command`／`params` 控制端点 |
 | **MCP 代理** | `./src/flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
+
+同步机制：`KernelRegistry` 订阅每个传感器内核的事件总线，写入带单调序号的环形日志，
+再通过 `GET /api/events`（SSE）广播给所有网页客户端；断线可用 `Last-Event-ID` 续传，
+落后太多会收到 `event: reset` 让前端整页重拉。高频采样合并为「有新数据」通知
+（每路最多 2 次/秒），网页在推送正常时自动跳过 1 s 轮询，掉线后回落到轮询兜底。
 
 仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`./src/assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
 
