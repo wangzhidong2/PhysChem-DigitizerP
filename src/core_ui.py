@@ -1618,6 +1618,11 @@ class ChartPanel(QWidget):
         """清空图表（各模块 clear_data 调用）。"""
         self._last = None
         self._spec = None
+        # 「拟合对象」下拉随图表清空隐藏，并作废曲线签名；下次有数据时
+        # 重建选项并按 series_id 恢复之前的选择（该通道仍存在的话）
+        if self._fit_target_row is not None:
+            self._fit_target_sig = None
+            self._fit_target_row.setVisible(False)
         if self._engine is None:
             return
         if self._engine == 'pyqtgraph':
