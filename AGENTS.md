@@ -116,6 +116,7 @@ c.end()
 ```
 
 - 多子图用 `ChartPanel(n_plots=N)`，各调用通过 `index` 参数寻址。
+- 多曲线（多通道）必须给 `plot()` 传 `series_id=str(ch.id)`：分析面板的「拟合对象」按该 id 选择目标曲线；不传时退回用 `label`，改名后选择会失效。
 - 切换引擎时 `ChartPanel` 自动重放最近一次事务，无需手动重绘。
 - 分析面板（拟合 / 离群点剔除 / 滚动窗口）用 `get_analysis_panel()` 取得，仅 pyqtgraph 下可见，matplotlib / 占位模式下自动隐藏。
 - **水平参考线不得直接加入图例**：`InfiniteLine` 没有 `opts` 属性，旧版 pyqtgraph 的 `ItemSample.paint` 会崩，并拖垮整棵控件树的绘制。

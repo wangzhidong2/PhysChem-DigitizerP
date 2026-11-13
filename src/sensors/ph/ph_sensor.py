@@ -1139,7 +1139,7 @@ class PhSensorWidget(QWidget):
         # 每路一条曲线：颜色 = 各通道行色块上选的颜色，图例 = 通道名
         for ch in active:
             c.plot(ch.time_data, ch.ph_data, color=ch.color, width=2,
-                   label=ch.name)
+                   label=ch.name, series_id=str(ch.id))
             all_t.extend(ch.time_data)
         # 参考线（中性pH=7）
         c.hline(7.0, color='r', style='dash', alpha=0.5, label='中性(pH=7)')

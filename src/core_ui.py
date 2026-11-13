@@ -1017,6 +1017,10 @@ class ChartPanel(QWidget):
         self._win_seconds = 5.0       # 滚动窗口长度（秒）
         self._fit_combo = None        # ComboBox 拟合方式（多项式/对数/幂函数）
         self._fit_mode = 0            # 0=不拟合，1~3=多项式次数，4=对数，5=幂函数
+        self._fit_target = None       # 拟合对象 series_id；None=自动（各子图第一条）
+        self._fit_target_combo = None  # ComboBox 拟合对象（仅多曲线时显示）
+        self._fit_target_row = None   # 「拟合对象」整行容器（单曲线时隐藏）
+        self._fit_target_sig = ()     # 上次构建下拉用的曲线集合签名
         self._fit_hint = None         # CaptionLabel 拟合方式注解（随选择动态更新）
         self._pg_fit_texts = []       # 拟合方程文本（TextItem 锚定视口左上角，
                                       # pi.clear() 不会移除，需手动管理生命周期）
@@ -1307,11 +1311,16 @@ class ChartPanel(QWidget):
             for _ in range(self._n_plots)
         ]
 
-    def plot(self, x, y, color='#0078d4', width=2, label=None, index=0):
-        """在第 index 个子图上绘制一条曲线。"""
+    def plot(self, x, y, color='#0078d4', width=2, label=None, index=0,
+             series_id=None):
+        """在第 index 个子图上绘制一条曲线。
+
+        series_id: 曲线的稳定标识（模块传通道 id），用于「拟合对象」选择。
+        不传时退回用 label 作标识；两者都没有时该曲线不参与单独选择。
+        """
         self._spec[index]['plot'].append(
             {'x': list(x), 'y': list(y), 'color': _normalize_color(color),
-             'width': width, 'label': label})
+             'width': width, 'label': label, 'series_id': series_id})
 
     def hline(self, y, color='#aaaaaa', style='dash', width=1.5, alpha=1.0,
               label=None, index=0):
@@ -1344,9 +1353,14 @@ class ChartPanel(QWidget):
         """提交事务并渲染。无 begin 直接调用 end 时忽略。"""
         if self._spec is None:
             return
-        self._commit(self._spec)
-        self._last = self._spec
+        spec = self._spec
         self._spec = None
+        self._last = spec
+        self._commit(spec)
+        # 曲线集合变化（增删通道/改名）时重建「拟合对象」下拉；
+        # 若当前选择失效（通道被删/隐藏）会回落「自动」，需要重绘一次
+        if self._refresh_fit_target_options() and self._fit_mode > 0:
+            self._commit(spec)
 
     # ---------------- 渲染实现 ----------------
     def _commit(self, spec, force_autorange=False):
@@ -1734,6 +1748,23 @@ class ChartPanel(QWidget):
         self._fit_combo.setMinimumWidth(120)
         self._fit_combo.currentIndexChanged.connect(self._on_fit_type_changed)
 
+        # 拟合对象：多曲线时选择用哪一路做拟合；单曲线时整行隐藏
+        self._fit_target_combo = ComboBox()
+        self._fit_target_combo.addItem("自动（第一条）", userData=None)
+        self._fit_target_combo.setMinimumWidth(120)
+        self._fit_target_combo.currentIndexChanged.connect(
+            self._on_fit_target_changed)
+
+        row_target = QWidget()
+        lay_target = QHBoxLayout(row_target)
+        lay_target.setContentsMargins(0, 0, 0, 0)
+        lay_target.setSpacing(8)
+        lay_target.addWidget(BodyLabel("拟合对象"))
+        lay_target.addWidget(self._fit_target_combo)
+        lay_target.addStretch(1)
+        row_target.setVisible(False)
+        self._fit_target_row = row_target
+
         row_win = QWidget()
         lay_win = QHBoxLayout(row_win)
         lay_win.setContentsMargins(0, 0, 0, 0)
@@ -1810,6 +1841,7 @@ class ChartPanel(QWidget):
 
         vlay.addWidget(self._win_switch)
         vlay.addWidget(row_win)
+        vlay.addWidget(row_target)
         vlay.addWidget(row_fit)
         vlay.addWidget(self._clear_btn)
         vlay.addWidget(row_pct)
@@ -1886,12 +1918,104 @@ class ChartPanel(QWidget):
         self._sync_clear_btn_state()
         self._sync_outlier_btn_state()
 
+    # ---------------- 拟合对象（多曲线时选择哪条做拟合） ----------------
+    @staticmethod
+    def _series_identity(series):
+        """曲线的稳定标识：优先 series_id，其次 label。"""
+        sid = series.get('series_id')
+        if sid not in (None, ''):
+            return str(sid)
+        label = series.get('label')
+        return 'label:%s' % label if label else ''
+
+    def _target_series(self, subplot):
+        """返回当前拟合目标在该子图里的曲线 dict；找不到返回 None。
+
+        _fit_target 为 None 时取该子图第一条曲线（保持旧行为）。
+        """
+        plots = subplot.get('plot') or []
+        if not plots:
+            return None
+        if self._fit_target is None:
+            return plots[0]
+        for series in plots:
+            if self._series_identity(series) == self._fit_target:
+                return series
+        return None
+
+    def _series_options(self, spec):
+        """按子图顺序收集可拟合曲线 [(identity, label), ...]（去重保序）。"""
+        options, seen = [], set()
+        for subplot in spec or []:
+            for series in subplot.get('plot') or []:
+                ident = self._series_identity(series)
+                if not ident or ident in seen:
+                    continue
+                seen.add(ident)
+                options.append((ident, series.get('label')
+                                or '曲线%d' % (len(options) + 1)))
+        return options
+
+    def _refresh_fit_target_options(self):
+        """重建「拟合对象」下拉；返回当前选择是否发生变化。
+
+        仅多曲线时显示该行；选择按 series_id 保留，目标消失则回落「自动」。
+        """
+        combo = self._fit_target_combo
+        if combo is None:
+            return False
+        options = self._series_options(self._last)
+        multi = len(options) > 1
+        if self._fit_target_row is not None:
+            self._fit_target_row.setVisible(multi)
+        signature = tuple(options)
+        if self._fit_target_sig != signature:
+            self._fit_target_sig = signature
+            previous = self._fit_target
+            combo.blockSignals(True)
+            try:
+                combo.clear()
+                combo.addItem("自动（第一条）", userData=None)
+                for ident, label in options:
+                    combo.addItem(label, userData=ident)
+                index = combo.findData(previous) if previous is not None else 0
+                if index < 0:
+                    index = 0
+                combo.setCurrentIndex(index)
+                self._fit_target = combo.currentData()
+            finally:
+                combo.blockSignals(False)
+            return self._fit_target != previous
+        if not multi and self._fit_target is not None:
+            self._fit_target = None
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+            return True
+        return False
+
+    def _on_fit_target_changed(self, _index):
+        """用户切换拟合对象：旧目标的剔除掩码作废，重绘拟合。"""
+        combo = self._fit_target_combo
+        if combo is None:
+            return
+        target = combo.currentData()
+        if target == self._fit_target:
+            return
+        self._fit_target = target
+        self._reset_outlier_state()   # 掩码按旧目标长度算，切换后不能复用
+        self._pg_cache = None
+        self._scatter_hidden = False
+        self._update_fit_hint()
+        if self._last is not None:
+            self._commit(self._last)
+
     # ---------------- 离群点剔除（残差比例法 + 多级撤销） ----------------
     def _visible_spec(self, spec):
         """返回剔除掩码作用后的可见事务副本。
 
-        掩码只作用于每个子图的第一条曲线（拟合/剔除的对象曲线），其余
-        曲线原样保留。无掩码时直接返回原对象（零开销，实时路径不触发
+        掩码只作用于当前「拟合对象」那条曲线（每个子图各一条，其余
+        曲线原样保留）。无掩码时直接返回原对象（零开销，实时路径不触发
         复制）。掩码长度不足当前数据时按 True 补齐——新采集到的点
         不在掩码范围内，默认保留。
         """
@@ -1902,11 +2026,11 @@ class ChartPanel(QWidget):
         out, changed = [], False
         for i, sp in enumerate(spec):
             m = masks[i] if i < len(masks) else None
-            if m is None or not sp['plot']:
+            target = self._target_series(sp) if sp['plot'] else None
+            if m is None or target is None:
                 out.append(sp)
                 continue
-            s = sp['plot'][0]
-            x, y = s['x'], s['y']
+            x, y = target['x'], target['y']
             if not len(x):
                 out.append(sp)
                 continue
@@ -1916,9 +2040,11 @@ class ChartPanel(QWidget):
             if bool(m.all()):
                 out.append(sp)
                 continue
+            ti = next(j for j, p in enumerate(sp['plot']) if p is target)
+            plots = list(sp['plot'])
+            plots[ti] = dict(target, x=np.asarray(x)[m], y=np.asarray(y)[m])
             ns = dict(sp)
-            ns['plot'] = [dict(s, x=np.asarray(x)[m], y=np.asarray(y)[m]),
-                          *sp['plot'][1:]]
+            ns['plot'] = plots
             out.append(ns)
             changed = True
         return out if changed else spec
@@ -1981,14 +2107,14 @@ class ChartPanel(QWidget):
         old_masks = self._outlier_masks
         new_masks, removed_total = [], 0
         for sp in self._last:
-            if not sp['plot'] or not len(sp['plot'][0]['x']):
+            target = self._target_series(sp)
+            if target is None or not len(target['x']):
                 new_masks.append(old_masks[len(new_masks)]
                                  if old_masks and len(new_masks) < len(old_masks)
                                  else None)
                 continue
-            s = sp['plot'][0]
-            x = np.asarray(s['x'], dtype=float)
-            y = np.asarray(s['y'], dtype=float)
+            x = np.asarray(target['x'], dtype=float)
+            y = np.asarray(target['y'], dtype=float)
             # 当前可见数据的掩码（含 True 补齐），剔除只作用于可见点
             cur = old_masks[len(new_masks)] if (old_masks
                     and len(new_masks) < len(old_masks)) else None
@@ -2062,8 +2188,11 @@ class ChartPanel(QWidget):
         active = self._engine == 'pyqtgraph' and self._fit_mode > 0
         has_data = False
         if self._last is not None:
-            has_data = any(
-                sp['plot'] and len(sp['plot'][0]['x']) >= 2 for sp in self._last)
+            for sp in self._last:
+                target = self._target_series(sp)
+                if target is not None and len(target['x']) >= 2:
+                    has_data = True
+                    break
         if self._outlier_spin is not None:
             self._outlier_spin.setEnabled(active)
         self._outlier_btn.setEnabled(active and has_data)
@@ -2163,9 +2292,9 @@ class ChartPanel(QWidget):
             return
         fg = '#e0e0e0' if self._dark else '#1a1a1a'
         for pi, sp in zip(self._pg_plots, spec):
-            if not sp['plot'] or not len(sp['plot'][0]['x']):
+            s = self._target_series(sp)   # 用户选择的拟合对象（默认第一条）
+            if s is None or not len(s['x']):
                 continue
-            s = sp['plot'][0]             # 拟合第一条曲线（模块主数据曲线）
             x = np.asarray(s['x'], dtype=float)
             y = np.asarray(s['y'], dtype=float)
             # 原始数据散点层：半透明小圆点（数据量过大时省略防卡顿；
@@ -2184,12 +2313,20 @@ class ChartPanel(QWidget):
             pen = mkPen(s['color'], width=2,
                         style=Qt.PenStyle.DashLine)
             pi.plot(xs, ys, pen=pen)
-            # 方程文本：锚定视口左上角（视口本地坐标，不随数据缩放变化；
-            # anchor=(0,0) 表示文本框左上角对齐 setPos 位置，pyqtgraph 0.14
-            # 的 anchor 是构造参数/属性而非旧版锚定方法）
+            # 方程文本：锚定视口左上角，纵向让开图例（图例默认也在左上）。
+            # anchor=(0,0)：文本框左上角对齐 setPos；图例高度随曲线数变化，
+            # 按当前图例的包围盒下移，避免方程与图例叠在一起。
             ti = TextItem(text, color=fg, anchor=(0, 0))
-            ti.setParentItem(pi.getViewBox())
-            ti.setPos(8, 8)
+            vb = pi.getViewBox()
+            ti.setParentItem(vb)
+            offset = 8
+            legend = getattr(pi, 'legend', None)
+            if legend is not None:
+                try:
+                    offset = max(8, legend.boundingRect().height() + 8)
+                except Exception:
+                    pass
+            ti.setPos(8, offset)
             self._pg_fit_texts.append(ti)
 
     def _fit_points(self, x, y):

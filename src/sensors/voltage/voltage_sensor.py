@@ -1659,7 +1659,8 @@ class VoltageSensorWidget(QWidget):
         for ch in active:
             display_data = [self.to_current_unit(v) for v in ch.voltage_data]
             c.plot(ch.time_data, display_data, color=ch.color, width=2,
-                   label=f'{ch.name} ({self.current_unit})')
+                   label=f'{ch.name} ({self.current_unit})',
+                   series_id=str(ch.id))
             all_t.extend(ch.time_data)
         c.set_labels('时间 (秒)', f'电压 ({self.current_unit})')
         c.set_title('电压传感器实时数据（多路对比）' if len(active) > 1

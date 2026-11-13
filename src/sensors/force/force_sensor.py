@@ -1444,7 +1444,7 @@ class ForceSensorWidget(QWidget):
             else:
                 converted_data = list(ch.force_data)
             c.plot(ch.time_data, converted_data, color=ch.color, width=2,
-                   label=f'{ch.name} ({ylabel})')
+                   label=f'{ch.name} ({ylabel})', series_id=str(ch.id))
             all_t.extend(ch.time_data)
         c.set_labels('时间 (秒)', ylabel)
         c.set_title('力传感器实时数据（多路对比）' if len(active) > 1

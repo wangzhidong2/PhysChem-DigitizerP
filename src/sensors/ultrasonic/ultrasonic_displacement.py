@@ -1039,7 +1039,7 @@ class UltrasonicWidget(QWidget):
         # 每路一条曲线：颜色 = 各通道行色块上选的颜色，图例 = 通道名
         for ch in active:
             c.plot(ch.time_data, ch.data_points, color=ch.color, width=2,
-                   label=ch.name)
+                   label=ch.name, series_id=str(ch.id))
             all_t.extend(ch.time_data)
             all_d.extend(ch.data_points)
         c.set_labels('时间 (秒)', '距离 (厘米)')

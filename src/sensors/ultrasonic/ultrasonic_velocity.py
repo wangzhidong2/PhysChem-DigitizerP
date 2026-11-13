@@ -1078,7 +1078,8 @@ class UltrasonicVelocityWidget(QWidget):
         # 子图0：距离-时间图（每路一条曲线，颜色 = 通道色）
         for ch in active:
             c.plot(ch.time_data, ch.distance_data,
-                   color=ch.color, width=2, index=0, label=ch.name)
+                   color=ch.color, width=2, index=0, label=ch.name,
+                   series_id=str(ch.id))
             all_t.extend(ch.time_data)
         c.set_labels('时间 (秒)', '距离 (厘米)', index=0)
         c.set_title('距离传感器的距离（多路对比）' if len(active) > 1
@@ -1090,7 +1091,7 @@ class UltrasonicVelocityWidget(QWidget):
                 continue
             c.plot(ch.time_data[len(ch.time_data) - len(ch.velocity_data):],
                    ch.velocity_data, color=ch.color, width=2, index=1,
-                   label=ch.name)
+                   label=ch.name, series_id=str(ch.id))
         c.set_labels('时间 (秒)', '速度 (厘米/秒)', index=1)
         c.set_title('物体运动速度 - 回声定位法（多路对比）' if len(active) > 1
                     else '物体运动速度 - 回声定位法', index=1)

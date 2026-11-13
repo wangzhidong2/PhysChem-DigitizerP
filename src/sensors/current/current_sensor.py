@@ -1516,7 +1516,8 @@ class CurrentSensorWidget(QWidget):
         for ch in active:
             display_data = [self.kernel.to_current_unit(v) for v in ch.current_data]
             c.plot(ch.time_data, display_data, color=ch.color, width=2,
-                   label=f'{ch.name} ({self.current_unit})')
+                   label=f'{ch.name} ({self.current_unit})',
+                   series_id=str(ch.id))
             all_t.extend(ch.time_data)
         # AC 模式：单路可见时叠加该路 RMS 参考线（多路时各路 RMS 不同，不画）
         if self.current_mode == 'AC' and len(active) == 1 and \
