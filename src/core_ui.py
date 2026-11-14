@@ -44,7 +44,7 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         SubtitleLabel, BodyLabel, CaptionLabel,
         isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
         ConfigSerializer,
-        ExpandGroupSettingCard, FluentIcon, RadioButton, CheckBox,
+        ExpandGroupSettingCard, FluentIcon, RadioButton, CheckBox, FlowLayout,
     )
 from qfluentwidgets.components.dialog_box import ColorDialog
 
@@ -6210,6 +6210,161 @@ class ChannelPanelMixin:
             if event is None:
                 return
             self._handle_kernel_event(event)
+
+    # ---------------- 页面骨架（操作按钮 / 全屏浮层 / 定时器） ----------------
+    def _build_conn_card(self, layout, add_channel_tooltip):
+        """连接控制卡：说明行 + 通道子卡容器 + 新建连接按钮。"""
+        content = QWidget()
+        card_layout = QVBoxLayout(content)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(10)
+        self._conn_card_layout = card_layout
+
+        card_layout.addWidget(CaptionLabel(
+            "每路连接可单独选择串口/模拟器与曲线颜色，多路数据同图叠加对比"))
+
+        self.channels_container = QWidget()
+        self.channels_layout = QVBoxLayout(self.channels_container)
+        self.channels_layout.setContentsMargins(0, 0, 0, 0)
+        self.channels_layout.setSpacing(8)
+        card_layout.addWidget(self.channels_container)
+
+        self.card_conn = FluentCard("连接控制", content, expanded=True,
+                                    icon=FluentIcon.CONNECT)
+        self.add_channel_btn = PushButton("＋ 新建连接")
+        self.add_channel_btn.setFixedHeight(30)
+        self.add_channel_btn.setToolTip(add_channel_tooltip)
+        self.add_channel_btn.clicked.connect(lambda: self.add_channel())
+        self.card_conn.add_header_widget(self.add_channel_btn)
+        self.card_conn.expandAni.finished.connect(self._sync_conn_card_height)
+        layout.addWidget(self.card_conn)
+
+    def _build_data_card(self, extra_rows=()):
+        """构建实时数据卡（每路一行实时明细 + 统计行），返回卡片控件。
+
+        extra_rows：模块自定义的说明行（如单位提示、速度统计），放在统计行上方。
+        """
+        content = QWidget()
+        content.setObjectName("card")
+        content.setStyleSheet(card_style())
+        data_layout = QVBoxLayout(content)
+        data_layout.setContentsMargins(20, 4, 20, 16)
+        data_layout.setSpacing(8)
+
+        self._live_rows = {}
+        self._live_container = QWidget()
+        self._live_layout = QVBoxLayout(self._live_container)
+        self._live_layout.setContentsMargins(0, 0, 0, 0)
+        self._live_layout.setSpacing(4)
+        data_layout.addWidget(self._live_container)
+
+        for widget in extra_rows:
+            data_layout.addWidget(widget)
+
+        self.stats_label = CaptionLabel("暂无数据")
+        data_layout.addWidget(self.stats_label)
+
+        self.card_data = FluentCard("实时数据", content, expanded=True,
+                                    icon=FluentIcon.HISTORY)
+        return self.card_data
+
+    def _build_chart_card(self, layout, title, summary_label, n_plots=1):
+        """图表卡：通道勾选行 + 数据记录 + ChartPanel + 全屏浮层。"""
+        content = QWidget()
+        content.setObjectName("card")
+        content.setStyleSheet(card_style())
+        chart_layout = QVBoxLayout(content)
+        chart_layout.setContentsMargins(20, 4, 20, 16)
+        chart_layout.setSpacing(12)
+
+        self._visibility_flow = FlowLayout(isTight=True)
+        self._visibility_flow.setHorizontalSpacing(14)
+        self._visibility_flow.setVerticalSpacing(4)
+        self._visibility_container = FlowWrapBox(self._visibility_flow)
+        chart_layout.addWidget(self._visibility_container)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+
+        left_col = QVBoxLayout()
+        left_col.setSpacing(10)
+        self.data_text = ExpandableTextEdit()
+        left_col.addWidget(self.data_text)
+
+        self.chart = ChartPanel(n_plots=n_plots)
+        self.chart.set_ai_data_provider(self._ai_data)
+        left_col.addWidget(self.chart.get_analysis_panel())
+        content_row.addLayout(left_col, stretch=0)
+
+        content_row.addWidget(self.chart, stretch=2)
+        chart_layout.addLayout(content_row, 1)
+
+        card = CollapsibleCard(title, content, expanded=True, fullscreen=True)
+        card.set_chart_min_height(400)
+        self._setup_chart_overlay(card, summary_label)
+        self.card_chart = card
+        layout.addWidget(card)
+        return card
+
+    def _setup_chart_overlay(self, card_chart, summary_label):
+        """图表卡全屏浮层：数据记录 + 分析面板 + 底部开始/停止按钮。"""
+        self.float_collect_btn = PrimaryPushButton("开始采集")
+        self.float_collect_btn.setFixedHeight(34)
+        update_collect_btn(self.float_collect_btn, False)
+        self.float_collect_btn.clicked.connect(self.toggle_collection)
+        self.float_collect_btn.setEnabled(False)
+        card_chart.set_fullscreen_overlay(
+            self.data_text, summary_label,
+            extra_widgets=[self.chart.get_analysis_panel()],
+            footer_widget=self.float_collect_btn)
+
+    def _build_action_card(self, layout):
+        """操作按钮卡：开始/停止、保存数据、清除数据。"""
+        content = QWidget()
+        content.setObjectName("card")
+        content.setStyleSheet(card_style())
+        actions_layout = QHBoxLayout(content)
+        actions_layout.setContentsMargins(20, 4, 20, 12)
+        actions_layout.setSpacing(10)
+
+        self.collect_btn = PrimaryPushButton("开始采集")
+        self.collect_btn.setFixedHeight(38)
+        update_collect_btn(self.collect_btn, False)
+        self.collect_btn.clicked.connect(self.toggle_collection)
+        self.collect_btn.setEnabled(False)
+        actions_layout.addWidget(self.collect_btn)
+
+        self.save_btn = PushButton("保存数据")
+        self.save_btn.setFixedHeight(38)
+        set_action_button_width(self.save_btn)
+        self.save_btn.clicked.connect(self.save_data)
+        self.save_btn.setEnabled(False)
+        actions_layout.addWidget(self.save_btn)
+
+        self.clear_btn = PushButton("清除数据")
+        self.clear_btn.setFixedHeight(38)
+        set_action_button_width(self.clear_btn)
+        self.clear_btn.clicked.connect(self.clear_data)
+        actions_layout.addWidget(self.clear_btn)
+
+        actions_layout.addStretch()
+        layout.addWidget(FluentCard("操作按钮", content, expanded=True,
+                                    icon=FluentIcon.PLAY))
+
+    def _finish_page(self, layout, scroll, content, main_layout):
+        """收尾：滚动区入页，启动图表刷新与内核事件消费定时器。"""
+        layout.addStretch()
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_chart)
+        self.timer.start(100)
+
+        self._events = self.kernel.subscribe()
+        self._event_timer = QTimer(self)
+        self._event_timer.timeout.connect(self._drain_kernel_events)
+        self._event_timer.start(50)
 
     # ---------------- 网页 / HTTP 适配 ----------------
     def _ai_data(self):

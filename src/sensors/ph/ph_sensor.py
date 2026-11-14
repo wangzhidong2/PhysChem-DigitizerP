@@ -24,12 +24,11 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from qfluentwidgets import (
-    PushButton, PrimaryPushButton, ComboBox, TitleLabel,
+    PushButton, ComboBox, TitleLabel,
     BodyLabel, CaptionLabel, FluentIcon as FIF,
-    FlowLayout,
 )
 import numpy as np
 
@@ -47,19 +46,13 @@ from core import (
 )
 from core_ui import (
     ChannelPanelMixin,
-    FlowWrapBox,
     sync_kernel_channels,
     fluent_message_box,
-    ChartPanel,
     CalibrationMessageBox,
     card_style,
-    CollapsibleCard,
     FluentCard,
-    ExpandableTextEdit,
     scroll_area_style,
     page_bg_style,
-    update_collect_btn,
-    set_action_button_width,
 )
 
 log = get_logger("ph_sensor")
@@ -148,34 +141,11 @@ class PhSensorWidget(ChannelPanelMixin, QWidget):
         layout.addWidget(title)
 
         # ========== 卡片1：连接控制（可折叠，多路子卡布局） ==========
-        card_conn_content = QWidget()
-        card_layout = QVBoxLayout(card_conn_content)
-        card_layout.setContentsMargins(0, 0, 0, 0)
-        card_layout.setSpacing(10)
-
-        card_layout.addWidget(CaptionLabel(
-            "每路连接可单独选择串口/模拟器与曲线颜色，多路数据同图叠加对比"))
-
-        # 通道子卡容器：每路连接一张子卡（独立模式/串口/颜色/采样频率/连接按钮）
-        self.channels_container = QWidget()
-        self.channels_layout = QVBoxLayout(self.channels_container)
-        self.channels_layout.setContentsMargins(0, 0, 0, 0)
-        self.channels_layout.setSpacing(8)
-        card_layout.addWidget(self.channels_container)
-
-        self.card_conn = FluentCard("连接控制", card_conn_content, expanded=True, icon=FIF.CONNECT)
-        # header 右侧：＋ 新建连接（原生按钮，随主题自适应）
-        self.add_channel_btn = PushButton("＋ 新建连接")
-        self.add_channel_btn.setFixedHeight(30)
-        self.add_channel_btn.setToolTip(
+        self._build_conn_card(
+            layout,
             "增加一路 pH 电极连接：\n"
             "每路可单独选择「有线串口 / 模拟器」，单独连接/断开，\n"
             "单独换曲线颜色与校准参数；多路数据叠加画在同一张图上")
-        self.add_channel_btn.clicked.connect(lambda: self.add_channel())
-        self.card_conn.add_header_widget(self.add_channel_btn)
-        # 主卡展开动画结束后按子卡实际高度收敛（子卡折叠后 sizeHint 不缩）
-        self.card_conn.expandAni.finished.connect(self._sync_conn_card_height)
-        layout.addWidget(self.card_conn)
 
         # ========== 卡片2：校准参数（可折叠，按连接独立） ==========
         card_cal_content = QWidget()
@@ -211,12 +181,7 @@ class PhSensorWidget(ChannelPanelMixin, QWidget):
         card_cal.add_header_widget(self._active_channel_combo)
 
         # ========== 卡片3：实时数据（可折叠，每路一行同屏） ==========
-        card_data_content = QWidget()
-        card_data_content.setObjectName("card")
-        card_data_content.setStyleSheet(card_style())
-        data_card_layout = QVBoxLayout(card_data_content)
-        data_card_layout.setContentsMargins(20, 4, 20, 16)
-        data_card_layout.setSpacing(8)
+        self._build_data_card()
 
         # 隐藏摘要标签：**不加入可见布局**——多路时单一汇总位会被各路
         # 数据轮流抢占，可见区只保留每路一行的实时明细。
@@ -228,125 +193,19 @@ class PhSensorWidget(ChannelPanelMixin, QWidget):
         self.current_ph_label.setParent(self)
         self.current_ph_label.hide()
 
-        # 每路一行实时明细（通道增删时动态重建，见 _build_live_row）
-        self._live_rows = {}          # channel.id -> {row, name_label, ph_label, adc_label}
-        self._live_container = QWidget()
-        self._live_layout = QVBoxLayout(self._live_container)
-        self._live_layout.setContentsMargins(0, 0, 0, 0)
-        self._live_layout.setSpacing(4)
-        data_card_layout.addWidget(self._live_container)
-
-        self.stats_label = CaptionLabel("统计信息：暂无数据")
-        data_card_layout.addWidget(self.stats_label)
-
-        card_data = FluentCard("实时数据", card_data_content, expanded=True, icon=FIF.HISTORY)
-        self.card_data = card_data
-
         # 校准参数 + 实时数据 并排同一行（顶部对齐，各自按内容高度，不强制等高）
         cards_row = QHBoxLayout()
         cards_row.setSpacing(16)
         cards_row.addWidget(card_cal, stretch=1, alignment=Qt.AlignmentFlag.AlignTop)
-        cards_row.addWidget(card_data, stretch=1, alignment=Qt.AlignmentFlag.AlignTop)
+        cards_row.addWidget(self.card_data, stretch=1, alignment=Qt.AlignmentFlag.AlignTop)
         layout.addLayout(cards_row)
 
         # ========== 卡片4：pH-时间曲线（可全屏） ==========
-        card_chart_content = QWidget()
-        card_chart_content.setObjectName("card")
-        card_chart_content.setStyleSheet(card_style())
-        chart_card_layout = QVBoxLayout(card_chart_content)
-        chart_card_layout.setContentsMargins(20, 4, 20, 16)
-        chart_card_layout.setSpacing(12)
-
-        # 通道显示勾选行：勾选的通道画进图表，不勾选的隐藏
-        # （只影响图表显示，采集/统计/保存不受影响；通道增删/改名时重建）
-        self._visibility_flow = FlowLayout(isTight=True)
-        self._visibility_flow.setHorizontalSpacing(14)
-        self._visibility_flow.setVerticalSpacing(4)
-        # 用按宽度算高度的容器，避免首次显示时被压扁（折叠展开后才正常）
-        self._visibility_container = FlowWrapBox(self._visibility_flow)
-        chart_card_layout.addWidget(self._visibility_container)
-
-        content_row = QHBoxLayout()
-        content_row.setSpacing(16)
-
-        # 左侧栏：数据记录 + 图表分析（视图窗口/拟合/离群点，紧凑纵向排布）
-        left_col = QVBoxLayout()
-        left_col.setSpacing(10)
-        self.data_text = ExpandableTextEdit()
-        left_col.addWidget(self.data_text)
-
-        # 双引擎图表面板（matplotlib / pyqtgraph，设置页可切换）
-        self.chart = ChartPanel()
-        self.chart.set_ai_data_provider(self._ai_data)
-        # 图表分析面板（仅 pyqtgraph 显示，其余引擎自动隐藏）
-        left_col.addWidget(self.chart.get_analysis_panel())
-        content_row.addLayout(left_col, stretch=0)
-
-        content_row.addWidget(self.chart, stretch=2)
-        chart_card_layout.addLayout(content_row, 1)
-        card_chart = CollapsibleCard("pH-时间曲线", card_chart_content, expanded=True, fullscreen=True)
-        # 图表卡片加高为原来的 2 倍（内容区最小 400px），页面滚动查看
-        card_chart.set_chart_min_height(400)
-        # 全屏时：数据记录区作为可拖动折叠浮动面板浮于图表上方，折叠时显示实时 pH 值
-        # 全屏浮动栏：合并的开始/停止按钮（与操作按钮卡的 collect_btn 同步状态）
-        self.float_collect_btn = PrimaryPushButton("开始采集")
-        self.float_collect_btn.setFixedHeight(34)
-        update_collect_btn(self.float_collect_btn, False)
-        self.float_collect_btn.clicked.connect(self.toggle_collection)
-        self.float_collect_btn.setEnabled(False)
-        # 全屏时：数据记录 + 拟合分析面板浮于图表上方，浮动栏底部可控制开始/停止
-        card_chart.set_fullscreen_overlay(
-            self.data_text, self.current_ph_label,
-            extra_widgets=[self.chart.get_analysis_panel()],
-            footer_widget=self.float_collect_btn)
-        layout.addWidget(card_chart)
+        self._build_chart_card(layout, "pH-时间曲线", self.current_ph_label)
 
         # ========== 卡片5：操作按钮（可折叠） ==========
-        card_actions_content = QWidget()
-        card_actions_content.setObjectName("card")
-        card_actions_content.setStyleSheet(card_style())
-        actions_layout = QHBoxLayout(card_actions_content)
-        actions_layout.setContentsMargins(20, 4, 20, 12)
-        actions_layout.setSpacing(10)
-
-        # 开始/停止合并为单按钮：文案随采集状态切换（停止采集/开始采集）
-        self.collect_btn = PrimaryPushButton("开始采集")
-        self.collect_btn.setFixedHeight(38)
-        update_collect_btn(self.collect_btn, False)
-        self.collect_btn.clicked.connect(self.toggle_collection)
-        self.collect_btn.setEnabled(False)
-        actions_layout.addWidget(self.collect_btn)
-
-        self.save_btn = PushButton("保存数据")
-        self.save_btn.setFixedHeight(38)
-        set_action_button_width(self.save_btn)
-        self.save_btn.clicked.connect(self.save_data)
-        self.save_btn.setEnabled(False)
-        actions_layout.addWidget(self.save_btn)
-
-        self.clear_btn = PushButton("清除数据")
-        self.clear_btn.setFixedHeight(38)
-        set_action_button_width(self.clear_btn)
-        self.clear_btn.clicked.connect(self.clear_data)
-        actions_layout.addWidget(self.clear_btn)
-
-        actions_layout.addStretch()
-        card_actions = FluentCard("操作按钮", card_actions_content, expanded=True, icon=FIF.PLAY)
-        layout.addWidget(card_actions)
-
-        layout.addStretch()
-        scroll.setWidget(content)
-        main_layout.addWidget(scroll)
-
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_chart)
-        self.timer.start(100)
-
-        # 内核事件队列：后台采集线程只入队，GUI 线程由 QTimer 消费
-        self._events = self.kernel.subscribe()
-        self._event_timer = QTimer(self)
-        self._event_timer.timeout.connect(self._drain_kernel_events)
-        self._event_timer.start(50)
+        self._build_action_card(layout)
+        self._finish_page(layout, scroll, content, main_layout)
 
     # ============================================================
     # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
