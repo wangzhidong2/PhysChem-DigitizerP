@@ -383,7 +383,7 @@ class VoltageSensorWidget(ChannelPanelMixin, QWidget):
         self.tare_btn = PushButton("去皮")
         self.tare_btn.setFixedHeight(36)
         set_action_button_width(self.tare_btn)
-        self.tare_btn.setStyleSheet("background-color: #fd7e14; color: white;")
+        # 原生 Fluent 按钮外观，不设 QSS（随主题白底黑字 / 深底白字）
         self.tare_btn.setToolTip("取最近 10 个采样点的平均值作为零点，从测量值中扣除。\n"
                                  "随时可点（不必先开始采集，连上设备有数据即可）。\n"
                                  "可反复点击重新归零；多路连接时对有数据流入的通道分别去皮（各路零点独立）。")

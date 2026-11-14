@@ -230,9 +230,10 @@ class ForceSensorWidget(ChannelPanelMixin, QWidget):
         cal_btn_row = QHBoxLayout()
         cal_btn_row.setSpacing(10)
 
+        # 不设 QSS：保持 qfluentwidgets 原生按钮外观（浅色白底黑字/暗色深底白字，
+        # 悬停与按下由 FluentStyle 自绘；自定义 QSS 会接管绘制、丢失原生交互反馈）
         self.tare_btn = PushButton("去皮（TARE）")
         self.tare_btn.setFixedHeight(36)
-        self.tare_btn.setStyleSheet("background-color: #fd7e14; color: white;")
         self.tare_btn.setToolTip("取最近 10 个采样点的平均值作为零点（offset），从测量值中扣除。\n"
                                  "连接设备后即可点，不必先开始采集；可反复点击重新去皮，\n"
                                  "没有「取消去皮」按钮。多路连接时对有数据流入的通道分别去皮\n"

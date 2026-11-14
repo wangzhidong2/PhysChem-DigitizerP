@@ -292,7 +292,6 @@ class CurrentSensorWidget(ChannelPanelMixin, QWidget):
         self.zero_cal_btn.setToolTip("以当前零电流读数作为零点（可反复点击重新归零）\n"
                                      "设备连接后即有实时数据，无需先开始采集\n"
                                      "多路连接时对有数据流入的通道分别校准（各路零点独立）")
-        self.zero_cal_btn.setStyleSheet("background-color: #fd7e14; color: white;")
         self.zero_cal_btn.setEnabled(False)   # 连接后由 _set_collect_enabled 打开
         self.zero_cal_btn.clicked.connect(self.tare_now)
         unit_row.addWidget(self.zero_cal_btn)
