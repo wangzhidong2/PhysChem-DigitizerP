@@ -181,7 +181,7 @@ class PhSensorWidget(ChannelPanelMixin, QWidget):
         card_cal.add_header_widget(self._active_channel_combo)
 
         # ========== 卡片3：实时数据（可折叠，每路一行同屏） ==========
-        self._build_data_card()
+        self._build_data_card(stats_text="统计信息：暂无数据")
 
         # 隐藏摘要标签：**不加入可见布局**——多路时单一汇总位会被各路
         # 数据轮流抢占，可见区只保留每路一行的实时明细。

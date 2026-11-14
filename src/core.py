@@ -1494,6 +1494,10 @@ class MultiChannelKernel(SensorKernel):
         """把配置里的一路 dict 转成 make_channel 的额外关键字。"""
         return {}
 
+    def legacy_channel_params(self):
+        """旧版单通道配置（无 channels 键）迁移到第 1 路的额外参数。"""
+        return {}
+
     def after_restore_channels(self):
         """通道恢复完成后的模块级收尾（镜像顶层字段、重算系数等）。"""
         pass
@@ -1515,7 +1519,8 @@ class MultiChannelKernel(SensorKernel):
                     **self.channel_restore_params(item)))
         else:
             mode = 'serial' if SERIAL_AVAILABLE else 'simulator'
-            self.channels.append(self.make_channel(mode=mode))
+            self.channels.append(self.make_channel(
+                mode=mode, **self.legacy_channel_params()))
         self.after_restore_channels()
 
     def channel_to_dict(self, ch):
@@ -1569,15 +1574,22 @@ class MultiChannelKernel(SensorKernel):
         value = values[index] if index < len(values) else ''
         return [channel.name, f'{t:.3f}', raw, value]
 
+    def csv_row_count(self, channel):
+        """该通道要写出的样本行数（默认取时间序列长度）。
+
+        差分数据（如超声波速度）比时间序列少 1 点，不能按 value 长度截断。
+        """
+        return max(len(channel.time_data), len(self.channel_values(channel)))
+
     def csv_text(self):
         """长表 CSV：一行一个样本 + channel 列。"""
-        total = sum(len(self.channel_values(ch)) for ch in self.channels)
+        total = sum(self.csv_row_count(ch) for ch in self.channels)
         if total == 0:
             return ''
         lines = list(self.csv_comments())
         lines.append(','.join(self.csv_header()))
         for ch in self.channels:
-            for i in range(len(self.channel_values(ch))):
+            for i in range(self.csv_row_count(ch)):
                 lines.append(','.join(str(v)
                                       for v in self.csv_row_values(ch, i)))
         return '\n'.join(lines) + '\n'

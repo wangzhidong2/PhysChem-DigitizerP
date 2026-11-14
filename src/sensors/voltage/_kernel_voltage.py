@@ -86,6 +86,14 @@ class VoltageKernel(MultiChannelKernel):
     def channel_restore_params(self, item):
         return {'adc_params': {**self.adc_param_source(), **item}}
 
+    def legacy_channel_params(self):
+        cfg = self.config or {}
+        return {'adc_params': {
+            **self.adc_param_source(),
+            'tare_offset_v': cfg.get('tare_offset_v', 0.0),
+            'tare_active': cfg.get('tare_active', False),
+        }}
+
     def after_restore_channels(self):
         self.mirror_first_channel(
             'adc_bits', 'divider_ratio', 'amp_ratio', 'hx711_mode',

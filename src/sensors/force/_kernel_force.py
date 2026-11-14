@@ -75,6 +75,11 @@ class ForceKernel(MultiChannelKernel):
             'offset': self.offset, 'scale': self.scale,
             'calibrated': self.calibrated, **item}}
 
+    def legacy_channel_params(self):
+        return {'cal_params': {
+            'offset': self.offset, 'scale': self.scale,
+            'calibrated': self.calibrated}}
+
     def after_restore_channels(self):
         self._sync_first_channel()
 

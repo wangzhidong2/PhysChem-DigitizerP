@@ -6239,7 +6239,7 @@ class ChannelPanelMixin:
         self.card_conn.expandAni.finished.connect(self._sync_conn_card_height)
         layout.addWidget(self.card_conn)
 
-    def _build_data_card(self, extra_rows=()):
+    def _build_data_card(self, extra_rows=(), stats_text="暂无数据"):
         """构建实时数据卡（每路一行实时明细 + 统计行），返回卡片控件。
 
         extra_rows：模块自定义的说明行（如单位提示、速度统计），放在统计行上方。
@@ -6261,7 +6261,7 @@ class ChannelPanelMixin:
         for widget in extra_rows:
             data_layout.addWidget(widget)
 
-        self.stats_label = CaptionLabel("暂无数据")
+        self.stats_label = CaptionLabel(stats_text)
         data_layout.addWidget(self.stats_label)
 
         self.card_data = FluentCard("实时数据", content, expanded=True,
@@ -6404,7 +6404,8 @@ class ChannelPanelMixin:
         update_collect_btn(self.float_collect_btn, self._collecting)
 
     def _total_points(self):
-        return sum(len(self.kernel.channel_values(ch)) for ch in self.channels)
+        return sum(max(len(ch.time_data), len(self.kernel.channel_values(ch)))
+                   for ch in self.channels)
 
     def save_data(self):
         """保存数据到文件（由内核生成 CSV）。"""

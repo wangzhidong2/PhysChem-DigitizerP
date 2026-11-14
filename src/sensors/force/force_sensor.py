@@ -281,7 +281,8 @@ class ForceSensorWidget(ChannelPanelMixin, QWidget):
         self.current_unit_label = CaptionLabel(
             f"单位: {self.UNIT_LABELS.get(self.current_unit, 'g')}（未校准则显示原始值）"
         )
-        self._build_data_card([self.current_unit_label])
+        self._build_data_card([self.current_unit_label],
+                              stats_text="统计信息：暂无数据")
 
         # 隐藏摘要标签：**不加入可见布局**——多路时单一汇总位会被各路
         # 数据轮流抢占，可见区只保留每路一行的实时明细。

@@ -90,6 +90,9 @@ class CurrentKernel(MultiChannelKernel):
     def channel_restore_params(self, item):
         return {'acs_params': {**self.adc_param_source(), **item}}
 
+    def legacy_channel_params(self):
+        return {'acs_params': self.adc_param_source()}
+
     def after_restore_channels(self):
         self.mirror_first_channel(
             'acs_range', 'vcc', 'v_quiescent', 'divider_ratio',

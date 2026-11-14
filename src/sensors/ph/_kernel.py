@@ -92,6 +92,13 @@ class PhKernel(MultiChannelKernel):
                 'theoretical_slope_mv', self.theoretical_slope_mv),
         }}
 
+    def legacy_channel_params(self):
+        return {'cal_params': {
+            'calibration_points': self.calibration_points,
+            'calibration_mode': self.calibration_mode,
+            'theoretical_slope_mv': self.theoretical_slope_mv,
+        }}
+
     def after_restore_channels(self):
         self.calculate_calibration_coefficients()
         self.mirror_first_channel(
