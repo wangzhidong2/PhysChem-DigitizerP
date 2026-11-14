@@ -12,9 +12,9 @@ View（ultrasonic_velocity.py）只负责控件；本文件负责：
 """
 
 from core import (
-    SensorKernel, load_sensor_config, save_sensor_config,
-    SERIAL_AVAILABLE, EVENT_SAMPLE_RECORDED, EVENT_CHANNELS_CHANGED,
-    get_logger,
+    MultiChannelKernel, ChannelBase, load_sensor_config, save_sensor_config,
+    EVENT_SAMPLE_RECORDED, EVENT_CHANNELS_CHANGED,
+    get_logger, CHANNEL_COLORS,
 )
 
 log = get_logger('ultrasonic_velocity_kernel')
@@ -22,8 +22,7 @@ log = get_logger('ultrasonic_velocity_kernel')
 CONFIG_KEY = 'ultrasonic_velocity'
 
 # 多路连接的默认曲线配色（按新建顺序轮换取未用色，界面上可单独改色）
-CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
-                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
+CHANNEL_COLORS = CHANNEL_COLORS
 
 # 固件有效回波窗口（µs）
 ECHO_MIN_US = 100
@@ -36,23 +35,15 @@ SOUND_SPEED_CM_S = 34000.0
 DEFAULT_DELTA_T_S = 0.02
 
 
-class VelocityChannel:
+class VelocityChannel(ChannelBase):
     """一路超声波速度连接的数据模型（不持有任何 Qt 控件）。"""
 
     def __init__(self, cid, name, color, mode='serial', port='',
                  sample_interval_ms=100, visible=True):
-        self.id = cid
-        self.name = name
-        self.default_name = name
-        self.color = color
-        self.mode = mode
-        self.port = port
-        self.thread = None
-        self.connected = False
-        self.sample_interval_ms = sample_interval_ms
-        self.visible = bool(visible)
+        super().__init__(cid, name, color, mode=mode, port=port,
+                         sample_interval_ms=sample_interval_ms,
+                         visible=visible)
 
-        self.time_data = []
         self.distance_data = []
         self.echo_time_data = []
         # 速度（cm/s，差分得到，比距离少 1 点）
@@ -60,12 +51,32 @@ class VelocityChannel:
         # 基类 channel_info / series 使用这两个名字；保持别名
         self.raw_data = self.echo_time_data
         self.value_data = self.velocity_data
-        self.last_sample_s = None
         self.last_velocity = None
 
 
-class VelocityKernel(SensorKernel):
+class VelocityKernel(MultiChannelKernel):
     """超声波速度内核。"""
+
+    def create_channel(self, cid, name, color, mode, port,
+                       sample_interval_ms, visible, params):
+        return VelocityChannel(
+            cid, name, color, mode=mode, port=port,
+            sample_interval_ms=sample_interval_ms, visible=visible)
+
+    def after_restore_channels(self):
+        self.mirror_first_channel('sample_interval_ms')
+
+    def csv_header(self):
+        return ['channel', 'time_s', 'distance_cm', 'velocity_cm_s']
+
+    def csv_row_values(self, ch, i):
+        t = ch.time_data[i] if i < len(ch.time_data) else 0.0
+        dist = ch.distance_data[i] if i < len(ch.distance_data) else 0.0
+        vi = i - (len(ch.time_data) - len(ch.velocity_data))
+        velocity = (ch.velocity_data[vi]
+                    if 0 <= vi < len(ch.velocity_data) else None)
+        velocity_str = (f'{velocity:.3f}' if velocity is not None else '')
+        return [ch.name, f'{t:.3f}', f'{dist:.3f}', velocity_str]
 
     key = CONFIG_KEY
     title = '超声波速度'
@@ -88,57 +99,11 @@ class VelocityKernel(SensorKernel):
         return config
 
     def save_config(self):
-        first = self.channels[0] if self.channels else None
-        config = {
-            'sample_interval_ms': (
-                first.sample_interval_ms if first else self.sample_interval_ms),
-            'window_size': self.window_size,
-            'channels': [
-                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color,
-                 'sample_interval_ms': ch.sample_interval_ms,
-                 'visible': ch.visible}
-                for ch in self.channels
-            ],
-        }
-        return save_sensor_config(CONFIG_KEY, config)
+        return save_sensor_config(CONFIG_KEY, self.base_config(
+            {'window_size': self.window_size}))
 
-    def _restore_channels(self):
-        saved = (self.config or {}).get('channels') or []
-        if saved:
-            for item in saved:
-                mode = item.get('mode', 'serial')
-                if mode != 'simulator' and not SERIAL_AVAILABLE:
-                    mode = 'simulator'
-                self.channels.append(self.make_channel(
-                    name=item.get('name') or None,
-                    color=item.get('color') or None,
-                    mode=mode,
-                    port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'),
-                    visible=item.get('visible', True)))
-        else:
-            mode = 'serial' if SERIAL_AVAILABLE else 'simulator'
-            self.channels.append(self.make_channel(mode=mode))
-        if self.channels:
-            self.sample_interval_ms = self.channels[0].sample_interval_ms
 
     # ---------------- 通道 ----------------
-    def make_channel(self, color=None, mode='serial', port='', name=None,
-                     sample_interval_ms=None, visible=True, **params):
-        cid = self._next_channel_id
-        self._next_channel_id += 1
-        seq = self._next_channel_seq
-        self._next_channel_seq += 1
-        if not color:
-            used = {ch.color for ch in self.channels}
-            color = next((c for c in CHANNEL_COLORS if c not in used),
-                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
-        return VelocityChannel(
-            cid, name or f'通道{seq}', color,
-            mode=mode, port=port,
-            sample_interval_ms=sample_interval_ms or self.sample_interval_ms,
-            visible=visible)
 
     # ---------------- 物理 ----------------
     def simulator_spec(self, channel):
@@ -254,22 +219,6 @@ class VelocityKernel(SensorKernel):
                 f'采样间隔={main.sample_interval_ms}ms（各路独立）'),
         }
 
-    def csv_text(self):
-        total = sum(len(ch.distance_data) for ch in self.channels)
-        if total == 0:
-            return ''
-        lines = ['channel,time_s,distance_cm,velocity_cm_s']
-        for ch in self.channels:
-            for i, (time_val, distance) in enumerate(
-                    zip(ch.time_data, ch.distance_data)):
-                vi = i - (len(ch.time_data) - len(ch.velocity_data))
-                velocity = (ch.velocity_data[vi]
-                            if 0 <= vi < len(ch.velocity_data) else None)
-                velocity_str = (f'{velocity:.3f}'
-                                if velocity is not None else '')
-                lines.append(
-                    f'{ch.name},{time_val:.3f},{distance:.3f},{velocity_str}')
-        return '\n'.join(lines) + '\n'
 
     # ---------------- 命令 ----------------
     def set_window_size(self, value):

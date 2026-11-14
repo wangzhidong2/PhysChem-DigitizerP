@@ -17,8 +17,10 @@
 
 ```text
 main.py         只做 UI：入口、MainWindow、Home、Sidebar、Settings
-core.py         公共内核：日志、sensor_config、串口/模拟器传输、事件、SensorKernel、KernelRegistry
-core_ui.py      公共 UI：AppConfig、主题/字体/样式、ChartPanel、通用控件/对话框
+core.py         公共内核：日志、sensor_config、串口/模拟器传输、事件、SensorKernel、
+                ChannelBase、MultiChannelKernel、KernelRegistry
+core_ui.py      公共 UI：AppConfig、主题/字体/样式、ChartPanel、通用控件/对话框、
+                ChannelPanelMixin（多通道连接卡公共实现）
 module_loader.py 模块与插件扫描加载（不含 UI）
 ```
 
@@ -99,6 +101,22 @@ module_loader.py 模块与插件扫描加载（不含 UI）
 - View 本地修改内核状态（改名/改色/换模式/改采样间隔/校准/显隐等）后必须调用 `kernel.notify_change(cid)`（或 `kernel.update_channel(...)`），**禁止只 `save_config()`**：只存盘不发事件会导致网页/CLI 端看不到变化。`KernelRegistry` 会汇聚各内核事件并通过 `/api/events`（SSE）广播给网页端。
 - 不再新起 `SerialThread` / `SimulatorThread`；统一用 `core.SerialTransport` / `core.SimulatorTransport`。
 - PyInstaller spec 已收集 `src/sensors/**/_kernel*.py`，新增内核文件无需改 spec。
+
+### 2.6 多通道公共层（新模块直接复用）
+
+- View：`class XWidget(core_ui.ChannelPanelMixin, QWidget)`。通道增删、连接子卡、实时行、端口刷新、显示勾选、单路/批量连接、采集按钮联动、CSV 保存、主题/退出清理均由 mixin 提供；模块只实现差异钩子：
+  - `_live_row_spec(ch)`：实时行的 `big_key/big_text/secondary`；
+  - `_channel_extra_params()`：新建通道传给内核的额外参数；
+  - `_sync_active_channel_controls(ch)`：参数卡「当前连接」下拉联动；
+  - `_on_channel_connection_changed(ch, connected)` / `_on_connection_state_changed()`：去皮/校准按钮与实时行文案；
+  - `_after_channels_built()`：通道重建后的模块级收尾。
+- 内核：`class XKernel(core.MultiChannelKernel)`。通道 id/默认名/配色、配置恢复、每路字段序列化、顶层镜像、CSV 长表由基类统一处理；模块实现：
+  - `create_channel(cid, name, color, mode, port, sample_interval_ms, visible, params)`；
+  - `channel_restore_params(item)`（把每路配置转成 `create_channel` 的额外参数）；
+  - `after_restore_channels()`（通常调用 `self.mirror_first_channel(...)`）；
+  - 按需覆盖 `csv_comments/csv_header/csv_row_values`。
+- 通道数据模型继承 `core.ChannelBase`，只初始化自己的物理参数与数据序列，并把 `value_data/raw_data` 别名到模块自己的列表。
+- 默认曲线配色统一用 `core.CHANNEL_COLORS`，不要在模块里复制一份。
 
 ## 3. 图表（`core_ui.ChartPanel`）
 

@@ -12,13 +12,12 @@ View（current_sensor.py）只负责控件；本文件负责：
 - 采样节流、数据缓存、快照、CSV 导出
 """
 
-from collections import deque
 
 import numpy as np
 
 from core import (
-    SensorKernel, load_sensor_config, save_sensor_config,
-    SERIAL_AVAILABLE, EVENT_CHANNELS_CHANGED, get_logger,
+    MultiChannelKernel, ChannelBase, load_sensor_config, save_sensor_config,
+    EVENT_CHANNELS_CHANGED, get_logger, CHANNEL_COLORS,
 )
 
 log = get_logger('current_sensor_kernel')
@@ -26,8 +25,7 @@ log = get_logger('current_sensor_kernel')
 CONFIG_KEY = 'current_sensor'
 
 # 多路连接的默认曲线配色（按新建顺序轮换取未用色，界面上可单独改色）
-CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
-                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
+CHANNEL_COLORS = CHANNEL_COLORS
 
 # ADC 位数 → 满量程计数值
 ADC_BITS_OPTIONS = {8: 256, 10: 1024, 12: 4096, 14: 16384, 16: 65536}
@@ -45,21 +43,14 @@ ACS712_RANGES = {
 UNIT_FACTORS = {'A': 1.0, 'mA': 1000.0}
 
 
-class CurrentChannel:
+class CurrentChannel(ChannelBase):
     """一路 ACS712 连接的数据模型（不持有任何 Qt 控件）。"""
 
     def __init__(self, cid, name, color, mode='serial', port='',
                  sample_interval_ms=100, visible=True, acs_params=None):
-        self.id = cid
-        self.name = name
-        self.default_name = name
-        self.color = color
-        self.mode = mode
-        self.port = port
-        self.thread = None
-        self.connected = False
-        self.sample_interval_ms = sample_interval_ms
-        self.visible = bool(visible)
+        super().__init__(cid, name, color, mode=mode, port=port,
+                         sample_interval_ms=sample_interval_ms,
+                         visible=visible)
 
         # 本路 ACS712 换算参数（每路独立；缺省继承模块级/全局默认）
         p = acs_params or {}
@@ -71,17 +62,64 @@ class CurrentChannel:
         self.zero_cal_active = p.get('zero_cal_active', False)
 
         # 采集数据（内部电流单位：安培）
-        self.time_data = []
-        self.raw_data = []
         self.vsensor_data = []
         self.current_data = []
-        # 去皮 / 实时显示用的滚动窗口（含未采集时的实时数据）
-        self.live_window = deque(maxlen=10)
-        self.last_sample_s = None
 
 
-class CurrentKernel(SensorKernel):
+class CurrentKernel(MultiChannelKernel):
     """ACS712 电流传感器内核。"""
+
+    CHANNEL_EXTRA_FIELDS = (
+        'acs_range', 'vcc', 'v_quiescent', 'divider_ratio',
+        'adc_bits', 'zero_cal_active',
+    )
+
+    def create_channel(self, cid, name, color, mode, port,
+                       sample_interval_ms, visible, params):
+        acs_params = dict(params.get('acs_params') or {})
+        for f in self.CHANNEL_EXTRA_FIELDS:
+            if f in params:
+                acs_params[f] = params[f]
+        if not acs_params:
+            acs_params = self.adc_param_source(
+                self.channels[0] if self.channels else None)
+        return CurrentChannel(cid, name, color, mode=mode, port=port,
+                              sample_interval_ms=sample_interval_ms,
+                              visible=visible, acs_params=acs_params)
+
+    def channel_restore_params(self, item):
+        return {'acs_params': {**self.adc_param_source(), **item}}
+
+    def after_restore_channels(self):
+        self.mirror_first_channel(
+            'acs_range', 'vcc', 'v_quiescent', 'divider_ratio',
+            'adc_bits', 'zero_cal_active', 'sample_interval_ms')
+
+    def csv_comments(self):
+        lines = [
+            f"# ACS712 模式={self.current_mode} 单位={self.current_unit} "
+            f"AC RMS窗口={self.ac_rms_window}点",
+        ]
+        for ch in self.channels:
+            src = self.adc_param_source(ch)
+            lines.append(
+                f"# {ch.name}: 量程={ch.acs_range} "
+                f"灵敏度={self.sensitivity_of(src)}V/A "
+                f"零点={ch.v_quiescent:.4f}V 分压比={ch.divider_ratio}")
+        return lines
+
+    def csv_header(self):
+        return ['channel', 'timestamp_s', 'raw_adc', 'v_adc', 'v_sensor',
+                f'current_{self.current_unit.lower()}']
+
+    def csv_row_values(self, ch, i):
+        t = ch.time_data[i] if i < len(ch.time_data) else 0.0
+        raw = ch.raw_data[i] if i < len(ch.raw_data) else 0
+        current = ch.current_data[i] if i < len(ch.current_data) else 0.0
+        return [ch.name, f'{t:.3f}', raw,
+                f'{self.adc_to_vadc(raw, channel=ch):.6f}',
+                f'{self.adc_to_vsensor(raw, channel=ch):.6f}',
+                f'{self.to_current_unit(current):.6f}']
 
     key = CONFIG_KEY
     title = '电流传感器'
@@ -140,71 +178,11 @@ class CurrentKernel(SensorKernel):
             'current_unit': self.current_unit,
             'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
             'ac_rms_window': self.ac_rms_window,
-            # 多路连接：每路的模式/串口/颜色/采样间隔/换算参数/图表显示
-            'channels': [
-                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
-                 'acs_range': ch.acs_range, 'vcc': ch.vcc,
-                 'v_quiescent': ch.v_quiescent,
-                 'divider_ratio': ch.divider_ratio, 'adc_bits': ch.adc_bits,
-                 'zero_cal_active': ch.zero_cal_active,
-                 'visible': ch.visible}
-                for ch in self.channels
-            ],
         }
-        return save_sensor_config(CONFIG_KEY, config)
+        return save_sensor_config(CONFIG_KEY, self.base_config(config))
 
-    def _restore_channels(self):
-        saved = (self.config or {}).get('channels') or []
-        if saved:
-            for item in saved:
-                mode = item.get('mode', 'serial')
-                if mode != 'simulator' and not SERIAL_AVAILABLE:
-                    mode = 'simulator'   # pyserial 缺失时优雅降级
-                params = {**self.adc_param_source(), **item}
-                ch = self.make_channel(
-                    name=item.get('name') or None,
-                    color=item.get('color') or None,
-                    mode=mode, port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'),
-                    visible=item.get('visible', True),
-                    acs_params=params)
-                self.channels.append(ch)
-        else:
-            # 旧版单通道配置迁移：顶层采样间隔/换算字段作为第 1 路初值
-            self.channels.append(
-                self.make_channel(mode='serial' if SERIAL_AVAILABLE
-                                  else 'simulator'))
-        # 顶层镜像字段刷新为第 1 路实际值（旧版顶层配置可能滞后于各路参数）
-        if self.channels:
-            first = self.channels[0]
-            self.acs_range = first.acs_range
-            self.vcc = first.vcc
-            self.v_quiescent = first.v_quiescent
-            self.divider_ratio = first.divider_ratio
-            self.adc_bits = first.adc_bits
-            self.zero_cal_active = first.zero_cal_active
-            self.sample_interval_ms = first.sample_interval_ms
 
     # ---------------- 通道 ----------------
-    def make_channel(self, color=None, mode='serial', port='', name=None,
-                     sample_interval_ms=None, visible=True, acs_params=None,
-                     **params):
-        cid = self._next_channel_id
-        self._next_channel_id += 1
-        seq = self._next_channel_seq
-        self._next_channel_seq += 1
-        if not color:
-            used = {ch.color for ch in self.channels}
-            color = next((c for c in CHANNEL_COLORS if c not in used),
-                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
-        if acs_params is None:
-            acs_params = self.adc_param_source(
-                self.channels[0] if self.channels else None)
-        return CurrentChannel(
-            cid, name or f'通道{seq}', color, mode=mode, port=port,
-            sample_interval_ms=sample_interval_ms or self.sample_interval_ms,
-            visible=visible, acs_params=acs_params)
 
     # ---------------- 参数来源 / 换算 ----------------
     def adc_param_source(self, channel=None):
@@ -439,31 +417,6 @@ class CurrentKernel(SensorKernel):
                 f"采样间隔={main.sample_interval_ms}ms（各路独立）"),
         }
 
-    def csv_text(self):
-        total = sum(len(ch.current_data) for ch in self.channels)
-        if total == 0:
-            return ''
-        lines = [
-            f"# ACS712 模式={self.current_mode} 单位={self.current_unit} "
-            f"AC RMS窗口={self.ac_rms_window}点",
-            f"channel,timestamp_s,raw_adc,v_adc,v_sensor,"
-            f"current_{self.current_unit.lower()}",
-        ]
-        for ch in self.channels:
-            src = self.adc_param_source(ch)
-            lines.append(
-                f"# {ch.name}: 量程={ch.acs_range} "
-                f"灵敏度={self.sensitivity_of(src)}V/A "
-                f"零点={ch.v_quiescent:.4f}V 分压比={ch.divider_ratio}")
-            for i, (t, current) in enumerate(
-                    zip(ch.time_data, ch.current_data)):
-                raw = ch.raw_data[i] if i < len(ch.raw_data) else 0
-                v_adc = self.adc_to_vadc(raw, channel=ch)
-                v_sensor = self.adc_to_vsensor(raw, channel=ch)
-                lines.append(
-                    f"{ch.name},{t:.3f},{raw},{v_adc:.6f},{v_sensor:.6f},"
-                    f"{self.to_current_unit(current):.6f}")
-        return '\n'.join(lines) + '\n'
 
     def snapshot(self, points=0):
         """当前实验数据快照（供 KernelRegistry 任意线程读取）。"""

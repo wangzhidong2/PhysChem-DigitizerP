@@ -11,8 +11,8 @@ pH 换算、缓存、快照与 CSV。View（ph_sensor.py）只负责控件。
 import numpy as np
 
 from core import (
-    SensorKernel, load_sensor_config, save_sensor_config,
-    SERIAL_AVAILABLE, get_logger,
+    MultiChannelKernel, ChannelBase, load_sensor_config, save_sensor_config,
+    get_logger, CHANNEL_COLORS,
 )
 
 log = get_logger('ph_sensor_kernel')
@@ -33,27 +33,19 @@ DEFAULT_CALIBRATION_POINTS = [
     (9.18, 2030),   # 碱性缓冲液
 ]
 
-CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
-                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
+CHANNEL_COLORS = CHANNEL_COLORS
 
 CAL_MODE_NAMES = {1: '单点校准', 2: '两点校准', 3: '三点校准'}
 
 
-class PhChannel:
+class PhChannel(ChannelBase):
     """一路 pH 电极连接的数据模型（不持有任何 Qt 控件）。"""
 
     def __init__(self, cid, name, color, mode='serial', port='',
                  sample_interval_ms=100, visible=True, cal_params=None):
-        self.id = cid
-        self.name = name
-        self.default_name = name
-        self.color = color
-        self.mode = mode
-        self.port = port
-        self.thread = None
-        self.connected = False
-        self.sample_interval_ms = sample_interval_ms
-        self.visible = bool(visible)
+        super().__init__(cid, name, color, mode=mode, port=port,
+                         sample_interval_ms=sample_interval_ms,
+                         visible=visible)
 
         p = cal_params or {}
         self.calibration_points = [
@@ -65,17 +57,64 @@ class PhChannel:
             'theoretical_slope_mv', DEFAULT_THEORETICAL_SLOPE_MV)
         self.cal_coeffs = (0.0, 0.0, 7.0)
 
-        self.time_data = []
         self.adc_data = []
         self.ph_data = []
         # 基类 channel_info / clear 使用这两个名字；保持别名
         self.raw_data = self.adc_data
         self.value_data = self.ph_data
-        self.last_sample_s = None
 
 
-class PhKernel(SensorKernel):
+class PhKernel(MultiChannelKernel):
     """pH 传感器内核。"""
+
+    CHANNEL_EXTRA_FIELDS = (
+        'calibration_points', 'calibration_mode', 'theoretical_slope_mv',
+    )
+
+    def create_channel(self, cid, name, color, mode, port,
+                       sample_interval_ms, visible, params):
+        cal_params = dict(params.get('cal_params') or {})
+        for f in self.CHANNEL_EXTRA_FIELDS:
+            if f in params:
+                cal_params[f] = params[f]
+        return PhChannel(cid, name, color, mode=mode, port=port,
+                         sample_interval_ms=sample_interval_ms,
+                         visible=visible, cal_params=cal_params or None)
+
+    def channel_restore_params(self, item):
+        points = item.get('calibration_points')
+        if points:
+            points = [tuple(p) for p in points]
+        return {'cal_params': {
+            'calibration_points': points,
+            'calibration_mode': item.get('calibration_mode'),
+            'theoretical_slope_mv': item.get(
+                'theoretical_slope_mv', self.theoretical_slope_mv),
+        }}
+
+    def after_restore_channels(self):
+        self.calculate_calibration_coefficients()
+        self.mirror_first_channel(
+            'calibration_points', 'calibration_mode',
+            'theoretical_slope_mv', 'cal_coeffs', 'sample_interval_ms')
+
+    def csv_comments(self):
+        lines = []
+        for ch in self.channels:
+            mode_name = CAL_MODE_NAMES.get(
+                ch.calibration_mode, f'{ch.calibration_mode}点校准')
+            lines.append(f'# {ch.name}: {mode_name} '
+                         f'{[tuple(p) for p in ch.calibration_points]}')
+        return lines
+
+    def csv_header(self):
+        return ['channel', 'time_s', 'adc_raw', 'ph_value']
+
+    def csv_row_values(self, ch, i):
+        t = ch.time_data[i] if i < len(ch.time_data) else 0.0
+        adc = ch.adc_data[i] if i < len(ch.adc_data) else 0
+        ph = ch.ph_data[i] if i < len(ch.ph_data) else 0.0
+        return [ch.name, f'{t:.3f}', adc, f'{ph:.3f}']
 
     key = CONFIG_KEY
     title = 'pH传感器'
@@ -119,86 +158,11 @@ class PhKernel(SensorKernel):
                 else self.theoretical_slope_mv),
             'sample_interval_ms': (
                 first.sample_interval_ms if first else self.sample_interval_ms),
-            'channels': [
-                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color,
-                 'sample_interval_ms': ch.sample_interval_ms,
-                 'calibration_points': [tuple(p) for p in ch.calibration_points],
-                 'calibration_mode': ch.calibration_mode,
-                 'theoretical_slope_mv': ch.theoretical_slope_mv,
-                 'visible': ch.visible}
-                for ch in self.channels
-            ],
         }
-        return save_sensor_config(CONFIG_KEY, config)
+        return save_sensor_config(CONFIG_KEY, self.base_config(config))
 
-    def _restore_channels(self):
-        saved = (self.config or {}).get('channels') or []
-        if saved:
-            for item in saved:
-                mode = item.get('mode', 'serial')
-                if mode != 'simulator' and not SERIAL_AVAILABLE:
-                    mode = 'simulator'
-                points = item.get('calibration_points')
-                if points:
-                    points = [tuple(p) for p in points]
-                ch = self.make_channel(
-                    name=item.get('name') or None,
-                    color=item.get('color') or None,
-                    mode=mode, port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'),
-                    visible=item.get('visible', True),
-                    cal_params={
-                        'calibration_points': points,
-                        'calibration_mode': item.get('calibration_mode'),
-                        'theoretical_slope_mv': item.get(
-                            'theoretical_slope_mv',
-                            self.theoretical_slope_mv),
-                    })
-                self.channels.append(ch)
-        else:
-            mode = 'serial' if SERIAL_AVAILABLE else 'simulator'
-            self.channels.append(self.make_channel(mode=mode))
-        self.calculate_calibration_coefficients()
-        if self.channels:
-            first = self.channels[0]
-            self.calibration_points = [tuple(p) for p in first.calibration_points]
-            self.calibration_mode = first.calibration_mode
-            self.theoretical_slope_mv = first.theoretical_slope_mv
-            self.cal_coeffs = first.cal_coeffs
-            self.sample_interval_ms = first.sample_interval_ms
 
     # ---------------- 通道 ----------------
-    def make_channel(self, color=None, mode='serial', port='', name=None,
-                     sample_interval_ms=None, visible=True, cal_params=None,
-                     **params):
-        cid = self._next_channel_id
-        self._next_channel_id += 1
-        seq = self._next_channel_seq
-        self._next_channel_seq += 1
-        if not color:
-            used = {ch.color for ch in self.channels}
-            color = next((c for c in CHANNEL_COLORS if c not in used),
-                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
-        if cal_params is None:
-            first = self.channels[0] if self.channels else None
-            cal_params = {
-                'calibration_points': (
-                    [tuple(pt) for pt in first.calibration_points]
-                    if first else self.calibration_points),
-                'calibration_mode': (
-                    first.calibration_mode if first else self.calibration_mode),
-                'theoretical_slope_mv': (
-                    first.theoretical_slope_mv if first
-                    else self.theoretical_slope_mv),
-            }
-        ch = PhChannel(cid, name or f'通道{seq}', color,
-                       mode=mode, port=port,
-                       sample_interval_ms=(sample_interval_ms
-                                           or self.sample_interval_ms),
-                       visible=visible, cal_params=cal_params)
-        self._calc_coeffs_for(ch)
-        return ch
 
     # ---------------- 校准 / 物理 ----------------
     def _calc_coeffs_for(self, channel):
@@ -363,24 +327,6 @@ class PhKernel(SensorKernel):
                 f'采样间隔={main.sample_interval_ms}ms（各路独立）'),
         }
 
-    def csv_text(self):
-        total = sum(len(ch.ph_data) for ch in self.channels)
-        if total == 0:
-            return ''
-        lines = []
-        for ch in self.channels:
-            mode_name = CAL_MODE_NAMES.get(
-                ch.calibration_mode, f'{ch.calibration_mode}点校准')
-            lines.append(f'# {ch.name}: {mode_name} '
-                         f'{[tuple(p) for p in ch.calibration_points]}')
-        lines.append('channel,time_s,adc_raw,ph_value')
-        for ch in self.channels:
-            for i, (time_val, ph_val) in enumerate(
-                    zip(ch.time_data, ch.ph_data)):
-                adc_val = ch.adc_data[i] if i < len(ch.adc_data) else 0
-                lines.append(
-                    f'{ch.name},{time_val:.3f},{adc_val},{ph_val:.3f}')
-        return '\n'.join(lines) + '\n'
 
     # ---------------- 命令 ----------------
     def sensor_actions(self):

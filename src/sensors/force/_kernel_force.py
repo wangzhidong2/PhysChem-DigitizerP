@@ -11,14 +11,13 @@ View（force_sensor.py）只负责控件；本文件负责：
 - 采样节流、数据缓存、快照、CSV 导出
 """
 
-from collections import deque
 
 import numpy as np
 
 from core import (
-    SensorKernel, load_sensor_config, save_sensor_config,
-    SERIAL_AVAILABLE, EVENT_CHANNEL_STATE, EVENT_CHANNELS_CHANGED,
-    get_logger,
+    MultiChannelKernel, ChannelBase, load_sensor_config, save_sensor_config,
+    EVENT_CHANNEL_STATE, EVENT_CHANNELS_CHANGED,
+    get_logger, CHANNEL_COLORS,
 )
 
 log = get_logger('force_sensor_kernel')
@@ -26,8 +25,7 @@ log = get_logger('force_sensor_kernel')
 CONFIG_KEY = 'force_sensor'
 
 # 多路连接的默认曲线配色（按新建顺序轮换取未用色，界面上可单独改色）
-CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
-                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
+CHANNEL_COLORS = CHANNEL_COLORS
 
 # 固件去皮完成 / 校准就绪的通知事件（模块自定义，View 用 QTimer 消费）
 EVENT_TARE_DONE = 'tare_done'
@@ -36,21 +34,14 @@ EVENT_CALIBRATION_READY = 'calibration_ready'
 GRAVITY = 9.8
 
 
-class ForceChannel:
+class ForceChannel(ChannelBase):
     """一路 HX711 力/质量连接的数据模型（不持有任何 Qt 控件）。"""
 
     def __init__(self, cid, name, color, mode='serial', port='',
                  sample_interval_ms=100, visible=True, cal_params=None):
-        self.id = cid
-        self.name = name
-        self.default_name = name
-        self.color = color
-        self.mode = mode
-        self.port = port
-        self.thread = None
-        self.connected = False
-        self.sample_interval_ms = sample_interval_ms
-        self.visible = bool(visible)
+        super().__init__(cid, name, color, mode=mode, port=port,
+                         sample_interval_ms=sample_interval_ms,
+                         visible=visible)
 
         p = cal_params or {}
         self.offset = p.get('offset', 0)
@@ -59,18 +50,52 @@ class ForceChannel:
 
         # 采集数据：raw_data 存原始 ADC，force_data 存克值
         # （未校准时为原始 ADC 值）
-        self.time_data = []
-        self.raw_data = []
         self.force_data = []
-        # 实时显示 / 去皮用的滚动窗口（含未采集时的实时数据）
-        self.live_window = deque(maxlen=10)
         # 基类 channel_values 使用 value_data；保持别名
         self.value_data = self.force_data
-        self.last_sample_s = None
 
 
-class ForceKernel(SensorKernel):
+class ForceKernel(MultiChannelKernel):
     """力传感器内核。"""
+
+    CHANNEL_EXTRA_FIELDS = ('offset', 'scale', 'calibrated')
+
+    def create_channel(self, cid, name, color, mode, port,
+                       sample_interval_ms, visible, params):
+        cal_params = dict(params.get('cal_params') or {})
+        for f in self.CHANNEL_EXTRA_FIELDS:
+            if f in params:
+                cal_params[f] = params[f]
+        return ForceChannel(cid, name, color, mode=mode, port=port,
+                            sample_interval_ms=sample_interval_ms,
+                            visible=visible, cal_params=cal_params or None)
+
+    def channel_restore_params(self, item):
+        return {'cal_params': {
+            'offset': self.offset, 'scale': self.scale,
+            'calibrated': self.calibrated, **item}}
+
+    def after_restore_channels(self):
+        self._sync_first_channel()
+
+    def csv_comments(self):
+        lines = []
+        for ch in self.channels:
+            cal_desc = (f'校准 scale={ch.scale:.6f} offset={ch.offset}'
+                        if ch.calibrated else '未校准（值为原始ADC）')
+            lines.append(f'# {ch.name}: {cal_desc}')
+        return lines
+
+    def csv_header(self):
+        return ['channel', 'time_s', 'raw_adc', 'value', 'unit']
+
+    def csv_row_values(self, ch, i):
+        t = ch.time_data[i] if i < len(ch.time_data) else 0.0
+        raw = ch.raw_data[i] if i < len(ch.raw_data) else 0
+        force = ch.force_data[i] if i < len(ch.force_data) else 0.0
+        converted = self.convert_unit(force) if ch.calibrated else force
+        return [ch.name, f'{t:.3f}', raw, f'{converted:.6f}',
+                self.unit_str(ch)]
 
     key = CONFIG_KEY
     title = '力传感器'
@@ -116,39 +141,9 @@ class ForceKernel(SensorKernel):
             'unit': self.current_unit,
             'sample_interval_ms': (
                 first.sample_interval_ms if first else self.sample_interval_ms),
-            'channels': [
-                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color,
-                 'sample_interval_ms': ch.sample_interval_ms,
-                 'offset': ch.offset, 'scale': ch.scale,
-                 'calibrated': ch.calibrated, 'visible': ch.visible}
-                for ch in self.channels
-            ],
         }
-        return save_sensor_config(CONFIG_KEY, config)
+        return save_sensor_config(CONFIG_KEY, self.base_config(config))
 
-    def _restore_channels(self):
-        saved = (self.config or {}).get('channels') or []
-        if saved:
-            for item in saved:
-                mode = item.get('mode', 'serial')
-                if mode != 'simulator' and not SERIAL_AVAILABLE:
-                    mode = 'simulator'
-                ch = self.make_channel(
-                    name=item.get('name') or None,
-                    color=item.get('color') or None,
-                    mode=mode, port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'),
-                    visible=item.get('visible', True),
-                    # 缺字段用模块级顶层值补齐（旧版多通道配置迁移）
-                    cal_params={'offset': self.offset, 'scale': self.scale,
-                                'calibrated': self.calibrated, **item})
-                self.channels.append(ch)
-        else:
-            # 旧版单通道配置迁移：顶层去皮/校准字段作为第 1 路初值
-            mode = 'serial' if SERIAL_AVAILABLE else 'simulator'
-            self.channels.append(self.make_channel(mode=mode))
-        self._sync_first_channel()
 
     def _sync_first_channel(self):
         first = self.channels[0] if self.channels else None
@@ -159,30 +154,6 @@ class ForceKernel(SensorKernel):
             self.sample_interval_ms = first.sample_interval_ms
 
     # ---------------- 通道 ----------------
-    def make_channel(self, color=None, mode='serial', port='', name=None,
-                     sample_interval_ms=None, visible=True, cal_params=None,
-                     **params):
-        cid = self._next_channel_id
-        self._next_channel_id += 1
-        seq = self._next_channel_seq
-        self._next_channel_seq += 1
-        if not color:
-            used = {ch.color for ch in self.channels}
-            color = next((c for c in CHANNEL_COLORS if c not in used),
-                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
-        if cal_params is None:
-            first = self.channels[0] if self.channels else None
-            cal_params = {
-                'offset': first.offset if first else self.offset,
-                'scale': first.scale if first else self.scale,
-                'calibrated': first.calibrated if first else self.calibrated,
-            }
-        return ForceChannel(
-            cid, name or f'通道{seq}', color,
-            mode=mode, port=port,
-            sample_interval_ms=(sample_interval_ms
-                                or self.sample_interval_ms),
-            visible=visible, cal_params=cal_params)
 
     def main_channel(self):
         """主通道：数据最多的一路（无数据时取第 1 路）。"""
@@ -497,26 +468,6 @@ class ForceKernel(SensorKernel):
                 f'采样间隔={main.sample_interval_ms}ms（各路独立）'),
         }
 
-    def csv_text(self):
-        total = sum(len(ch.force_data) for ch in self.channels)
-        if total == 0:
-            return ''
-        lines = []
-        for ch in self.channels:
-            cal_desc = (f'校准 scale={ch.scale:.6f} offset={ch.offset}'
-                        if ch.calibrated else '未校准（值为原始ADC）')
-            lines.append(f'# {ch.name}: {cal_desc}')
-        lines.append('channel,time_s,raw_adc,value,unit')
-        for ch in self.channels:
-            ch_unit = self.unit_str(ch)
-            for i, (time_val, force_val) in enumerate(
-                    zip(ch.time_data, ch.force_data)):
-                raw_val = ch.raw_data[i] if i < len(ch.raw_data) else 0
-                converted = (self.convert_unit(force_val)
-                             if ch.calibrated else force_val)
-                lines.append(f'{ch.name},{time_val:.3f},{raw_val},'
-                             f'{converted:.6f},{ch_unit}')
-        return '\n'.join(lines) + '\n'
 
     def snapshot(self, points=0):
         data = super().snapshot(points)

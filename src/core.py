@@ -44,6 +44,33 @@ except ImportError:
 CONFIG_FILENAME = 'sensor_config.json'
 
 LOG_FILENAME = 'logs.json'
+
+# ============================================================
+# 多通道公共常量（各传感器内核共用，避免每模块各复制一份）
+# ============================================================
+#: 多路连接默认曲线配色（按新建顺序轮换取未用色，界面上可单独改色）
+CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
+                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
+
+#: 有符号 ADC 满量程：±(2^N - 1)，例如 12 位 → ±4095
+ADC_BITS_OPTIONS = {8: 255, 10: 1023, 12: 4095, 14: 16383, 16: 65535,
+                    18: 262143, 20: 1048575, 22: 4194303, 24: 16777215}
+
+#: ADC 参考电压（ESP32 analogRead 满量程）
+VREF = 3.3
+
+#: ADS1115 PGA 量程（TI ADS1115 数据手册 SBAS444E，9.3.3 节）
+ADS1115_PGA_RANGES = {
+    '±6.144V': 6.144,
+    '±4.096V': 4.096,
+    '±2.048V': 2.048,  # 默认（PGA=010）
+    '±1.024V': 1.024,
+    '±0.512V': 0.512,
+    '±0.256V': 0.256,
+}
+#: ADS1115 输入通道（MUX）：4 单端 + 2 差分
+ADS1115_CHANNELS = ['AIN0', 'AIN1', 'AIN2', 'AIN3', 'AIN0-AIN1', 'AIN2-AIN3']
+
 _LOG_LEVELS = {
     'warning': logging.WARNING,
     'info': logging.INFO,
@@ -1392,6 +1419,168 @@ class SensorKernel:
     def shutdown(self):
         self.disconnect_all()
         self._bus.close()
+
+
+class ChannelBase:
+    """多通道内核中一路连接的公共数据模型（纯 Python，不持有 Qt 控件）。
+
+    子类只初始化自己的物理参数与数据序列；id/名称/颜色/连接状态/采样间隔/
+    图表显隐/时间戳等公共字段由本类统一维护，避免每个模块重复一份。
+    """
+
+    def __init__(self, cid, name, color, mode='serial', port='',
+                 sample_interval_ms=100, visible=True):
+        self.id = int(cid)
+        self.name = name
+        self.default_name = name
+        self.color = color
+        self.mode = mode or 'serial'
+        self.port = port or ''
+        self.thread = None
+        self.connected = False
+        self.sample_interval_ms = int(sample_interval_ms or 100)
+        self.visible = bool(visible)
+        # 数据序列：子类通常会把自己的数据列表别名到 value_data/raw_data，
+        # 以便复用 SensorKernel 的快照、统计与 CSV 逻辑。
+        self.time_data = []
+        self.raw_data = []
+        self.value_data = []
+        # 实时显示 / 去皮用的滚动窗口（未开始采集时也持续记录）
+        self.live_window = deque(maxlen=10)
+        # 上次记录样本的主机相对秒（采样间隔过滤，每路独立）
+        self.last_sample_s = None
+
+
+class MultiChannelKernel(SensorKernel):
+    """多通道传感器内核公共层。
+
+    统一处理六类重复逻辑：通道 id/配色/默认名分配、配置恢复、每路字段
+    序列化、顶层镜像字段、CSV 拼接。子类只需实现物理差异：
+    ``create_channel`` / ``channel_restore_params`` / 换算与采样钩子。
+    """
+
+    #: 新建通道的默认配色（可在子类覆盖）
+    CHANNEL_COLORS = CHANNEL_COLORS
+    #: 每路公共持久化字段
+    CHANNEL_COMMON_FIELDS = ('name', 'mode', 'port', 'color',
+                             'sample_interval_ms', 'visible')
+    #: 子类追加的每路持久化字段名
+    CHANNEL_EXTRA_FIELDS = ()
+
+    # ---------------- 通道创建 ----------------
+    def create_channel(self, cid, name, color, mode, port,
+                       sample_interval_ms, visible, params):
+        """构造一路通道对象；params 为 add_channel/make_channel 的额外关键字。"""
+        raise NotImplementedError
+
+    def make_channel(self, color=None, mode='serial', port='', name=None,
+                     sample_interval_ms=None, visible=True, **params):
+        """分配稳定 id、默认名与未占用配色后交给 create_channel。"""
+        cid = self._next_channel_id
+        self._next_channel_id += 1
+        seq = self._next_channel_seq
+        self._next_channel_seq += 1
+        if not color:
+            used = {ch.color for ch in self.channels}
+            colors = self.CHANNEL_COLORS
+            color = next((c for c in colors if c not in used),
+                         colors[(seq - 1) % len(colors)])
+        return self.create_channel(
+            cid, name or f'通道{seq}', color, mode, port,
+            sample_interval_ms or self.sample_interval_ms, visible, params)
+
+    # ---------------- 配置恢复 / 保存 ----------------
+    def channel_restore_params(self, item):
+        """把配置里的一路 dict 转成 make_channel 的额外关键字。"""
+        return {}
+
+    def after_restore_channels(self):
+        """通道恢复完成后的模块级收尾（镜像顶层字段、重算系数等）。"""
+        pass
+
+    def _restore_channels(self):
+        """按配置重建通道；旧版单通道配置自动迁移为一路通道。"""
+        saved = (self.config or {}).get('channels') or []
+        if saved:
+            for item in saved:
+                mode = item.get('mode', 'serial')
+                if mode != 'simulator' and not SERIAL_AVAILABLE:
+                    mode = 'simulator'   # pyserial 缺失时优雅降级
+                self.channels.append(self.make_channel(
+                    name=item.get('name') or None,
+                    color=item.get('color') or None,
+                    mode=mode, port=item.get('port', ''),
+                    sample_interval_ms=item.get('sample_interval_ms'),
+                    visible=item.get('visible', True),
+                    **self.channel_restore_params(item)))
+        else:
+            mode = 'serial' if SERIAL_AVAILABLE else 'simulator'
+            self.channels.append(self.make_channel(mode=mode))
+        self.after_restore_channels()
+
+    def channel_to_dict(self, ch):
+        """一路通道 → 配置 dict（公共字段 + 子类扩展字段）。"""
+        out = {f: getattr(ch, f, None) for f in self.CHANNEL_COMMON_FIELDS}
+        for f in self.CHANNEL_EXTRA_FIELDS:
+            if hasattr(ch, f):
+                out[f] = getattr(ch, f)
+        return self.serialize_channel(out, ch)
+
+    def serialize_channel(self, out, ch):
+        """子类可在写盘前转换字段格式（如 tuple → list）。"""
+        return out
+
+    def base_config(self, extra=None):
+        """在模块顶层配置上补上统一的 sample_interval_ms 与 channels 列表。"""
+        first = self.channels[0] if self.channels else None
+        config = dict(extra or {})
+        config.setdefault(
+            'sample_interval_ms',
+            first.sample_interval_ms if first else self.sample_interval_ms)
+        config['channels'] = [self.channel_to_dict(ch) for ch in self.channels]
+        return config
+
+    def mirror_first_channel(self, *fields):
+        """把第 1 路的字段镜像到模块级属性（旧版单通道配置兼容）。"""
+        if not self.channels:
+            return
+        first = self.channels[0]
+        for f in fields:
+            if hasattr(first, f):
+                value = getattr(first, f)
+                if isinstance(value, list):
+                    value = list(value)   # 避免顶层与通道共用同一个列表
+                setattr(self, f, value)
+
+    # ---------------- CSV ----------------
+    def csv_comments(self):
+        """CSV 头部注释行（子类按需覆盖）。"""
+        return []
+
+    def csv_header(self):
+        """CSV 列名（可直接覆盖）。"""
+        return ['channel', 'timestamp_s', 'raw_adc', 'value']
+
+    def csv_row_values(self, channel, index):
+        """一路一个样本的列值（子类按需覆盖）。"""
+        values = self.channel_values(channel)
+        t = channel.time_data[index] if index < len(channel.time_data) else 0.0
+        raw = channel.raw_data[index] if index < len(channel.raw_data) else 0
+        value = values[index] if index < len(values) else ''
+        return [channel.name, f'{t:.3f}', raw, value]
+
+    def csv_text(self):
+        """长表 CSV：一行一个样本 + channel 列。"""
+        total = sum(len(self.channel_values(ch)) for ch in self.channels)
+        if total == 0:
+            return ''
+        lines = list(self.csv_comments())
+        lines.append(','.join(self.csv_header()))
+        for ch in self.channels:
+            for i in range(len(self.channel_values(ch))):
+                lines.append(','.join(str(v)
+                                      for v in self.csv_row_values(ch, i)))
+        return '\n'.join(lines) + '\n'
 
 
 class KernelRegistry:

@@ -11,59 +11,31 @@ View（voltage_sensor.py）只负责控件；本文件负责：
 - 快照 / CSV / ai_data 导出与 tare 命令
 """
 
-from collections import deque
-
 import numpy as np
 
 from core import (
-    SensorKernel, load_sensor_config, save_sensor_config,
-    SERIAL_AVAILABLE, EVENT_CHANNELS_CHANGED, get_logger,
+    MultiChannelKernel, ChannelBase, load_sensor_config, save_sensor_config,
+    EVENT_CHANNELS_CHANGED, get_logger,
+    ADC_BITS_OPTIONS, VREF,
+    ADS1115_PGA_RANGES, ADS1115_CHANNELS,
 )
 
 log = get_logger('voltage_sensor_kernel')
 
 CONFIG_KEY = 'voltage_sensor'
 
-# 多路连接的默认曲线配色（按新建顺序轮换取未用色，界面上可单独改色）
-CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
-                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
-
-# 有符号 ADC 满量程：±(2^N - 1)，例如 12 位 → ±4095
-ADC_BITS_OPTIONS = {8: 255, 10: 1023, 12: 4095, 14: 16383, 16: 65535,
-                    18: 262143, 20: 1048575, 22: 4194303, 24: 16777215}
-VREF = 3.3
-
-# ADS1115 PGA 量程（TI ADS1115 数据手册 SBAS444E，9.3.3 节）
-# 16 位有符号二进制补码（-32768~+32767），电压 = raw / 32768 × FSR
-ADS1115_PGA_RANGES = {
-    '±6.144V': 6.144,
-    '±4.096V': 4.096,
-    '±2.048V': 2.048,  # 默认（PGA=010）
-    '±1.024V': 1.024,
-    '±0.512V': 0.512,
-    '±0.256V': 0.256,
-}
-# ADS1115 输入通道（MUX）：4 单端 + 2 差分
-ADS1115_CHANNELS = ['AIN0', 'AIN1', 'AIN2', 'AIN3', 'AIN0-AIN1', 'AIN2-AIN3']
-
 # 单位换算：内部 voltage_data 始终存伏特，按当前单位返回显示值
 UNIT_FACTORS = {'kV': 0.001, 'V': 1.0, 'mV': 1000.0}
 
 
-class VoltageChannel:
+class VoltageChannel(ChannelBase):
     """一路电压采集连接的数据模型（不持有任何 Qt 控件）。"""
 
     def __init__(self, cid, name, color, mode='serial', port='',
-                 sample_interval_ms=100, adc_params=None):
-        self.id = cid
-        self.name = name
-        self.default_name = name
-        self.color = color
-        self.mode = mode
-        self.port = port
-        self.thread = None
-        self.connected = False
-        self.sample_interval_ms = sample_interval_ms
+                 sample_interval_ms=100, visible=True, adc_params=None):
+        super().__init__(cid, name, color, mode=mode, port=port,
+                         sample_interval_ms=sample_interval_ms,
+                         visible=visible)
 
         # 本路 ADC 换算参数（每路独立；缺省继承模块级/全局默认）
         p = adc_params or {}
@@ -76,25 +48,60 @@ class VoltageChannel:
         self.ads1115_mode = p.get('ads1115_mode', False)
         self.ads1115_pga = p.get('ads1115_pga', '±2.048V')
         self.ads1115_channel = p.get('ads1115_channel', 'AIN0')
-        self.visible = bool(p.get('visible', True))   # 图表显示开关
 
         # 采集数据（内部电压单位：伏特）
-        self.time_data = []
-        self.raw_data = []
         self.voltage_data = []
         # 基类 channel_info / clear 使用的别名
         self.value_data = self.voltage_data
-        # 去皮 / 实时显示用的滚动窗口（含未采集时的实时数据）
-        self.live_window = deque(maxlen=10)
-        # 上次记录样本的主机相对秒（采样间隔过滤，每路独立）
-        self.last_sample_s = None
         # 去皮零点（每路独立）
         self.tare_offset_v = float(p.get('tare_offset_v', 0.0) or 0.0)
         self.tare_active = bool(p.get('tare_active', False))
 
 
-class VoltageKernel(SensorKernel):
+class VoltageKernel(MultiChannelKernel):
     """电压传感器内核。"""
+
+    CHANNEL_EXTRA_FIELDS = (
+        'adc_bits', 'divider_ratio', 'amp_ratio',
+        'hx711_mode', 'hx711_avdd', 'hx711_channel',
+        'ads1115_mode', 'ads1115_pga', 'ads1115_channel',
+        'tare_offset_v', 'tare_active',
+    )
+
+    def create_channel(self, cid, name, color, mode, port,
+                       sample_interval_ms, visible, params):
+        adc_params = dict(params.get('adc_params') or {})
+        # HTTP add_channel 的 sensor_params 直接给每路字段，合并进来
+        for f in self.CHANNEL_EXTRA_FIELDS:
+            if f in params:
+                adc_params[f] = params[f]
+        if not adc_params:
+            adc_params = self.adc_param_source(
+                self.channels[0] if self.channels else None)
+        return VoltageChannel(
+            cid, name, color, mode=mode, port=port,
+            sample_interval_ms=sample_interval_ms, visible=visible,
+            adc_params=adc_params)
+
+    def channel_restore_params(self, item):
+        return {'adc_params': {**self.adc_param_source(), **item}}
+
+    def after_restore_channels(self):
+        self.mirror_first_channel(
+            'adc_bits', 'divider_ratio', 'amp_ratio', 'hx711_mode',
+            'hx711_avdd', 'hx711_channel', 'ads1115_mode',
+            'ads1115_pga', 'ads1115_channel', 'sample_interval_ms')
+
+    def csv_header(self):
+        return ['channel', 'timestamp_s', 'raw_adc',
+                f'voltage_{self.current_unit.lower()}']
+
+    def csv_row_values(self, ch, i):
+        voltage = ch.voltage_data[i] if i < len(ch.voltage_data) else 0.0
+        t = ch.time_data[i] if i < len(ch.time_data) else 0.0
+        raw = ch.raw_data[i] if i < len(ch.raw_data) else 0
+        return [ch.name, f'{t:.3f}', raw,
+                f'{self.to_current_unit(voltage):.6f}']
 
     key = CONFIG_KEY
     title = '电压传感器'
@@ -160,81 +167,11 @@ class VoltageKernel(SensorKernel):
             'sample_interval_ms': first.sample_interval_ms if first else self.sample_interval_ms,
             'tare_offset_v': first.tare_offset_v if first else 0.0,
             'tare_active': first.tare_active if first else False,
-            # 多路连接：每路的模式/串口/颜色/采样间隔/去皮/ADC 换算参数/图表显示
-            'channels': [
-                {'name': ch.name, 'mode': ch.mode, 'port': ch.port,
-                 'color': ch.color, 'sample_interval_ms': ch.sample_interval_ms,
-                 'adc_bits': ch.adc_bits, 'divider_ratio': ch.divider_ratio,
-                 'amp_ratio': ch.amp_ratio, 'hx711_mode': ch.hx711_mode,
-                 'hx711_avdd': ch.hx711_avdd, 'hx711_channel': ch.hx711_channel,
-                 'ads1115_mode': ch.ads1115_mode, 'ads1115_pga': ch.ads1115_pga,
-                 'ads1115_channel': ch.ads1115_channel,
-                 'visible': ch.visible,
-                 'tare_offset_v': ch.tare_offset_v,
-                 'tare_active': ch.tare_active}
-                for ch in self.channels
-            ],
         }
-        return save_sensor_config(CONFIG_KEY, config)
+        return save_sensor_config(CONFIG_KEY, self.base_config(config))
 
-    def _restore_channels(self):
-        """按配置重建通道；旧版单通道配置自动迁移为一路通道。"""
-        saved = (self.config or {}).get('channels') or []
-        if saved:
-            for item in saved:
-                mode = item.get('mode', 'serial')
-                if mode != 'simulator' and not SERIAL_AVAILABLE:
-                    mode = 'simulator'   # pyserial 缺失时优雅降级
-                # 缺字段用模块级顶层值补齐（旧版多通道配置迁移）
-                adc_params = {**self.adc_param_source(), **item}
-                self.channels.append(self.make_channel(
-                    name=item.get('name') or None,
-                    color=item.get('color') or None,
-                    mode=mode, port=item.get('port', ''),
-                    sample_interval_ms=item.get('sample_interval_ms'),
-                    adc_params=adc_params))
-        else:
-            # 旧版单通道配置迁移：顶层采样间隔/去皮/ADC 字段作为第 1 路初值
-            ch = self.make_channel(
-                mode='serial' if SERIAL_AVAILABLE else 'simulator')
-            ch.tare_offset_v = float((self.config or {}).get(
-                'tare_offset_v', 0.0) or 0.0)
-            ch.tare_active = bool((self.config or {}).get('tare_active', False))
-            self.channels.append(ch)
-        # 顶层镜像字段刷新为第 1 路实际值（旧版顶层配置可能滞后于各路参数）
-        if self.channels:
-            first = self.channels[0]
-            self.adc_bits = first.adc_bits
-            self.divider_ratio = first.divider_ratio
-            self.amp_ratio = first.amp_ratio
-            self.hx711_mode = first.hx711_mode
-            self.hx711_avdd = first.hx711_avdd
-            self.hx711_channel = first.hx711_channel
-            self.ads1115_mode = first.ads1115_mode
-            self.ads1115_pga = first.ads1115_pga
-            self.ads1115_channel = first.ads1115_channel
-            self.sample_interval_ms = first.sample_interval_ms
 
     # ---------------- 通道 ----------------
-    def make_channel(self, color=None, mode='serial', port='', name=None,
-                     sample_interval_ms=None, visible=True, adc_params=None,
-                     **params):
-        cid = self._next_channel_id
-        self._next_channel_id += 1
-        seq = self._next_channel_seq
-        self._next_channel_seq += 1
-        if not color:
-            used = {ch.color for ch in self.channels}
-            color = next((c for c in CHANNEL_COLORS if c not in used),
-                         CHANNEL_COLORS[(seq - 1) % len(CHANNEL_COLORS)])
-        p = dict(adc_params or self.adc_param_source())
-        p.setdefault('visible', visible)
-        return VoltageChannel(
-            cid, name or f'通道{seq}', color,
-            mode=mode, port=port,
-            sample_interval_ms=(sample_interval_ms
-                                or self.sample_interval_ms),
-            adc_params=p)
 
     # ---------------- ADC 换算 ----------------
     def adc_param_source(self, channel=None):
@@ -438,19 +375,6 @@ class VoltageKernel(SensorKernel):
             }
         return snap
 
-    def csv_text(self):
-        total = sum(len(ch.voltage_data) for ch in self.channels)
-        if total == 0:
-            return ''
-        # 长表格式：一行一个样本 + 通道名列，便于按通道分组分析
-        lines = [f"channel,timestamp_s,raw_adc,voltage_{self.current_unit.lower()}"]
-        for ch in self.channels:
-            for i, voltage in enumerate(ch.voltage_data):
-                t = ch.time_data[i] if i < len(ch.time_data) else 0.0
-                raw = ch.raw_data[i] if i < len(ch.raw_data) else 0
-                lines.append(f"{ch.name},{t:.3f},{raw},"
-                             f"{self.to_current_unit(voltage):.6f}")
-        return '\n'.join(lines) + '\n'
 
     # ---------------- 命令 ----------------
     def sensor_actions(self):

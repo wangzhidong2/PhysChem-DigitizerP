@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2026 wangzhidong2
+# Copyright (c) 2026 wangzhidong2
 # SPDX-License-Identifier: GPL-3.0-only
 
 # === MODULE META ===
@@ -18,30 +18,25 @@
 见 docs/multi-channel-design.md）。
 """
 
-import sys
 import os
 import importlib.util
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QSizePolicy,
 )
-from PySide6.QtCore import Qt, QTimer, QSize
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 from qfluentwidgets import (
-    PushButton, PrimaryPushButton, ComboBox, TextEdit, TitleLabel,
+    PushButton, PrimaryPushButton, ComboBox, TitleLabel,
     BodyLabel, CaptionLabel, SpinBox, DoubleSpinBox, FluentIcon as FIF,
-    FlowLayout, LineEdit, ToolButton, CheckBox,
+    FlowLayout,
 )
-from qfluentwidgets.components.dialog_box import ColorDialog
 
 # 从公共模块导入共享代码
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 from core import (
     get_logger,
-    SERIAL_AVAILABLE,
-    list_serial_ports,
     EVENT_SAMPLE_PREVIEW,
     EVENT_SAMPLE_RECORDED,
     EVENT_CHANNEL_STATE,
@@ -50,21 +45,17 @@ from core import (
     EVENT_ERROR,
 )
 from core_ui import (
-    sync_kernel_channel_row,
+    ChannelPanelMixin,
+    FlowWrapBox,
     sync_kernel_channels,
     fluent_message_box,
     ChartPanel,
-    SampleRateComboBox,
     card_style,
-    primary_btn_style,
-    accent_btn_style,
-    modern_combo_style,
     CollapsibleCard,
     FluentCard,
     ExpandableTextEdit,
     scroll_area_style,
     page_bg_style,
-    apply_module_theme,
     update_collect_btn,
     set_action_button_width,
 )
@@ -91,66 +82,15 @@ AI_SYSTEM_PROMPT = (
 )
 
 # 多路连接的默认曲线配色（按新建顺序轮换取未用色，界面上可单独改色）
-CHANNEL_COLORS = ('#0078d4', '#e74c3c', '#2ecc71', '#f39c12',
-                  '#9b59b6', '#00bcd5', '#e67e22', '#16a085')
 
 # 颜色下拉中「自定义…」项的 userData 标记（选中后弹 Fluent 取色对话框）
-CUSTOM_COLOR_KEY = '__custom__'
 
 
-def _make_color_icon(hex_color, size=24):
-    """生成实心圆色块 QIcon（颜色下拉项的预览图标）。"""
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor(hex_color))
-    p.drawEllipse(2, 2, size - 4, size - 4)
-    p.end()
-    return QIcon(pm)
 
 
-class _FlowWrapBox(QWidget):
-    """承载 FlowLayout 的容器：按可用宽度返回换行后的真实高度。
-
-    FlowLayout.sizeHint() 只返回「单项最大尺寸」，不含换行后的总高度；
-    QWidget 默认的 heightForWidth 也不会委托给布局。因此首次显示时父布局
-    按过小的高度分配，勾选行被压扁（折叠再展开才恢复）。这里显式实现
-    heightForWidth，让父布局按实际宽度算高度。
-    """
-
-    def __init__(self, flow, parent=None):
-        super().__init__(parent)
-        self._flow = flow
-        self.setLayout(flow)
-        sp = self.sizePolicy()
-        sp.setHeightForWidth(True)
-        self.setSizePolicy(sp)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        if width <= 0:
-            width = 600
-        return self._flow.heightForWidth(width)
-
-    def sizeHint(self):
-        width = self.width() if self.width() > 0 else 600
-        return QSize(self._flow.sizeHint().width(), self.heightForWidth(width))
-
-    def minimumSizeHint(self):
-        m = self._flow.minimumSize()
-        return QSize(m.width(), m.height())
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        # 宽度变化会改变换行行数，需让父布局重新按 heightForWidth 分配
-        self.updateGeometry()
 
 
-class CurrentSensorWidget(QWidget):
+class CurrentSensorWidget(ChannelPanelMixin, QWidget):
     """电流传感器模块界面 - ACS712 霍尔电流传感器
 
     ACS712 工作原理：
@@ -195,11 +135,7 @@ class CurrentSensorWidget(QWidget):
     # ------------------------------------------------------------------
     # 配置（委托内核）
     # ------------------------------------------------------------------
-    def load_config(self):
-        return self.kernel.config
 
-    def save_config(self):
-        return self.kernel.save_config()
 
     # ------------------------------------------------------------------
     # UI 构建
@@ -468,7 +404,7 @@ class CurrentSensorWidget(QWidget):
         self._visibility_flow.setHorizontalSpacing(14)
         self._visibility_flow.setVerticalSpacing(4)
         # 用按宽度算高度的容器，避免首次显示时被压扁（折叠展开后才正常）
-        self._visibility_container = _FlowWrapBox(self._visibility_flow)
+        self._visibility_container = FlowWrapBox(self._visibility_flow)
         chart_card_layout.addWidget(self._visibility_container)
 
         content_row = QHBoxLayout()
@@ -558,30 +494,12 @@ class CurrentSensorWidget(QWidget):
     # ------------------------------------------------------------------
     # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
     # ------------------------------------------------------------------
-    def _build_channels_from_kernel(self):
-        """按内核已有通道重建 UI 行（内核负责配置恢复与换算参数）。"""
-        for ch in self.channels:
-            self._build_channel_card(ch)
-            self._build_live_row(ch)
-        self._refresh_active_channel_combo()
-        self._refresh_chart_visibility_row()
-        self._update_delete_btns()
-        self._sync_compat_aliases()
-        self.update_zero_status_label()
-        self._refresh_summary_text()
 
     # ------------------------------------------------------------------
     # ACS712 参数按路独立：当前选中路辅助
     # ------------------------------------------------------------------
     ADC_BITS_INDEX = {8: 0, 10: 1, 12: 2, 14: 3, 16: 4}
 
-    def _active_channel_obj(self):
-        """ACS712 参数卡当前选中的通道对象（无通道/未初始化返回 None）。"""
-        combo = getattr(self, '_active_channel_combo', None)
-        if combo is None:
-            return None
-        cid = combo.currentData()
-        return next((ch for ch in self.channels if ch.id == cid), None)
 
     def _write_acs_param(self, attr, value):
         """把参数改动写入当前选中路（保存由内核负责）。"""
@@ -589,24 +507,6 @@ class CurrentSensorWidget(QWidget):
         if ch is not None:
             setattr(ch, attr, value)
 
-    def _refresh_active_channel_combo(self, keep_id=None):
-        """通道增删/改名后重建「当前连接」下拉，尽量保住原选中。"""
-        combo = getattr(self, '_active_channel_combo', None)
-        if combo is None:
-            return
-        if keep_id is None and combo.count():
-            keep_id = combo.currentData()
-        combo.blockSignals(True)
-        combo.clear()
-        for ch in self.channels:
-            combo.addItem(ch.name, userData=ch.id)
-        idx = next((i for i in range(combo.count())
-                    if combo.itemData(i) == keep_id), 0)
-        if combo.count():
-            combo.setCurrentIndex(idx)
-        combo.blockSignals(False)
-        # 选中项可能变了（删除了原选中通道）：同步一次控件显示
-        self._sync_acs_controls(self._active_channel_obj())
 
     def _on_active_channel_changed(self, index):
         """「当前连接」切换：把控件值同步为所选路的参数。"""
@@ -795,119 +695,12 @@ class CurrentSensorWidget(QWidget):
     # ============================================================
     # 多路连接管理：通道的增删 / 行控件 / 单路连接控制
     # ============================================================
-    def _make_channel(self, color=None, mode='serial', port='', name=None,
-                      sample_interval_ms=None, acs_params=None):
-        """创建内核通道，并为它建立对应的 UI 子卡/实时行。
 
-        新建通道的换算参数缺省继承参数卡当前选中路。
-        """
-        if acs_params is None:
-            acs_params = self.kernel.adc_param_source(self._active_channel_obj())
-        ch = self.kernel.add_channel(
-            color=color, mode=mode, port=port, name=name,
-            sample_interval_ms=sample_interval_ms, acs_params=acs_params)
-        self._build_channel_card(ch)
-        self._build_live_row(ch)
-        self._refresh_chart_visibility_row()
-        self._update_delete_btns()
-        self._sync_conn_card_height()
-        return ch
 
-    def add_channel(self):
-        """「新建连接」按钮：增加一路连接（默认有线串口，缺 pyserial 时为模拟器）。"""
-        self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
-        self._sync_compat_aliases()
-        self._refresh_active_channel_combo()
-        self.save_config()
 
-    def _delete_channel(self, ch):
-        """删除一路连接（正在连接的通道须先断开；至少保留一路）。"""
-        if getattr(ch, 'connected', False):
-            fluent_message_box(self, "提示", f"{ch.name} 正在连接，请先断开再删除")
-            return
-        refs = self._rows.pop(ch.id, None)
-        if refs:
-            self.channels_layout.removeWidget(refs['card'])
-            refs['card'].deleteLater()
-        self.kernel.remove_channel(ch.id)
-        self._remove_live_row(ch)
-        self._refresh_chart_visibility_row()
-        self._update_delete_btns()
-        self._sync_compat_aliases()
-        self._refresh_active_channel_combo()
-        self._sync_conn_card_height()
 
-    def _build_live_row(self, ch):
-        """为通道创建一行实时明细：名称+大字电流（通道色） | 原始ADC | ADC端电压 | 传感器输出。
 
-        多路同屏各占一行，不再互相覆盖；顶部不再有共享汇总位。
-        """
-        row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(16)
 
-        name_label = CaptionLabel(ch.name)
-        h.addWidget(name_label)
-
-        value_label = BodyLabel(f"--.- {self.current_unit}")
-        value_label.setFont(QFont("Cascadia Code", 20, QFont.Weight.Bold))
-        value_label.setStyleSheet(f"color: {ch.color};")
-        h.addWidget(value_label)
-
-        h.addStretch()
-
-        raw_label = CaptionLabel(f"{ch.name} ADC: ------")
-        raw_label.setFont(QFont("Cascadia Code", 11))
-        h.addWidget(raw_label)
-
-        vadc_label = CaptionLabel("ADC端电压: --.- V")
-        vadc_label.setFont(QFont("Cascadia Code", 11))
-        h.addWidget(vadc_label)
-
-        vsensor_label = CaptionLabel("传感器输出: --.- V")
-        vsensor_label.setFont(QFont("Cascadia Code", 11))
-        h.addWidget(vsensor_label)
-
-        self._live_layout.addWidget(row)
-        self._live_rows[ch.id] = {
-            'row': row, 'name_label': name_label, 'value_label': value_label,
-            'raw_label': raw_label, 'vadc_label': vadc_label,
-            'vsensor_label': vsensor_label,
-        }
-        self._refresh_data_card_height()
-
-    def _remove_live_row(self, ch):
-        """删除通道的实时明细行（断开/删除通道时调用）。"""
-        refs = self._live_rows.pop(ch.id, None)
-        if refs:
-            self._live_layout.removeWidget(refs['row'])
-            refs['row'].deleteLater()
-        # 该路被删后摘要标签可能指着它的旧值，刷成还有数据的最后一口
-        self._refresh_summary_text()
-        self._refresh_data_card_height()
-
-    def _refresh_data_card_height(self):
-        """实时数据卡行数变化后重算高度。
-
-        FluentCard 高度只在构造时按 body.sizeHint 固定，新建连接增加
-        实时明细行后不重算，后面的通道行会被裁掉（表现为只显示前两路）。
-        """
-        card = getattr(self, 'card_data', None)
-        if card is not None:
-            # 先激活实时行内层布局，否则外层 body 量到的仍是旧行数
-            live = getattr(self, '_live_layout', None)
-            if live is not None:
-                live.invalidate()
-                live.activate()
-            card.refresh_height()
-            # 新行加入布局要到下一拍才结算，再量一次才能包含全部行
-            QTimer.singleShot(0, self._refresh_data_card_height_deferred)
-
-    def _refresh_data_card_height_deferred(self):
-        card = getattr(self, 'card_data', None)
-        if card is not None:
-            card.refresh_height()
 
     def _refresh_summary_text(self):
         """隐藏摘要标签取「最近一路有数据的通道」最新值（供全屏折叠摘要）。"""
@@ -920,418 +713,33 @@ class CurrentSensorWidget(QWidget):
                 return
         self.current_value_label.setText(f"--.- {self.current_unit}")
 
-    def _refresh_chart_visibility_row(self):
-        """重建图表卡顶部的通道显示勾选行（通道增删/改名后调用）。"""
-        # 清旧行：qfluentwidgets FlowLayout.takeAt 返回控件本身
-        # （非标准 QLayoutItem——源码 return self._items.pop(index).widget()），
-        # 不能再对其调 .widget()；用 isinstance 兼容旧版本可能返回的 QLayoutItem
-        while self._visibility_flow.count():
-            item = self._visibility_flow.takeAt(0)
-            w = item if isinstance(item, QWidget) else (item.widget() if item else None)
-            if w is not None:
-                w.hide()   # 先隐藏，避免 deleteLater 延迟销毁期间与新建勾选框重叠
-                w.deleteLater()
-        for ch in self.channels:
-            cb = CheckBox(ch.name)
-            cb.setChecked(ch.visible)
-            cb.setToolTip(f"勾选后「{ch.name}」的曲线显示在图表上，取消则隐藏\n"
-                          f"（仅影响图表显示，采集/统计/保存不受影响）")
-            cb.toggled.connect(
-                lambda on, c=ch: self._on_channel_visible_toggled(c, on))
-            self._visibility_flow.addWidget(cb)
-            # 新建控件默认不可见，而 FlowLayout(isTight) 的 _doLayout 会
-            # 跳过不可见子项——不先 show() 就会漏排，停在 640x480 默认尺寸
-            cb.show()
-        self._visibility_container.setVisible(bool(self.channels))
-        # FlowLayout 在子项增删后不会自行重排（尺寸未变时父布局也不会
-        # 重新调用 setGeometry），新建的勾选框会停在 (0,0) 且保持
-        # 640x480 默认尺寸，表现为「要折叠再展开才刷新」。
-        # FlowLayout.activate() 实测无效（其 addItem 不触发 invalidate），
-        # 必须显式 setGeometry，才会对所有子项重跑 _doLayout。
-        self._visibility_flow.invalidate()
-        self._visibility_flow.setGeometry(self._visibility_container.contentsRect())
-        self._visibility_container.updateGeometry()
 
-    def _on_channel_visible_toggled(self, ch, checked):
-        """勾选/取消勾选：切换该路曲线显示并即时重绘。"""
-        ch.visible = bool(checked)
-        self.kernel.notify_change(ch.id)
-        self.update_chart()
 
-    def _sync_conn_card_height(self):
-        """连接控制卡高度随子卡实际高度自适应。
 
-        子卡折叠后其 sizeHint() 仍返回全展开高度，主卡 body 的
-        sizeHint() 因此高估（折叠后残留空白）；这里把 channels_container
-        的贡献替换为各子卡实际 height() 之和 + 间距后重算。
-        """
-        try:
-            card = self.card_conn
-            h = card.body.sizeHint().height()
-            cont = self.channels_container
-            cards = [self._rows[ch.id]['card']
-                     for ch in self.channels if ch.id in self._rows]
-            if cont is not None and cards:
-                actual = sum(c.height() for c in cards) + 8 * (len(cards) - 1)
-                h = h - cont.sizeHint().height() + actual
-            h = max(int(h), 1)
-            card.spaceWidget.setFixedHeight(h)
-            if card.isExpand:
-                card.setFixedHeight(card.card.height() + h)
-        except Exception:
-            pass
 
-    def _update_delete_btns(self):
-        """仅剩一路时禁用其删除按钮（至少保留一路连接行）。"""
-        single = len(self.channels) <= 1
-        for ch in self.channels:
-            refs = self._rows.get(ch.id)
-            if refs:
-                refs['delete_btn'].setEnabled(not single)
 
-    def _sync_compat_aliases(self):
-        """KernelRegistry / 网页端兼容：对外仍暴露单一 mode_combo/port_combo。
 
-        core.KernelRegistry.connection_info / _apply_connection 依赖这两个属性
-        读写连接方式与端口；多路化后让它们指向第 1 路的行控件，
-        set_connection('模拟器'/.../串口端口) 即作用于第 1 路，
-        connect=true 连接全部、断开连接全部，网页端不破。
-        """
-        if self.channels:
-            refs = self._rows[self.channels[0].id]
-            self.mode_combo = refs['mode_combo']
-            self.port_combo = refs['port_combo']
 
-    def _build_channel_card(self, ch):
-        """为通道创建一张连接子卡（参考电压模块多路连接的子卡样式）。
 
-        header：名称编辑 / 图线颜色下拉 / 删除按钮；
-        body：连接方式 + 串口 + 刷新 + 采样频率 + 连接按钮同一行（紧凑）。
-        每路独立：模式选择、串口刷新、采样频率、连接/断开。
-        """
-        card = FluentCard(ch.default_name, None, True, self)
 
-        # ---- header：自定义名称 ----
-        name_edit = LineEdit(card)
-        name_edit.setText(ch.name)
-        name_edit.setPlaceholderText("自定义名称")
-        name_edit.setFixedWidth(112)
-        name_edit.setToolTip("图表图例/实时数据中显示的名称（留空恢复默认「通道N」）")
-        name_edit.editingFinished.connect(
-            lambda c=ch, e=name_edit: self._on_channel_name_edited(c, e.text()))
-        card.add_header_widget(name_edit)
 
-        # ---- header：图线颜色下拉（预设色 + 自定义…） ----
-        color_combo = ComboBox(card)
-        color_combo.setMinimumWidth(96)
-        color_combo.setToolTip("该连接的图线颜色")
-        color_combo.currentIndexChanged.connect(
-            lambda i, c=ch: self._on_channel_color_changed(c, i))
-        card.add_header_widget(color_combo)
 
-        # ---- header：删除按钮 ----
-        delete_btn = ToolButton(FIF.DELETE, card)
-        delete_btn.setFixedSize(28, 28)
-        delete_btn.setToolTip("删除这一路连接（需先断开）")
-        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        delete_btn.clicked.connect(lambda _=False, c=ch: self._delete_channel(c))
-        card.add_header_widget(delete_btn)
 
-        # ---- body 单行：连接方式 + 串口 + 刷新 + 采样频率 + 连接（紧凑） ----
-        row1 = QHBoxLayout()
-        row1.setSpacing(8)
-        row1.addWidget(BodyLabel("连接方式"))
-        mode_combo = ComboBox()
-        mode_combo.addItems(["有线串口", "模拟器"])
-        mode_combo.setCurrentIndex(1 if ch.mode == 'simulator' else 0)
-        mode_combo.currentIndexChanged.connect(
-            lambda i, c=ch: self._on_channel_mode_changed(c, i))
-        row1.addWidget(mode_combo)
 
-        port_combo = ComboBox()
-        port_combo.setMinimumWidth(80)
-        self._fill_channel_ports(ch, port_combo)
-        port_combo.currentTextChanged.connect(
-            lambda t, c=ch: self._on_channel_port_changed(c, t))
-        port_label = BodyLabel("串口")
-        row1.addWidget(port_label)
-        row1.addWidget(port_combo)
 
-        refresh_btn = PushButton("刷新")
-        refresh_btn.setFixedHeight(30)
-        refresh_btn.setToolTip("重新枚举本路的串口列表")
-        refresh_btn.clicked.connect(
-            lambda _=False, c=ch: self._refresh_channel_ports(c))
-        row1.addWidget(refresh_btn)
 
-        row1.addWidget(BodyLabel("采样频率"))
-        sample_rate_combo = SampleRateComboBox()
-        sample_rate_combo.setSampleInterval(ch.sample_interval_ms)
-        sample_rate_combo.setMaximumWidth(110)
-        sample_rate_combo.sampleIntervalChanged.connect(
-            lambda ms, c=ch: self._on_channel_sample_interval_changed(c, ms))
-        row1.addWidget(sample_rate_combo)
 
-        row1.addStretch()
 
-        connect_btn = PrimaryPushButton("连接")
-        connect_btn.setFixedHeight(30)
-        connect_btn.clicked.connect(
-            lambda _=False, c=ch: self._toggle_channel_connection(c))
-        row1.addWidget(connect_btn)
-        w1 = QWidget()
-        w1.setLayout(row1)
-        card.add_widget(w1)
 
-        # 子卡折叠动画期间逐帧同步主卡高度（子卡折叠后 sizeHint 不缩）
-        card.expandAni.valueChanged.connect(self._sync_conn_card_height)
-        card.expandAni.finished.connect(self._sync_conn_card_height)
 
-        self.channels_layout.addWidget(card)
-        self._rows[ch.id] = {
-            'card': card, 'name_edit': name_edit, 'color_combo': color_combo,
-            'delete_btn': delete_btn, 'mode_combo': mode_combo,
-            'port_combo': port_combo, 'port_label': port_label,
-            'refresh_btn': refresh_btn,
-            'connect_btn': connect_btn, 'sample_rate_combo': sample_rate_combo,
-        }
-        self._init_channel_color_combo(ch)
-        self._apply_channel_mode_visibility(ch)
 
-    def _init_channel_color_combo(self, ch):
-        """（重建）填充颜色下拉：预设色 + 已存自定义色 + 「自定义…」项。"""
-        refs = self._rows.get(ch.id)
-        if not refs:
-            return
-        combo = refs['color_combo']
-        combo.blockSignals(True)
-        combo.clear()
-        for c in CHANNEL_COLORS:
-            combo.addItem(c, _make_color_icon(c), userData=c)
-        if ch.color and combo.findData(ch.color) < 0:
-            combo.addItem(ch.color, _make_color_icon(ch.color), userData=ch.color)
-        combo.addItem("自定义…", QIcon(), userData=CUSTOM_COLOR_KEY)
-        idx = combo.findData(ch.color)
-        combo.setCurrentIndex(idx if idx >= 0 else 0)
-        combo.blockSignals(False)
-
-    def _apply_channel_color(self, ch):
-        """把通道曲线颜色同步到该路实时行的大字标签。"""
-        live = self._live_rows.get(ch.id)
-        if live:
-            live['value_label'].setStyleSheet(f"color: {ch.color};")
-
-    def _on_channel_color_changed(self, ch, index):
-        """颜色下拉选中：预设色直接生效；「自定义…」弹 Fluent 取色对话框。"""
-        refs = self._rows.get(ch.id)
-        if not refs:
-            return
-        combo = refs['color_combo']
-        data = combo.itemData(index)
-        if data == CUSTOM_COLOR_KEY:
-            state = {'ok': False, 'color': None}
-            dialog = ColorDialog(QColor(ch.color),
-                                 f"选择 {ch.name} 的曲线颜色", self)
-            dialog.colorChanged.connect(
-                lambda c: state.__setitem__('color', c))
-            dialog.yesButton.clicked.connect(
-                lambda: state.__setitem__('ok', True))
-            dialog.exec()
-            color = state['color'] or getattr(dialog, 'color', None)
-            if not (state['ok'] and color is not None and color.isValid()):
-                self._init_channel_color_combo(ch)   # 取消：下拉回显当前色
-                return
-            ch.color = color.name()
-            # 该项定格为选定的颜色，尾部再补一个「自定义…」常驻入口
-            combo.blockSignals(True)
-            combo.setItemText(index, ch.color)
-            combo.setItemIcon(index, _make_color_icon(ch.color))
-            combo.setItemData(index, ch.color)
-            combo.addItem("自定义…", QIcon(), userData=CUSTOM_COLOR_KEY)
-            combo.blockSignals(False)
-        else:
-            ch.color = data
-        self.kernel.notify_change(ch.id)
-        self.update_chart()
-        # 实时行大字颜色同步为新通道色
-        live = self._live_rows.get(ch.id)
-        if live:
-            live['value_label'].setStyleSheet(f"color: {ch.color};")
-
-    def _on_channel_name_edited(self, ch, text):
-        """名称编辑完成：写回通道名（留空恢复默认「通道N」）。"""
-        t = text.strip()
-        ch.name = t or ch.default_name
-        refs = self._rows.get(ch.id)
-        if refs:
-            try:
-                refs['card'].card.setTitle(ch.name)
-            except Exception:
-                pass
-        live = self._live_rows.get(ch.id)
-        if live:
-            live['name_label'].setText(ch.name)
-            live['raw_label'].setText(f"{ch.name} ADC: ------")
-        self._refresh_active_channel_combo()
-        self._refresh_chart_visibility_row()
-        self.kernel.notify_change(ch.id)
-        self.update_chart()
-
-    def _fill_channel_ports(self, ch, combo):
-        """重填串口列表，尽量保住该通道上次选中的端口。"""
-        want = ch.port
-        # 重填期间屏蔽信号：否则 addItem/setCurrentText 会把占位项写进通道
-        combo.blockSignals(True)
-        try:
-            combo.clear()
-            ports = list_serial_ports()
-            for device, _desc in ports:
-                combo.addItem(device)
-            if not ports:
-                combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE else "无可用串口")
-            if want and combo.findText(want) >= 0:
-                combo.setCurrentText(want)
-        finally:
-            combo.blockSignals(False)
-        # 占位项（未安装/无可用）不写回通道，避免覆盖已保存的端口
-        current = combo.currentText()
-        if current and '未安装' not in current and '无可用' not in current:
-            ch.port = current
-
-    def _on_channel_port_changed(self, ch, text):
-        """用户选择串口：忽略占位项，写回通道并广播（网页端同步）。"""
-        t = (text or '').strip()
-        if not t or '未安装' in t or '无可用' in t or ch.port == t:
-            return
-        ch.port = t
-        self.kernel.notify_change(ch.id)
-
-    def refresh_ports(self):
-        """刷新所有通道的串口列表（网页端 refresh_ports 命令也走这里）。"""
-        for ch in self.channels:
-            self._refresh_channel_ports(ch)
-
-    def _refresh_channel_ports(self, ch):
-        refs = self._rows.get(ch.id)
-        if refs:
-            self._fill_channel_ports(ch, refs['port_combo'])
-
-    def _on_channel_mode_changed(self, ch, index):
-        ch.mode = 'simulator' if index == 1 else 'serial'
-        self._apply_channel_mode_visibility(ch)
-        self.kernel.notify_change(ch.id)
-
-    def _apply_channel_mode_visibility(self, ch):
-        """模拟器模式下隐藏本路的串口标签/下拉与刷新按钮。"""
-        refs = self._rows.get(ch.id)
-        if refs:
-            is_sim = ch.mode == 'simulator'
-            refs['port_label'].setVisible(not is_sim)
-            refs['port_combo'].setVisible(not is_sim)
-            refs['refresh_btn'].setVisible(not is_sim)
-            try:
-                refs['card']._adjustViewSize()
-            except Exception:
-                pass
-            self._sync_conn_card_height()
-
-    def _toggle_channel_connection(self, ch):
-        """单路的连接/断开按钮：按本路连接状态切换。"""
-        if getattr(ch, 'connected', False):
-            self._disconnect_channel(ch)
-        else:
-            self._connect_channel(ch)
-
-    def _connect_channel(self, ch):
-        """连接单路：串口或模拟器（其余通道不受影响，传输由内核创建）。"""
-        res = self.kernel.connect(ch.id)
-        if not res.get('ok'):
-            fluent_message_box(self, "连接错误",
-                               res.get('message', f'{ch.name} 连接失败'))
-            return
-        refs = self._rows.get(ch.id)
-        if refs:
-            refs['connect_btn'].setText("断开")
-        log.info("%s 已连接（%s）", ch.name,
-                 '模拟器' if ch.mode == 'simulator' else ch.port)
-        self._set_collect_enabled(True)
-        self.zero_cal_btn.setEnabled(True)   # 连接后即可去皮，不必先开始采集
-        live = self._live_rows.get(ch.id)
-        if live:
-            live['value_label'].setText(f"--.- {self.current_unit}")
-            live['raw_label'].setText(f"{ch.name}: 连接中...")
-            live['vadc_label'].setText("ADC端电压: --.- V")
-            live['vsensor_label'].setText("传感器输出: --.- V")
-
-    def _disconnect_channel(self, ch):
-        """断开单路（其余通道不受影响）。"""
-        self.kernel.disconnect(ch.id)
-        refs = self._rows.get(ch.id)
-        if refs:
-            refs['connect_btn'].setText("连接")
-        log.info("%s 已断开", ch.name)
-        # 本路实时行复位，其余路的显示保留
-        live = self._live_rows.get(ch.id)
-        if live:
-            live['value_label'].setText(f"--.- {self.current_unit}")
-            live['raw_label'].setText(f"{ch.name} ADC: 已断开")
-            live['vadc_label'].setText("ADC端电压: --.- V")
-            live['vsensor_label'].setText("传感器输出: --.- V")
-        self._refresh_summary_text()
-        if not self.kernel.connected_any():
-            self._set_collect_enabled(False)
-            self.zero_cal_btn.setEnabled(False)
-
-    def connect_device(self):
-        """连接全部未连接的通道（网页端 set_connection connect=true 走这里）。"""
-        self.kernel.connect_all()
-        for ch in self.channels:
-            refs = self._rows.get(ch.id)
-            if refs:
-                refs['connect_btn'].setText(
-                    "断开" if getattr(ch, 'connected', False) else "连接")
-        self._set_collect_enabled(self.kernel.connected_any())
-
-    def disconnect_all(self):
-        """断开全部通道（退出清理 / 网页端命令也走这里）。"""
-        self.kernel.disconnect_all()
-        for ch in self.channels:
-            refs = self._rows.get(ch.id)
-            if refs:
-                refs['connect_btn'].setText("连接")
-        self._set_collect_enabled(False)
-        self.zero_cal_btn.setEnabled(False)
 
     # ------------------------------------------------------------------
     # 采集控制
     # ------------------------------------------------------------------
-    def toggle_collection(self):
-        """合并的开始/停止按钮：按当前采集状态切换。"""
-        if self._collecting:
-            self.stop_collection()
-        else:
-            self.start_collection()
 
-    def _set_collect_enabled(self, enabled):
-        """连接/断开时同步合并按钮与浮动栏按钮的可用性。
 
-        「去皮」依赖实时数据流：连接后即可用（无需先开始采集），断开则禁用
-        —— 与采集按钮同步，避免连没连上都能点。
-        """
-        self.collect_btn.setEnabled(enabled)
-        self.float_collect_btn.setEnabled(enabled)
-        self.zero_cal_btn.setEnabled(
-            enabled or any(ch.live_window for ch in self.channels))
 
-    def _refresh_collect_btn(self):
-        """合并按钮与浮动栏按钮：文案随采集状态切换（停止采集/开始采集）。"""
-        update_collect_btn(self.collect_btn, self._collecting)
-        update_collect_btn(self.float_collect_btn, self._collecting)
-
-    def start_collection(self):
-        """开始数据采集（数据清空与时间基准由内核负责）。"""
-        self.kernel.start_collection()
-        self._apply_started_ui()
 
     def _apply_started_ui(self):
         """采集已开始：清空上一轮显示并切到采集状态。"""
@@ -1348,10 +756,6 @@ class CurrentSensorWidget(QWidget):
             if live:
                 live['raw_label'].setText(f"{ch.name} ADC: 采集中...")
 
-    def stop_collection(self):
-        """停止数据采集。"""
-        self.kernel.stop_collection()
-        self._apply_stopped_ui()
 
     def _apply_stopped_ui(self):
         """采集已停止：刷新按钮与汇总标签。"""
@@ -1373,11 +777,6 @@ class CurrentSensorWidget(QWidget):
     # ------------------------------------------------------------------
     # 内核事件 → UI（QTimer 在 GUI 线程消费，避免后台线程直接碰 QWidget）
     # ------------------------------------------------------------------
-    def _drain_kernel_events(self):
-        for event in self._events.drain(200):
-            if event is None:
-                return
-            self._handle_kernel_event(event)
 
     def _handle_kernel_event(self, event):
         kind = event.kind
@@ -1541,36 +940,8 @@ class CurrentSensorWidget(QWidget):
     # ------------------------------------------------------------------
     # 采样频率 / 保存 / 清除
     # ------------------------------------------------------------------
-    def _on_channel_sample_interval_changed(self, ch, interval_ms):
-        """本路采样频率改变：更新该路间隔并保存配置（对该路过滤即时生效；
-        模拟器线程按创建时间隔发数，重连后按新频率运行）。"""
-        ch.sample_interval_ms = interval_ms
-        if self.channels and ch is self.channels[0]:
-            self.sample_interval_ms = interval_ms  # 顶层字段跟第 1 路（旧配置兼容）
-            self.kernel.sample_interval_ms = interval_ms
-        self.kernel.notify_change(ch.id)
 
-    def save_data(self):
-        """保存数据到文件（由内核生成 CSV）。"""
-        total = sum(len(ch.current_data) for ch in self.channels)
-        if total == 0:
-            fluent_message_box(self, "警告", "没有数据可保存")
-            return
-        try:
-            filename = self.kernel.export_csv()
-            log.info("数据已保存到: %s（%d 点）", filename, total)
-            fluent_message_box(self, "成功", f"数据已保存到: {filename}")
-        except Exception as e:
-            log.error("保存失败: %s", e)
-            fluent_message_box(self, "错误", f"保存失败: {e}")
 
-    def clear_data(self):
-        """清除数据（由内核清空各通道缓存）。"""
-        if self.kernel.collecting:
-            self.kernel.stop_collection()
-        self.kernel.clear_data()
-        self._apply_cleared_ui()
-        log.info("已清除数据")
 
     def _apply_cleared_ui(self):
         """数据已清空：重置本模块的数据展示控件。"""
@@ -1590,54 +961,40 @@ class CurrentSensorWidget(QWidget):
         self.chart.clear_chart()
         self.save_btn.setEnabled(False)
 
-    def _ai_data(self):
-        """AI 分析实验数据回调（数据由内核生成，View 只补系统提示词）。"""
-        data = self.kernel.ai_data()
-        if not data:
-            return None
-        data = dict(data)
-        data['system_prompt'] = AI_SYSTEM_PROMPT
-        return data
 
-    def api_actions(self):
-        """本模块支持的控制动作（供 KernelRegistry / HTTP 层展示）。"""
-        return self.kernel.actions()
 
-    def api_command(self, action, params=None):
-        """执行控制动作（由 KernelRegistry 直接调用内核）。"""
-        return self.kernel.command(action, params)
 
-    def api_snapshot(self):
-        """当前实验数据快照（由内核生成，任意线程可读）。"""
-        return self.kernel.snapshot()
 
-    def api_csv(self):
-        """HTTP 导出用 CSV（避免 KernelRegistry 回退到单通道快照拼接）。"""
-        return self.kernel.csv_text()
 
-    def shutdown(self):
-        """退出清理：停止事件消费、关闭传输并关闭事件总线。"""
-        try:
-            self._event_timer.stop()
-        except Exception:
-            pass
-        try:
-            self._events.close()
-        except Exception:
-            pass
-        self.kernel.shutdown()
 
-    def showEvent(self, e):
-        """首次显示后按子卡真实高度收敛连接控制卡（构建期 height() 不可靠）。"""
-        super().showEvent(e)
-        self._sync_conn_card_height()
 
-    def apply_theme(self, theme):
-        """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
-        apply_module_theme(self, theme)
-        # 图表 figure 背景跟随主题
-        try:
-            from qfluentwidgets import isDarkTheme
-            self.chart.apply_chart_theme(isDarkTheme())
-        except Exception:
-            pass
+
+    def _channel_extra_params(self):
+        return {'acs_params': self.kernel.adc_param_source(
+            self._active_channel_obj())}
+
+    def _live_row_spec(self, ch):
+        unit = self.current_unit
+        return {'big_key': 'value_label', 'big_text': f'--.- {unit}',
+                'secondary': [
+                    ('raw_label', f'{ch.name} ADC: ------'),
+                    ('vadc_label', 'ADC端电压: --.- V'),
+                    ('vsensor_label', '传感器输出: --.- V'),
+                ]}
+
+    def _sync_active_channel_controls(self, ch):
+        self._sync_acs_controls(ch)
+
+    def _on_channel_connection_changed(self, ch, connected):
+        self.zero_cal_btn.setEnabled(self.kernel.connected_any())
+        live = self._live_rows.get(ch.id)
+        if not live:
+            return
+        live['value_label'].setText(f'--.- {self.current_unit}')
+        live['vadc_label'].setText('ADC端电压: --.- V')
+        live['vsensor_label'].setText('传感器输出: --.- V')
+        live['raw_label'].setText(
+            f'{ch.name}: 连接中...' if connected else f'{ch.name} ADC: 已断开')
+
+    def _on_connection_state_changed(self):
+        self.zero_cal_btn.setEnabled(self.kernel.connected_any())

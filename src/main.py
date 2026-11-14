@@ -23,8 +23,8 @@ import webbrowser
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QStackedWidget, QScrollArea,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QFrame, QScrollArea,
     QFileDialog,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect, QTimer, QUrl
@@ -42,11 +42,9 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         FluentWindow, FluentIcon as FIF, NavigationItemPosition,
         PushButton, PrimaryPushButton,
         ComboBox, InfoBar, InfoBarIcon, InfoBarPosition, BodyLabel,
-        TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
-        SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
+        TitleLabel, SubtitleLabel, CaptionLabel, SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
         SwitchSettingCard, SwitchButton, SpinBox, MessageBox, MessageBoxBase, Dialog,
-        qconfig, IndicatorPosition,
-        LineEdit,
+        qconfig, LineEdit,
         CardWidget, IconWidget, PillToolButton, CheckBox,
         AdaptiveFlowLayout, ToolTipFilter, TransparentToolButton,
     )
@@ -73,8 +71,7 @@ from core import (
 )
 # 公共 UI：主题、字体、样式、图表、通用控件
 from core_ui import (
-    card_style, primary_btn_style, accent_btn_style,
-    patch_combobox_arrow_flip, CollapsibleCard, FluentCard,
+    patch_combobox_arrow_flip, FluentCard,
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
     ChartPanel, chart_engine_available, resolve_chart_engine,
     reset_all_config,
@@ -82,7 +79,7 @@ from core_ui import (
     current_theme_mode, set_app_theme_mode, restore_app_theme,
     setup_logging, set_log_enabled, set_log_level, set_log_max_entries,
     # 应用字体：内嵌 MiSans 注册 / 解析 / 应用 / 系统字体选择器
-    EMBEDDED_FONT_FAMILY, load_embedded_font, apply_app_font,
+    load_embedded_font, apply_app_font,
     resolve_app_font_family, available_font_families, FontPickerDialog,
 )
 # 模块扫描 / 内核加载 / 插件加载

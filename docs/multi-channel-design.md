@@ -31,6 +31,21 @@
 
 ## 3. 架构
 
+### 3.0 公共层（消除六模块重复）
+
+多通道能力沉淀在两个公共层，模块只保留物理差异：
+
+| 公共层 | 位置 | 职责 |
+|---|---|---|
+| `ChannelBase` / `MultiChannelKernel` | `core.py` | 通道 id/默认名/配色、配置恢复与每路字段序列化、顶层镜像、CSV 长表 |
+| `ChannelPanelMixin` | `core_ui.py` | 连接子卡、实时行、端口刷新、显示勾选、单路/批量连接、采集按钮联动、CSV 保存、主题/退出清理 |
+
+模块侧只实现钩子：View 的 `_live_row_spec` / `_channel_extra_params` /
+`_on_channel_connection_changed`；内核的 `create_channel` /
+`channel_restore_params` / `after_restore_channels` / CSV 列定义。
+默认配色统一使用 `core.CHANNEL_COLORS`，`FlowWrapBox` / `FlowFixedWidth` /
+`make_color_icon` 统一由 `core_ui` 提供。
+
 ### 3.1 数据模型 `_Channel`（纯 Python，不持 Qt 控件）
 
 ```

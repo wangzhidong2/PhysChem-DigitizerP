@@ -16,17 +16,12 @@ core_ui.py — PhysChem-DigitizerP 公共 UI
 import os
 import sys
 import json
-import time
-import random
 import bisect
 import importlib
 import importlib.util
-from collections import deque
-from dataclasses import dataclass, field
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
-    QRadioButton, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
     QApplication, QScrollArea, QListWidget, QListWidgetItem,
     QStyledItemDelegate, QStyle,
 )
@@ -34,7 +29,7 @@ from PySide6.QtCore import (Qt, Signal, QThread, QPoint, QSize, QTimer,
                             QEvent, QAbstractNativeEventFilter)
 from PySide6.QtGui import (
     QFont, QColor, QPainter, QPen, QBrush, QPainterPath,
-    QFontMetrics, QTextOption,
+    QFontMetrics, QTextOption, QIcon, QPixmap,
 )
 
 # FluentWidgets — WinUI3 风格组件库（导入时它会向 stdout 打印一行 Pro 推广
@@ -46,16 +41,16 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
         SwitchButton, DoubleSpinBox, ToolButton, SpinBox,
         LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
-        TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
+        SubtitleLabel, BodyLabel, CaptionLabel,
         isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
         ConfigSerializer,
-        ExpandGroupSettingCard, FluentIcon, RadioButton, SettingCard,
+        ExpandGroupSettingCard, FluentIcon, RadioButton, CheckBox,
     )
+from qfluentwidgets.components.dialog_box import ColorDialog
 
 from core import (
-    SERIAL_AVAILABLE, get_logger, get_log_file_path,
-    list_serial_ports, serial_unavailable_hint, clear_sensor_config,
-    set_config_persistence,
+    SERIAL_AVAILABLE, get_logger, list_serial_ports, serial_unavailable_hint, clear_sensor_config,
+    set_config_persistence, CHANNEL_COLORS,
     setup_logging as _kernel_setup_logging,
     set_log_enabled as _kernel_set_log_enabled,
     set_log_level as _kernel_set_log_level,
@@ -744,7 +739,6 @@ class SystemAccentListener(QAbstractNativeEventFilter):
     def nativeEventFilter(self, eventType, message):
         try:
             if eventType == b'windows_generic_MSG' and message:
-                import ctypes
                 from ctypes import wintypes
                 msg = wintypes.MSG.from_address(int(message))
                 if msg.message == self.WM_DWMCOLORIZATIONCOLORCHANGED:
@@ -3118,64 +3112,6 @@ class AIChatDialog(Dialog):
 _retired_threads = []
 
 
-class SerialThread(QThread):
-    """串口通信线程"""
-    data_received = Signal(str)
-
-    def __init__(self, port, baudrate=115200):
-        super().__init__()
-        self.port = port
-        self.baudrate = baudrate
-        self.serial = None
-        # 初始即为运行态：若 stop() 在 run() 开始前被调用（刚连接就退出），
-        # run() 不会再把 running 覆盖为 True 导致线程永不退出、wait() 卡死
-        self.running = True
-
-    def run(self):
-        # pyserial 未安装：不发 ERROR 文本（各模块按连接失败弹窗处理）
-        if not SERIAL_AVAILABLE:
-            log.warning("pyserial 未安装，串口连接不可用")
-            return
-        if not self.running:      # start() 后被立即 stop()：直接退出
-            return
-        try:
-            self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
-            if not self.running:  # 打开串口期间被 stop()：关掉句柄立即退出
-                try:
-                    self.serial.close()
-                except Exception:
-                    pass
-                return
-            self.serial.reset_input_buffer()
-            log.info("串口已打开: %s", self.port)
-
-            while self.running:
-                try:
-                    if self.serial.in_waiting > 0:
-                        line = self.serial.readline().decode('utf-8', errors='ignore').strip()
-                        if line:
-                            # 详细档调试信息（默认 info 档不落盘/不大屏）
-                            log.debug("串口原始数据 [%s]: %s", self.port, line)
-                            self.data_received.emit(line)
-                    else:
-                        # 空闲时让出 CPU/GIL，避免忙等拖慢 UI 线程
-                        time.sleep(0.01)
-                except Exception as e:
-                    log.error("读取串口数据错误: %s", e)
-                    break
-        except Exception as e:
-            log.error("串口错误: %s", e)
-            self.data_received.emit(f"ERROR:{e}")
-
-    def stop(self):
-        self.running = False
-        # 关闭可能正在被读取线程使用的串口句柄；并发 close 抛异常时
-        # 吞掉（读取线程自身的 except 会收尾退出），避免调用方崩溃
-        try:
-            if self.serial:
-                self.serial.close()
-        except Exception:
-            pass
 
 
 def stop_thread(thread, timeout=2000, name="通信线程"):
@@ -3200,71 +3136,6 @@ def stop_thread(thread, timeout=2000, name="通信线程"):
 
 
 
-class SimulatorThread(QThread):
-    """模拟器通信线程 — 无需传感器硬件，随机生成数据用于界面/逻辑调试。
-
-    与 SerialThread 保持完全相同的信号接口（data_received = Signal(str)），
-    因此可直接替换 SerialThread 使用。输出数据格式与真实固件一致：
-    连接后先发送 "START"，随后按固定间隔发送 "timestamp_ms,raw_value"。
-
-    数据生成方式：围绕一个缓慢漂移的基准值叠加随机噪声，保证曲线既有波动
-    又连续自然（而非纯白噪声）。raw_value 范围由构造参数控制，以适配不同
-    传感器的 ADC/物理量量程。
-
-    Args:
-        value_min: 生成原始值的下限（含）
-        value_max: 生成原始值的上限（含）
-        interval_ms: 发送间隔（毫秒），默认 100ms
-        start_value: 初始基准值，默认取量程中点
-        timestamp_scale: 时间戳单位缩放。1=毫秒（默认，与大多数固件一致），
-                         1000=微秒（超声波固件 timestamp 以微秒计）
-    """
-
-    data_received = Signal(str)
-
-    def __init__(self, value_min=0, value_max=4095, interval_ms=100, start_value=None,
-                 timestamp_scale=1):
-        super().__init__()
-        self.value_min = int(value_min)
-        self.value_max = int(value_max)
-        self.interval_ms = max(10, int(interval_ms))
-        self.timestamp_scale = max(1, int(timestamp_scale))
-        # 初始即为运行态：stop() 若先于 run() 执行不会被覆盖，避免卡死
-        self.running = True
-        span = self.value_max - self.value_min
-        self._value = float(start_value) if start_value is not None else self.value_min + span / 2.0
-        # 每步基准值最大漂移量（量程的 0.5%），使曲线缓慢游走
-        self._drift_step = max(1.0, span * 0.005)
-        # 叠加的随机噪声幅度（量程的 1%）
-        self._noise_amp = max(1.0, span * 0.01)
-
-    def run(self):
-        if not self.running:   # start() 后立即被 stop()：直接退出
-            return
-        # 与真实固件一致：连接成功后先发 START
-        self.data_received.emit("START")
-        start_s = time.time()
-        while self.running:
-            # 基准值随机游走
-            self._value += random.uniform(-self._drift_step, self._drift_step)
-            # 软边界：超出量程时向中心回弹
-            if self._value < self.value_min:
-                self._value = self.value_min + abs(self._value - self.value_min) * 0.5
-            elif self._value > self.value_max:
-                self._value = self.value_max - abs(self._value - self.value_max) * 0.5
-            # 叠加噪声并取整
-            raw = self._value + random.uniform(-self._noise_amp, self._noise_amp)
-            raw = int(round(max(self.value_min, min(self.value_max, raw))))
-            elapsed = int((time.time() - start_s) * 1000 * self.timestamp_scale)
-            self.data_received.emit(f"{elapsed},{raw}")
-            # 分段 sleep 以便 stop() 能快速响应
-            slept = 0.0
-            while self.running and slept < self.interval_ms / 1000.0:
-                time.sleep(0.02)
-                slept += 0.02
-
-    def stop(self):
-        self.running = False
 # ============================================================
 # 可展开/收起的文本记录区
 # ============================================================
@@ -3513,7 +3384,6 @@ class FloatingDataPanel(QWidget):
 
     def paintEvent(self, e):
         """绘制半透明圆角背景，颜色随主题切换。"""
-        c = _theme_colors()
         if isDarkTheme():
             bg = QColor(45, 45, 45, 245)
             border = QColor("#5d5d5d")
@@ -3914,7 +3784,6 @@ class CollapsibleCard(QWidget):
 
     def _enter_fullscreen(self):
         """进入全屏：reparent 到 viewport，绝对定位填满"""
-        from PySide6.QtWidgets import QScrollArea
         host = self._find_content_host()
         if host is None:
             return
@@ -4257,878 +4126,14 @@ def _pick_line_color(index):
     return LINE_COLORS[index % len(LINE_COLORS)]
 
 
-def _color_icon(hex_color, size=24):
-    """生成实心圆角色块 QIcon（给 ComboBox 做颜色预览）。"""
-    from PySide6.QtGui import QIcon, QPixmap
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor(hex_color))
-    p.drawEllipse(2, 2, size - 4, size - 4)
-    p.end()
-    return QIcon(pm)
 
 
-class TimestampPairer:
-    """双板分测配对器：把电压板与电流板两路「时间戳,ADC」流按时间戳就近配对。
 
-    - 两块板各自按 ~100ms 周期（10Hz）输出，时间戳间隔恒定但起始时刻不同。
-    - 每侧缓存最新一行；两侧都到时比较时间戳差值：
-      * |t_v - t_i| <= tolerance_ms → 组成一对并回调 on_pair(t_ms, adc_v, adc_i)
-      * 否则丢弃时间戳更旧的一侧（等新行），避免某板偶发掉行导致永久错位。
-    """
 
-    def __init__(self, tolerance_ms=50, on_pair=None):
-        self.tolerance_ms = tolerance_ms
-        self.on_pair = on_pair
-        self._v = None   # (t_ms, adc)
-        self._i = None
 
-    def feed(self, side, t_ms, adc):
-        """喂入一侧新行；返回是否成功配对。"""
-        if side == 'v':
-            self._v = (t_ms, adc)
-        else:
-            self._i = (t_ms, adc)
-        return self._try_pair()
 
-    def _try_pair(self):
-        if self._v is None or self._i is None:
-            return False
-        tv, adc_v = self._v
-        ti, adc_i = self._i
-        if abs(tv - ti) <= self.tolerance_ms:
-            self._v = self._i = None
-            if self.on_pair is not None:
-                self.on_pair(tv, adc_v, adc_i)
-            return True
-        # 时间差超容差：丢旧等新，防止错位累积
-        if tv < ti:
-            self._v = None
-        else:
-            self._i = None
-        return False
 
-    def reset(self):
-        self._v = self._i = None
 
-
-class VIConnectionUnit:
-    """单路「电压+电流」数据通道：配置 + 通信线程 + 解析换算。
-
-    - 每个单元独立持有电压/电流两套数据源（一体固件 VI_* 单串口双通道，
-      或电压板 + 电流板双串口，或双模拟器），并行互不干扰。
-    - 换算后的实时样本经 on_sample(unit, t_s, v, i) 回调模块；
-      采样频率过滤 / 双通道配对 / AC RMS / 零点校准缓存均在本类内完成。
-    - 连接状态变化经 on_state(unit, connected, err_text) 回调面板聚合。
-    """
-
-    # 电压换算常量（与电压传感器模块一致）
-    ADC_BITS_OPTIONS = {8: 255, 10: 1023, 12: 4095, 14: 16383,
-                        16: 65535, 18: 262143, 20: 1048575,
-                        22: 4194303, 24: 16777215}
-    VREF = 3.3
-
-    # ADS1115 PGA 量程
-    ADS1115_PGA_RANGES = {
-        '±6.144V': 6.144,
-        '±4.096V': 4.096,
-        '±2.048V': 2.048,   # 默认（PGA=010）
-        '±1.024V': 1.024,
-        '±0.512V': 0.512,
-        '±0.256V': 0.256,
-    }
-
-    # 电流换算常量（与电流传感器模块一致）
-    ACS712_RANGES = {
-        '5A':  {'sensitivity': 0.185, 'range_a': 5,  'desc': 'ACS712ELC-05B  ±5A  185mV/A'},
-        '20A': {'sensitivity': 0.100, 'range_a': 20, 'desc': 'ACS712ELC-20A  ±20A  100mV/A'},
-        '30A': {'sensitivity': 0.066, 'range_a': 30, 'desc': 'ACS712ELC-30A  ±30A  66mV/A'},
-    }
-    UNIT_FACTORS = {'A': 1.0, 'mA': 1000.0}
-    VOLT_METHOD_VALUES = ['esp32', 'ads1115', 'hx711']
-
-    # 无效电流判断阈值（A）：|I| 小于该值视为开路，电阻显示 "---"
-    I_EPS = 1e-7
-
-    def __init__(self, index, on_sample, on_state=None, sample_interval_ms=100):
-        self.index = index
-        self.on_sample = on_sample          # callable(unit, t_s, v, i)
-        self.on_state = on_state            # callable(unit, connected, err_text)
-        self.sample_interval_ms = sample_interval_ms
-        self.custom_name = ""               # 用户自定义显示名（图表/实时行），空则用默认「连接 N」
-        self.color = _pick_line_color(index)
-
-        # 连接/测量配置
-        self.volt_mode = 'serial'        # serial / simulator
-        self.cur_mode = 'serial'         # serial / simulator
-        self.volt_merged = True          # 一体固件(VI_*)同时输出电流
-        self.volt_method = 'esp32'       # esp32 / ads1115 / hx711
-        # 电压参数
-        self.divider_ratio = 1.0
-        self.amp_ratio = 1.0
-        self.ads1115_pga = '±6.144V'
-        self.ads1115_channel = 'AIN0'
-        self.hx711_avdd = 5.0
-        self.hx711_channel = 'B'
-        # 电流参数
-        self.acs_range = '5A'
-        self.vcc = 5.0
-        self.v_quiescent = 2.5           # 零电流输出电压（零点校准后更新）
-        self.i_divider_ratio = 1.515     # ACS712 输出分压比
-        self.current_mode = 'DC'         # DC / AC
-        self.current_unit = 'A'
-        self.adc_bits = 12
-        self.ac_rms_window = 50
-
-        # 数据角色（由模块按参数卡「当前连接」写入，双板分测的核心）
-        self.role = 'both'      # both=一体/模拟器自出U+I；voltage/current=单通道传感器；none=未绑定
-        self.on_raw = None      # 单通道原始 ADC 样品回调 on_raw(self, t_ms, adc)（role=voltage/current 时）
-
-        # 通信线程与状态
-        self.serial_vi = None
-        self.serial_v = None
-        self.serial_i = None
-        self.sim_v = None
-        self.sim_i = None
-        self.port_v = ""          # 连接前由面板从卡上同步串口选择
-        self.port_i = ""
-        self.connected = False
-        self.zero_cal_active = False
-        self._recent_vs = deque(maxlen=10)
-        self._pending_v = None
-        self._pending_i = None
-        self._i_win = None
-        self.last_sample_time_ms = -1   # -1 表示尚未采样，首帧不丢
-        # 退出慢的旧线程保留引用（切模式/断开时防止 QThread 销毁崩溃）
-        self._retired_threads = []
-
-    @property
-    def label(self):
-        """图表/实时行/统计显示的连接名：优先用户自定义名，否则「连接 N」。"""
-        return self.custom_name or f"连接 {self.index + 1}"
-
-    # ---------------- 换算 ----------------
-    @property
-    def sensitivity(self):
-        return self.ACS712_RANGES.get(self.acs_range,
-                                      self.ACS712_RANGES['5A'])['sensitivity']
-
-    def to_current_unit(self, current_a):
-        return current_a * self.UNIT_FACTORS.get(self.current_unit, 1.0)
-
-    def format_current(self, current_a):
-        c = self.to_current_unit(current_a)
-        if self.current_unit == 'mA':
-            return f"{c:.2f}"
-        abs_c = abs(c)
-        if abs_c >= 1.0:
-            return f"{c:.4f}"
-        return f"{c:.6f}"
-
-    def adc_to_voltage(self, adc_value):
-        """电压 ADC 原始值 → 被测电压 (V)。换算公式与电压传感器模块一致。"""
-        if self.volt_method == 'ads1115':
-            fsr = self.ADS1115_PGA_RANGES.get(self.ads1115_pga, 6.144)
-            v_adc = adc_value / 32768.0 * fsr
-        elif self.volt_method == 'hx711':
-            gain = 128 if self.hx711_channel == 'A' else 32
-            v_adc = adc_value / 8388608.0 * (self.hx711_avdd / gain)
-        else:
-            max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
-            v_adc = (adc_value / max_adc) * self.VREF
-        return v_adc * self.divider_ratio / self.amp_ratio
-
-    def adc_to_vsensor(self, adc_value):
-        """电流 ADC 原始值 → ACS712 输出电压 (V，扣除分压电路影响)。"""
-        max_adc = self.ADC_BITS_OPTIONS.get(self.adc_bits, 4095)
-        v_adc = (adc_value / max_adc) * self.VREF
-        return v_adc * self.i_divider_ratio
-
-    def adc_to_current(self, adc_value):
-        """电流 ADC 原始值 → 瞬时电流 (A)。"""
-        return (self.adc_to_vsensor(adc_value) - self.v_quiescent) / self.sensitivity
-
-    # ---------------- 连接 / 断开 ----------------
-    def connect(self):
-        """按本单元配置建立电压/电流数据源，返回错误文本（成功返回 None）。"""
-        if not SERIAL_AVAILABLE and (self.volt_mode == 'serial'
-                                     or self.cur_mode == 'serial'):
-            return serial_unavailable_hint()
-        # 一致性兜底：电压为模拟器时电流必须同为模拟器
-        # （旧配置/UI 遗漏可能残留 cur_mode='serial'，否则模拟器模式会
-        # 误要求电流串口 —— 报「请先选择电流串口」）
-        if self.volt_mode == 'simulator' and self.cur_mode != 'simulator':
-            self.cur_mode = 'simulator'
-        if self.role == 'none':
-            return None  # 未绑定任何参数卡的连接不建立数据源
-        # 重置配对缓存与采样节流：避免旧连接残留帧混入新连接
-        self._pending_v = None
-        self._pending_i = None
-        self.last_sample_time_ms = -1
-
-        # ---- 单通道角色（role=voltage/current）：电压板或电流板，一路数据源 ----
-        if self.role in ('voltage', 'current'):
-            if self.volt_mode == 'simulator':
-                sim = SimulatorThread(0, 4095, self.sample_interval_ms, start_value=2500)
-                sim.data_received.connect(self.handle_single_line)
-                sim.start()
-                self.sim_v = sim
-                self._mark_connected(True, None)
-            else:
-                port = self.port_v or ""
-                if not port:
-                    return "请先选择串口"
-                self.serial_v = SerialThread(port)
-                self.serial_v.data_received.connect(self.handle_single_line)
-                self.serial_v.start()
-            return None
-
-        # ---- 电压源 ----
-        if self.volt_mode == 'serial':
-            port = self.port_v or ""
-            if not port:
-                return "请先选择电压串口"
-            if self.volt_merged:
-                self.serial_vi = SerialThread(port)
-                self.serial_vi.data_received.connect(self.handle_vi_line)
-                self.serial_vi.start()
-            else:
-                self.serial_v = SerialThread(port)
-                self.serial_v.data_received.connect(self.handle_v_line)
-                self.serial_v.start()
-        else:
-            self.sim_v = SimulatorThread(0, 4095, self.sample_interval_ms, start_value=2500)
-            self.sim_v.data_received.connect(self.handle_v_line)
-            self.sim_v.start()
-            self._mark_connected(True, None)
-
-        # ---- 电流源 ----
-        if self.volt_merged and self.volt_mode == 'serial':
-            pass  # 电流随电压板一体固件输出
-        elif self.cur_mode == 'serial':
-            port2 = self.port_i or ""
-            if not port2:
-                self.disconnect()
-                return "请先选择电流串口"
-            self.serial_i = SerialThread(port2)
-            self.serial_i.data_received.connect(self.handle_i_line)
-            self.serial_i.start()
-        else:
-            # 模拟器电流：ADC 范围围绕零电流输出电压 v_quiescent 波动。
-            # v_quiescent 是「扣除分压电路影响」后的零电流电压，对应原始
-            # ADC = vq / (VREF * 分压比) * 4095；范围 ±400 ADC ≈ ±0.65A(5A 量程)
-            v_div = self.v_quiescent / max(0.001, self.i_divider_ratio)
-            vq_adc = int(max(0.0, min(self.VREF, v_div)) / self.VREF * 4095)
-            lo = max(0, vq_adc - 400)
-            hi = min(4095, vq_adc + 400)
-            self.sim_i = SimulatorThread(lo, hi, self.sample_interval_ms, start_value=vq_adc)
-            self.sim_i.data_received.connect(self.handle_i_line)
-            self.sim_i.start()
-            self._mark_connected(True, None)
-        return None
-
-    def disconnect(self):
-        self._mark_connected(False, None)
-        threads = (self.serial_vi, self.serial_v, self.serial_i,
-                   self.sim_v, self.sim_i)
-        for t in threads:
-            if t is not None:
-                try:
-                    t.stop()
-                except Exception:
-                    pass
-        # 等线程真正退出再释放引用：QThread 仍在运行时被销毁会触发
-        # Qt fail-fast 崩溃（0xC0000409）；退出慢的收进 _retired_threads
-        for t in threads:
-            if t is None:
-                continue
-            try:
-                if not t.wait(2000):
-                    self._retired_threads.append(t)
-            except Exception:
-                self._retired_threads.append(t)
-        self._retired_threads = [t for t in self._retired_threads
-                                 if t.isRunning()]
-        self.serial_vi = self.serial_v = self.serial_i = None
-        self.sim_v = self.sim_i = None
-
-    def _mark_connected(self, connected, err_text=None):
-        """更新本单元连接状态并回调（面板据此聚合、模块据此刷新按钮）。"""
-        if self.connected == connected and err_text is None:
-            return
-        self.connected = connected
-        if self.on_state is not None:
-            self.on_state(self, connected, err_text)
-
-    def _on_started(self):
-        self._mark_connected(True, None)
-
-    def _on_error(self, data):
-        msg = data[len("ERROR:"):] if data.startswith("ERROR:") else data
-        self._mark_connected(False, msg)
-
-    # ---------------- 数据解析（单板三字段 / 双板与模拟器两字段 + 配对） ----------------
-    @staticmethod
-    def _parse(line):
-        parts = line.strip().split(',')
-        try:
-            t = int(float(parts[0]))
-            vals = [int(float(v)) for v in parts[1:]]
-            return t, vals
-        except (ValueError, IndexError):
-            return None
-
-    def handle_vi_line(self, data):
-        """单板一体：一行 时间戳,电压ADC,电流ADC。"""
-        if data == "START":
-            self._pending_v = self._pending_i = None  # 设备重启：清配对缓存
-            self._on_started()
-            return
-        if data.startswith("ERROR"):
-            self._on_error(data)
-            return
-        parsed = self._parse(data)
-        if parsed is None:
-            return
-        t, vals = parsed
-        if len(vals) != 2:
-            return
-        self._consume_pair(t, vals[0], vals[1])
-
-    def handle_v_line(self, data):
-        """电压通道数据（双板电压板 / 模拟器）。"""
-        if data == "START":
-            self._pending_v = self._pending_i = None  # 设备重启：清配对缓存
-            self._on_started()
-            return
-        if data.startswith("ERROR"):
-            self._on_error(data)
-            return
-        parsed = self._parse(data)
-        if parsed is None:
-            return
-        t, vals = parsed
-        if len(vals) != 1:
-            return
-        if self._pending_i is not None:
-            ti, adc_i = self._pending_i
-            self._pending_i = None
-            self._consume_pair(t, vals[0], adc_i)
-        else:
-            self._pending_v = (t, vals[0])
-
-    def handle_i_line(self, data):
-        """电流通道数据（双板电流板 / 模拟器）。"""
-        if data == "START":
-            self._pending_v = self._pending_i = None  # 设备重启：清配对缓存
-            self._on_started()
-            return
-        if data.startswith("ERROR"):
-            self._on_error(data)
-            return
-        parsed = self._parse(data)
-        if parsed is None:
-            return
-        t, vals = parsed
-        if len(vals) != 1:
-            return
-        self._pending_i = (t, vals[0])
-        if self._pending_v is not None:
-            tv, adc_v = self._pending_v
-            self._pending_v = None
-            self._consume_pair(tv, adc_v, vals[0])
-
-    def handle_single_line(self, data):
-        """单通道角色（role=voltage/current）数据行：START / ERROR: / 时间戳,ADc。
-
-        一路只出一个模拟值，回调 on_raw(self, t_ms, adc) 由模块自行决定
-        独立显示或送入双板分测配对器。
-        """
-        if data == "START":
-            self._on_started()
-            return
-        if data.startswith("ERROR"):
-            self._on_error(data)
-            return
-        parsed = self._parse(data)
-        if parsed is None:
-            return
-        t, vals = parsed
-        if len(vals) != 1:
-            return
-        if (self.last_sample_time_ms >= 0
-                and t - self.last_sample_time_ms < self.sample_interval_ms):
-            return
-        self.last_sample_time_ms = t
-        # 电流单通道：缓存 ACS712 输出电压用于零点校准
-        if self.role == 'current':
-            self._recent_vs.append(self.adc_to_vsensor(vals[0]))
-        if self.on_raw is not None:
-            self.on_raw(self, t, vals[0])
-
-    def _consume_pair(self, t_ms, adc_v, adc_i):
-        """电压+电流配对到达：采样过滤 → 换算 → RMS(AC) → 回调模块。"""
-        # last_sample_time_ms=-1 表示尚未采过样：首帧无条件接受
-        # （旧逻辑初始为 0，模拟器首帧时间戳≈0 时会被 0<interval 误丢）
-        if (self.last_sample_time_ms >= 0
-                and t_ms - self.last_sample_time_ms < self.sample_interval_ms):
-            return
-        self.last_sample_time_ms = t_ms
-
-        v = self.adc_to_voltage(adc_v)
-        v_sensor = self.adc_to_vsensor(adc_i)
-        i_inst = (v_sensor - self.v_quiescent) / self.sensitivity
-
-        if self.current_mode == 'AC':
-            self._i_win = getattr(self, '_i_win', deque(maxlen=self.ac_rms_window))
-            self._i_win.append(i_inst)
-            if len(self._i_win) >= 2:
-                import numpy as np
-                arr = np.array(list(self._i_win))
-                i = float(np.sqrt(np.mean(arr ** 2)))
-            else:
-                i = 0.0
-        else:
-            i = i_inst
-
-        self._recent_vs.append(v_sensor)
-        # 时间戳转相对秒交给模块（模块维护各自起点），这里只给原始毫秒换算值
-        if self.on_sample is not None:
-            self.on_sample(self, t_ms, v, i)
-
-    # ---------------- 零点校准 ----------------
-    def zero_calibrate(self):
-        """多取几个 ACS712 输出电压求均，作为零电流输出电压。"""
-        vals = list(self._recent_vs)
-        if len(vals) < 3:
-            return False
-        self.v_quiescent = sum(vals) / len(vals)
-        self.zero_cal_active = True
-        return True
-
-    def cancel_zero_cal(self):
-        self.v_quiescent = self.vcc / 2.0
-        self.zero_cal_active = False
-
-    def update_config(self, cfg):
-        """从 dict（模块持久化格式）批量回写本单元配置。"""
-        for k, v in cfg.items():
-            if k == 'label':
-                # 旧格式迁移：非默认序号名视为自定义名
-                if v and v != f"连接 {self.index + 1}":
-                    self.custom_name = v
-                continue
-            if hasattr(self, k):
-                setattr(self, k, v)
-
-    def get_config(self):
-        """导出本单元配置 dict（模块持久化用）。"""
-        keys = ('volt_mode', 'cur_mode', 'volt_merged', 'volt_method',
-                'divider_ratio', 'amp_ratio', 'ads1115_pga', 'ads1115_channel',
-                'hx711_avdd', 'hx711_channel', 'acs_range', 'vcc',
-                'v_quiescent', 'i_divider_ratio', 'current_mode',
-                'current_unit', 'zero_cal_active', 'adc_bits', 'ac_rms_window',
-                'custom_name', 'color')
-        return {k: getattr(self, k) for k in keys}
-
-
-class VIConnectionUnitCard(FluentCard):
-    """单个连接单元卡：完整 U+I 装置配置 + 图线颜色下拉 + 删除按钮。
-
-    配置变更即时写回对应 VIConnectionUnit；标题与颜色随序号自动分配。
-    """
-
-    remove_requested = Signal(object)
-
-    def __init__(self, unit, index, parent=None):
-        super().__init__(f"连接 #{index + 1}", None, True, parent)
-        self.unit = unit
-
-        # ---- header：自定义名称 + 图线颜色下拉 + 删除按钮 ----
-        self.name_edit = LineEdit(self)
-        self.name_edit.setText(unit.label)
-        self.name_edit.setPlaceholderText("自定义名称")
-        self.name_edit.setFixedWidth(112)
-        self.name_edit.setToolTip("图表图例/实时数据中显示的名称（留空则用默认「连接 #N」）")
-        self.name_edit.textEdited.connect(self._on_name_edited)
-        self.add_header_widget(self.name_edit)
-
-        self.color_combo = ComboBox(self)
-        for color in LINE_COLORS:
-            self.color_combo.addItem(color, _color_icon(color), userData=color)
-        self._set_color(unit.color)
-        self.color_combo.setMinimumWidth(96)
-        self.color_combo.setToolTip("该连接的图线颜色")
-        self.color_combo.currentIndexChanged.connect(self._on_color_changed)
-        self.add_header_widget(self.color_combo)
-
-        self.remove_btn = ToolButton(FluentIcon.DELETE, self)
-        self.remove_btn.setFixedSize(28, 28)
-        self.remove_btn.setToolTip("删除该连接")
-        self.remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
-        self.add_header_widget(self.remove_btn)
-
-        # ---- body：连接方式 + 采样方式（同一行） ----
-        row1 = QHBoxLayout()
-        row1.setSpacing(8)
-        row1.addWidget(BodyLabel("连接方式"))
-        self.mode_combo = ComboBox()
-        self.mode_combo.addItems(["模拟器", "串口"])
-        self.mode_combo.setCurrentIndex(1 if unit.volt_mode == 'serial' else 0)
-        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        row1.addWidget(self.mode_combo)
-        row1.addSpacing(8)
-        row1.addWidget(BodyLabel("采样方式"))
-        self.method_combo = ComboBox()
-        self.method_combo.addItems(
-            ["ESP32 内置 ADC", "ADS1115 (16位)", "HX711 (24位)"])
-        self.method_combo.setCurrentIndex(
-            unit.VOLT_METHOD_VALUES.index(unit.volt_method))
-        self.method_combo.currentIndexChanged.connect(self._on_method_changed)
-        row1.addWidget(self.method_combo)
-        row1.addStretch()
-        w1 = QWidget()
-        w1.setLayout(row1)
-        self.add_widget(w1)
-
-        # ---- 串口行（唯一的串口选择；单板/双板共用，仅串口模式可见）----
-        port_row = QHBoxLayout()
-        port_row.setSpacing(8)
-        port_row.addWidget(BodyLabel("串口"))
-        self.port_combo = ComboBox()
-        self.port_combo.setMinimumWidth(130)
-        self.refresh_btn = PushButton("刷新")
-        self.refresh_btn.setFixedHeight(30)
-        self.refresh_btn.clicked.connect(self.refresh_ports)
-        port_row.addWidget(self.port_combo, 1)
-        port_row.addWidget(self.refresh_btn)
-        self.volt_port_row = QWidget()
-        self.volt_port_row.setLayout(port_row)
-        self.add_widget(self.volt_port_row)
-
-        # ---- 单板/双板（一体固件开关）----
-        self.merged_switch = SwitchButton()
-        self.merged_switch.setText("开")
-        self.merged_switch.setOnText("单板一体（VI_*，同时输出电压+电流）")
-        self.merged_switch.setOffText("双板分测（V_*/I_*，角色由下方电压/电流设置指定）")
-        self.merged_switch.setChecked(unit.volt_merged)
-        self.merged_switch.checkedChanged.connect(self._on_merged_changed)
-        self.add_row("固件", self.merged_switch)
-
-        self.refresh_ports()
-        self._sync_visibility()
-
-    def _set_color(self, color):
-        idx = LINE_COLORS.index(color) if color in LINE_COLORS else 0
-        self.color_combo.blockSignals(True)
-        self.color_combo.setCurrentIndex(idx)
-        self.color_combo.blockSignals(False)
-
-    def _on_name_edited(self, text):
-        """用户输入自定义名称：立即写回单元（留空忽略，保留当前名）。"""
-        t = text.strip()
-        if t:
-            self.unit.custom_name = t
-
-    def _on_color_changed(self, index):
-        self.unit.color = self.color_combo.itemData(index)
-
-    def _on_mode_changed(self, index):
-        """连接方式：串口 / 模拟器 同时作用于电压与电流两条通道。
-
-        此前只改 volt_mode 而 cur_mode 恒为 'serial'，导致选「模拟器」
-        时电流仍要求串口（报「请先选择电流串口」或误连串口）——
-        电压能连、电流不能连。现在统一同步两个通道。
-        """
-        mode = 'serial' if index == 1 else 'simulator'
-        self.unit.volt_mode = mode
-        self.unit.cur_mode = mode
-        self._sync_visibility()
-        # 一体固件仅对串口有意义；电压为模拟器时电流板块完全独立
-        self.merged_switch.setEnabled(self.unit.volt_mode == 'serial')
-
-    def _on_method_changed(self, index):
-        self.unit.volt_method = (self.unit.VOLT_METHOD_VALUES[index]
-                                 if 0 <= index < len(self.unit.VOLT_METHOD_VALUES)
-                                 else 'esp32')
-
-    def _on_merged_changed(self, checked):
-        self.unit.volt_merged = bool(checked)
-        self._sync_visibility()
-
-    def _sync_visibility(self):
-        unit = self.unit
-        self.volt_port_row.setVisible(unit.volt_mode == 'serial')
-        try:
-            self._adjustViewSize()
-        except Exception:
-            pass
-
-    def refresh_ports(self):
-        ports = list_serial_ports()
-        self.port_combo.blockSignals(True)
-        self.port_combo.clear()
-        if ports:
-            for device, desc in ports:
-                self.port_combo.addItem(f"{device} {desc}" if desc else device,
-                                        userData=device)
-            self.port_combo.setCurrentIndex(0)
-        else:
-            if SERIAL_AVAILABLE:
-                self.port_combo.addItem("未检测到串口设备", userData="")
-            else:
-                self.port_combo.addItem("未安装 pyserial", userData="")
-        self.port_combo.blockSignals(False)
-
-    def sync_from_unit(self):
-        """配置重载后把 unit 的值同步回控件。"""
-        unit = self.unit
-        self.name_edit.blockSignals(True)
-        self.name_edit.setText(unit.label)
-        self.name_edit.blockSignals(False)
-        self.mode_combo.blockSignals(True)
-        self.mode_combo.setCurrentIndex(1 if unit.volt_mode == 'serial' else 0)
-        self.mode_combo.blockSignals(False)
-        self.method_combo.blockSignals(True)
-        self.method_combo.setCurrentIndex(
-            unit.VOLT_METHOD_VALUES.index(unit.volt_method)
-            if unit.volt_method in unit.VOLT_METHOD_VALUES else 0)
-        self.method_combo.blockSignals(False)
-        self.merged_switch.blockSignals(True)
-        self.merged_switch.setChecked(unit.volt_merged)
-        self.merged_switch.blockSignals(False)
-        self._set_color(unit.color)
-        self._sync_visibility()
-
-
-class VIConnectionPanel(FluentCard):
-    """多连接控制面板：单元卡列表 + 添加/删除 + 采样频率 + 连接按钮。
-
-    - add_unit() / remove_unit() 动态增删；每单元独立并行采集。
-    - connection_changed(any_connected) 供模块启用/禁用采集按钮。
-    - units_changed() 在增删后通知模块重建每路实时标签/缓冲。
-    - get_configs() / set_configs(configs) 对接模块配置持久化。
-    """
-
-    connection_changed = Signal(bool)
-    units_changed = Signal()
-    dual_pairing_changed = Signal(bool)
-
-    def __init__(self, on_sample, sample_interval_ms=100, title="连接控制",
-                 parent=None, dual_pairing=False):
-        super().__init__(title, None, True, parent)
-        self.on_sample = on_sample
-        self._unit_objs = []      # VIConnectionUnit
-        self._unit_cards = []     # VIConnectionUnitCard
-        self._pending_index = 0   # 序号（删除后不回退，避免撞号）
-        self._dual_pairing = bool(dual_pairing)
-
-        # header：双板分测（跨连接配对电压/电流）+ 添加连接
-        self.dual_switch = SwitchButton()
-        self.dual_switch.setText("关")
-        self.dual_switch.setOnText("单板一体")
-        self.dual_switch.setOffText("双板分测")
-        self.dual_switch.setChecked(self._dual_pairing)
-        self.dual_switch.checkedChanged.connect(self._on_dual_pairing_changed)
-        self.dual_switch.setToolTip(
-            "双板分测：把「电压设置」选中的连接与「电流设置」选中的连接，"
-            "两路数据按时间戳配对成 (U,I) 后再用于计算")
-        self.add_header_widget(self.dual_switch)
-
-        # header：＋ 添加连接
-        self.add_btn = PushButton("＋ 添加连接")
-        self.add_btn.setFixedHeight(30)
-        self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_btn.setToolTip("添加一个新的连接（多传感器并行采集）")
-        self.add_btn.clicked.connect(self.add_unit)
-        self.add_header_widget(self.add_btn)
-
-        # 单元卡列表容器
-        self.units_container = QWidget()
-        self.units_layout = QVBoxLayout(self.units_container)
-        self.units_layout.setContentsMargins(0, 0, 0, 0)
-        self.units_layout.setSpacing(8)
-        self.add_widget(self.units_container)
-
-        # 采样频率（所有单元共享）
-        self.sample_rate_combo = SampleRateComboBox()
-        self.sample_rate_combo.setSampleInterval(sample_interval_ms)
-        self._sample_interval_ms = sample_interval_ms
-        self.sample_rate_combo.sampleIntervalChanged.connect(
-            self._on_sample_interval_changed)
-        self.add_row("采样频率", self.sample_rate_combo)
-
-        # 连接按钮 + 状态
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        self.connect_btn = PrimaryPushButton("连接")
-        self.connect_btn.setFixedHeight(34)
-        self.connect_btn.clicked.connect(self._on_connect_clicked)
-        btn_row.addWidget(self.connect_btn)
-        self.status_label = BodyLabel("未连接")
-        btn_row.addWidget(self.status_label)
-        btn_row.addStretch(1)
-        self.add_layout(btn_row)
-
-        self._refresh_add_btn()
-
-    # ---------------- 单元增删 ----------------
-    def add_unit(self, config=None):
-        """新增一个连接单元（返回新建的 VIConnectionUnit）。"""
-        self._pending_index += 1
-        idx = self._pending_index - 1
-        unit = VIConnectionUnit(
-            idx, self.on_sample, on_state=self._on_unit_state,
-            sample_interval_ms=self._sample_interval_ms)
-        if config:
-            unit.update_config(config)
-        card = VIConnectionUnitCard(unit, idx, parent=self)
-        card.remove_requested.connect(self.remove_unit)
-        # 子卡展开/折叠动画期间逐帧刷新本面板高度（子卡折叠后 sizeHint 不
-        # 缩小，必须按实际高度重算，见 _adjustViewSize）；动画结束再兜底一次
-        card.expandAni.valueChanged.connect(self._adjustViewSize)
-        card.expandAni.finished.connect(self._adjustViewSize)
-        self._unit_objs.append(unit)
-        self._unit_cards.append(card)
-        self.units_layout.addWidget(card)
-        try:
-            self._adjustViewSize()
-        except Exception:
-            pass
-        self._refresh_add_btn()
-        self.units_changed.emit()
-        return unit
-
-    def remove_unit(self, card):
-        """删除指定单元卡（若在连接先断开，再清理线程引用）。"""
-        if card not in self._unit_cards:
-            return
-        if card.unit.connected:
-            card.unit.disconnect()
-        self._unit_objs.remove(card.unit)
-        self._unit_cards.remove(card)
-        self.units_layout.removeWidget(card)
-        card.deleteLater()
-        try:
-            self._adjustViewSize()
-        except Exception:
-            pass
-        self._refresh_add_btn()
-        self._sync_connected()
-        self.units_changed.emit()
-
-    def _adjustViewSize(self):
-        """重写高度计算：子卡折叠后 sizeHint() 不缩小，改用子卡实际高度。
-
-        ExpandSettingCard 的折叠依赖滚动区 + 动画逐帧 setFixedHeight——
-        折叠后的子卡 height() 会缩到仅剩 header，但其 sizeHint() 仍返回
-        全展开高度。父面板 body 的 sizeHint() 因此高估，这里把
-        units_container 的贡献替换为各子卡 height() 之和 + 间距，
-        使连接卡随子卡展开/折叠自适应收放。
-        """
-        h = self.body.sizeHint().height()
-        cards = getattr(self, '_unit_cards', None)
-        if cards:
-            cont = getattr(self, 'units_container', None)
-            if cont is not None:
-                actual = sum(c.height() for c in cards)
-                actual += 8 * (len(cards) - 1)
-                h = h - cont.sizeHint().height() + actual
-        h = max(int(h), 1)
-        self.spaceWidget.setFixedHeight(h)
-        if self.isExpand:
-            self.setFixedHeight(self.card.height() + h)
-
-    def _refresh_add_btn(self):
-        """多单元时有删除入口，无需禁用加号；仅无单元时也可补加一个。"""
-        self.add_btn.setEnabled(len(self._unit_objs) < 8)
-
-    @property
-    def units(self):
-        return list(self._unit_objs)
-
-    @property
-    def dual_pairing(self):
-        """双板分测开关状态：True=启用跨连接电压/电流配对。"""
-        return self._dual_pairing
-
-    def _on_dual_pairing_changed(self, checked):
-        self._dual_pairing = bool(checked)
-        self.dual_pairing_changed.emit(self._dual_pairing)
-
-    def sync_all_cards(self):
-        """把各单元配置同步回对应卡控件（配置重载/自动切换模式后调用）。"""
-        for card in self._unit_cards:
-            card.sync_from_unit()
-
-    # ---------------- 采样频率 ----------------
-    def _on_sample_interval_changed(self, interval_ms):
-        self._sample_interval_ms = interval_ms
-        for u in self._unit_objs:
-            u.sample_interval_ms = interval_ms
-
-    # ---------------- 连接 ----------------
-    def _on_unit_state(self, unit, connected, err_text):
-        if err_text:
-            fluent_message_box(self, "连接错误", err_text)
-            unit.disconnect()
-        self._sync_connected()
-
-    def _sync_connected(self):
-        any_conn = any(u.connected for u in self._unit_objs)
-        if any_conn:
-            self.connect_btn.setText("断开")
-            self.status_label.setText("已连接")
-        else:
-            self.connect_btn.setText("连接")
-            self.status_label.setText("未连接")
-        self.connection_changed.emit(any_conn)
-
-    def _on_connect_clicked(self):
-        if any(u.connected for u in self._unit_objs):
-            self.disconnect_all()
-            return
-        self.connect_all()
-
-    def connect_all(self):
-        """逐单元建立数据源（并行）；串口开始工作后的单元在 START 时置位。"""
-        if not self._unit_objs:
-            return
-        errors = []
-        for unit, card in zip(self._unit_objs, self._unit_cards):
-            if unit.connected:
-                continue
-            # 从卡上同步当前串口选择到单元（单串口；旧双板配置的 port_i 保留自配置）
-            unit.port_v = card.port_combo.currentData() or ""
-            err = unit.connect()
-            if err:
-                errors.append(f"{unit.label}: {err}")
-        if errors:
-            fluent_message_box(self, "连接失败", "\n".join(errors))
-        # 全模拟器单元立即就绪，串口单元等 START（_sync_connected 经回调刷新）
-        self._sync_connected()
-
-    def disconnect_all(self):
-        for u in self._unit_objs:
-            u.disconnect()
-        self._sync_connected()
-
-    # ---------------- 配置持久化 ----------------
-    def get_configs(self):
-        return [u.get_config() for u in self._unit_objs]
-
-    def set_configs(self, configs):
-        """批量重建单元（清空现有）。"""
-        for card in list(self._unit_cards):
-            self.remove_unit(card)
-        for cfg in (configs or []):
-            self.add_unit(cfg)
-        if not self._unit_objs:
-            self.add_unit()
 
 
 # ============================================================
@@ -6550,4 +5555,746 @@ def sync_kernel_channels(view):
                 fn()
             except Exception:
                 pass
+
+
+# ============================================================
+# 多通道连接面板公共实现（六个传感器 View 共用）
+# ============================================================
+#: 颜色下拉中「自定义…」项的 userData 标记（选中后弹 Fluent 取色对话框）
+CUSTOM_COLOR_KEY = '__custom__'
+
+
+def make_color_icon(hex_color, size=24):
+    """生成实心圆色块 QIcon（颜色下拉项的预览图标）。"""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(hex_color))
+    p.drawEllipse(2, 2, size - 4, size - 4)
+    p.end()
+    return QIcon(pm)
+
+
+class FlowFixedWidth(QWidget):
+    """FlowLayout 按控件 sizeHint() 排版，setFixedWidth 不会改变排版宽度。
+
+    该容器把内部控件宽度锁定为 width，并让 sizeHint 返回这个宽度，
+    使 FlowLayout 按紧凑宽度排列（参数行数字框用）。
+    """
+
+    def __init__(self, inner, width, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(inner)
+        self._width = int(width)
+
+    def sizeHint(self):
+        return QSize(self._width, super().sizeHint().height())
+
+
+class FlowWrapBox(QWidget):
+    """承载 FlowLayout 的容器：按可用宽度返回换行后的真实高度。
+
+    FlowLayout.sizeHint() 只返回「单项最大尺寸」，不含换行后的总高度；
+    QWidget 默认的 heightForWidth 也不会委托给布局。因此首次显示时父布局
+    按过小的高度分配，勾选行被压扁（折叠再展开才恢复）。这里显式实现
+    heightForWidth，让父布局按实际宽度算高度。
+    """
+
+    def __init__(self, flow, parent=None):
+        super().__init__(parent)
+        self._flow = flow
+        self.setLayout(flow)
+        sp = self.sizePolicy()
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        if width <= 0:
+            width = 600
+        return self._flow.heightForWidth(width)
+
+    def sizeHint(self):
+        width = self.width() if self.width() > 0 else 600
+        return QSize(self._flow.sizeHint().width(), self.heightForWidth(width))
+
+    def minimumSizeHint(self):
+        m = self._flow.minimumSize()
+        return QSize(m.width(), m.height())
+
+
+class ChannelPanelMixin:
+    """多通道连接卡的公共 UI 行为。
+
+    宿主 View 在 ``__init__`` 中准备好这些属性后即可获得完整的通道增删、
+    子卡、实时行、端口刷新、显示勾选、连接/断开与采集按钮联动能力：
+
+        kernel / channels / _rows / _live_rows / _live_layout
+        channels_layout / channels_container / card_conn / card_data
+        _visibility_flow / _visibility_container / _collecting
+        collect_btn / float_collect_btn / _event_timer / _events
+
+    模块只实现物理差异钩子（均非必需）：
+        _channel_extra_params()        新建通道时传给内核的额外参数
+        _live_row_spec(ch)             实时行显示字段
+        _sync_active_channel_controls(ch)  参数卡「当前连接」下拉联动
+        _on_channel_connection_changed(ch, connected)  单路连接后的模块按钮/文案
+        _on_connection_state_changed() 批量连接/断开后的模块按钮状态
+        _after_channels_built()        通道重建后的模块级收尾
+    """
+
+    # ---------------- 子类钩子 ----------------
+    def _channel_extra_params(self):
+        """新建通道时传给 kernel.add_channel 的额外关键字。"""
+        return {}
+
+    def _live_row_spec(self, ch):
+        """一路实时行的显示描述：大字标签 + 若干次要标签。"""
+        return {
+            'big_key': 'value_label',
+            'big_text': '--.-',
+            'secondary': [('raw_label', f'{ch.name} ADC: ------')],
+        }
+
+    def _sync_active_channel_controls(self, ch):
+        """参数卡「当前连接」下拉切换后的控件刷新（模块按需覆盖）。"""
+        pass
+
+    def _on_channel_connection_changed(self, ch, connected):
+        """单路连接/断开后的模块级联动（去皮按钮、实时行文案等）。"""
+        pass
+
+    def _on_connection_state_changed(self):
+        """批量连接/断开后的模块级按钮状态。"""
+        pass
+
+    def _after_channels_built(self):
+        """按内核通道重建 UI 后的模块级收尾。"""
+        pass
+
+    # ---------------- 配置兼容 ----------------
+    def load_config(self):
+        return self.kernel.config
+
+    def save_config(self):
+        return self.kernel.save_config()
+
+    # ---------------- 通道增删 ----------------
+    def _make_channel(self, color=None, mode='serial', port='', name=None,
+                      sample_interval_ms=None, **params):
+        """创建内核通道，并为它建立对应的 UI 子卡/实时行。"""
+        extra = self._channel_extra_params()
+        extra.update(params)
+        ch = self.kernel.add_channel(
+            color=color, mode=mode, port=port, name=name,
+            sample_interval_ms=sample_interval_ms, **extra)
+        self._build_channel_card(ch)
+        self._build_live_row(ch)
+        self._refresh_chart_visibility_row()
+        self._update_delete_btns()
+        self._sync_conn_card_height()
+        return ch
+
+    def add_channel(self):
+        """「新建连接」按钮：增加一路连接（缺 pyserial 时用模拟器）。"""
+        self._make_channel(mode='serial' if SERIAL_AVAILABLE else 'simulator')
+        self._sync_compat_aliases()
+        self._refresh_active_channel_combo()
+
+    def _build_channels_from_kernel(self):
+        """按内核已有通道重建 UI 行（内核负责配置恢复）。"""
+        for ch in self.channels:
+            self._build_channel_card(ch)
+            self._build_live_row(ch)
+        self._refresh_active_channel_combo()
+        self._after_channels_built()
+        self._refresh_chart_visibility_row()
+        self._update_delete_btns()
+        self._sync_compat_aliases()
+        self._refresh_summary_text()
+
+    def _delete_channel(self, ch):
+        """删除一路连接（正在连接的通道须先断开；至少保留一路）。"""
+        if getattr(ch, 'connected', False):
+            fluent_message_box(self, "提示", f"{ch.name} 正在连接，请先断开再删除")
+            return
+        refs = self._rows.pop(ch.id, None)
+        if refs:
+            self.channels_layout.removeWidget(refs['card'])
+            refs['card'].deleteLater()
+        self.kernel.remove_channel(ch.id)
+        self._remove_live_row(ch)
+        self._refresh_chart_visibility_row()
+        self._update_delete_btns()
+        self._sync_compat_aliases()
+        self._refresh_active_channel_combo()
+        self._sync_conn_card_height()
+
+    # ---------------- 实时行 ----------------
+    def _build_live_row(self, ch):
+        """为一路通道创建实时明细行：名称 + 大字值 + 若干次要字段。"""
+        spec = self._live_row_spec(ch)
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(16)
+
+        name_label = CaptionLabel(ch.name)
+        h.addWidget(name_label)
+
+        big_key = spec.get('big_key', 'value_label')
+        big_label = BodyLabel(spec.get('big_text', '--.-'))
+        big_label.setFont(QFont("Cascadia Code", 20, QFont.Weight.Bold))
+        big_label.setStyleSheet(f"color: {ch.color};")
+        h.addWidget(big_label)
+        h.addStretch()
+
+        refs = {'row': row, 'name_label': name_label, 'big_key': big_key,
+                big_key: big_label}
+        for key, text in spec.get('secondary', []):
+            label = CaptionLabel(text)
+            label.setFont(QFont("Cascadia Code", 11))
+            h.addWidget(label)
+            refs[key] = label
+
+        self._live_layout.addWidget(row)
+        self._live_rows[ch.id] = refs
+        self._refresh_data_card_height()
+
+    def _remove_live_row(self, ch):
+        """删除通道的实时明细行（删除通道时调用）。"""
+        refs = self._live_rows.pop(ch.id, None)
+        if refs:
+            self._live_layout.removeWidget(refs['row'])
+            refs['row'].deleteLater()
+        self._refresh_summary_text()
+        self._refresh_data_card_height()
+
+    def _refresh_data_card_height(self):
+        """实时数据卡行数变化后重算高度。"""
+        card = getattr(self, 'card_data', None)
+        if card is not None:
+            live = getattr(self, '_live_layout', None)
+            if live is not None:
+                live.invalidate()
+                live.activate()
+            card.refresh_height()
+            QTimer.singleShot(0, self._refresh_data_card_height_deferred)
+
+    def _refresh_data_card_height_deferred(self):
+        card = getattr(self, 'card_data', None)
+        if card is not None:
+            card.refresh_height()
+
+    # ---------------- 图表显示勾选 ----------------
+    def _refresh_chart_visibility_row(self):
+        """重建图表卡顶部的通道显示勾选行（通道增删/改名后调用）。"""
+        while self._visibility_flow.count():
+            item = self._visibility_flow.takeAt(0)
+            w = item if isinstance(item, QWidget) else (
+                item.widget() if item else None)
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        for ch in self.channels:
+            cb = CheckBox(ch.name)
+            cb.setChecked(ch.visible)
+            cb.setToolTip(f"勾选后「{ch.name}」的曲线显示在图表上，取消则隐藏\n"
+                          f"（仅影响图表显示，采集/统计/保存不受影响）")
+            cb.toggled.connect(
+                lambda on, c=ch: self._on_channel_visible_toggled(c, on))
+            self._visibility_flow.addWidget(cb)
+            cb.show()
+        self._visibility_container.setVisible(bool(self.channels))
+        self._visibility_flow.invalidate()
+        self._visibility_flow.setGeometry(
+            self._visibility_container.contentsRect())
+        self._visibility_container.updateGeometry()
+
+    def _on_channel_visible_toggled(self, ch, checked):
+        ch.visible = bool(checked)
+        self.kernel.notify_change(ch.id)
+        self.update_chart()
+
+    # ---------------- 卡片高度 / 按钮状态 ----------------
+    def _sync_conn_card_height(self):
+        """连接控制卡高度随子卡实际高度自适应。"""
+        try:
+            card = self.card_conn
+            h = card.body.sizeHint().height()
+            cont = self.channels_container
+            cards = [self._rows[ch.id]['card']
+                     for ch in self.channels if ch.id in self._rows]
+            if cont is not None and cards:
+                actual = sum(c.height() for c in cards) + 8 * (len(cards) - 1)
+                h = h - cont.sizeHint().height() + actual
+            h = max(int(h), 1)
+            card.spaceWidget.setFixedHeight(h)
+            if card.isExpand:
+                card.setFixedHeight(card.card.height() + h)
+        except Exception:
+            pass
+
+    def _update_delete_btns(self):
+        """仅剩一路时禁用其删除按钮（至少保留一路连接行）。"""
+        single = len(self.channels) <= 1
+        for ch in self.channels:
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['delete_btn'].setEnabled(not single)
+
+    def _sync_compat_aliases(self):
+        """KernelRegistry / 网页端兼容：对外仍暴露单一 mode_combo/port_combo。"""
+        if self.channels:
+            refs = self._rows[self.channels[0].id]
+            self.mode_combo = refs['mode_combo']
+            self.port_combo = refs['port_combo']
+
+    # ---------------- 连接子卡 ----------------
+    def _build_channel_card(self, ch):
+        """为通道创建一张连接子卡：名称 / 颜色 / 删除 + 连接参数。"""
+        card = FluentCard(ch.default_name, None, True, self)
+
+        name_edit = LineEdit(card)
+        name_edit.setText(ch.name)
+        name_edit.setPlaceholderText("自定义名称")
+        name_edit.setFixedWidth(112)
+        name_edit.setToolTip("图表图例/实时数据中显示的名称（留空恢复默认「通道N」）")
+        name_edit.editingFinished.connect(
+            lambda c=ch, e=name_edit: self._on_channel_name_edited(c, e.text()))
+        card.add_header_widget(name_edit)
+
+        color_combo = ComboBox(card)
+        color_combo.setMinimumWidth(96)
+        color_combo.setToolTip("该连接的图线颜色")
+        color_combo.currentIndexChanged.connect(
+            lambda i, c=ch: self._on_channel_color_changed(c, i))
+        card.add_header_widget(color_combo)
+
+        delete_btn = ToolButton(FluentIcon.DELETE, card)
+        delete_btn.setFixedSize(28, 28)
+        delete_btn.setToolTip("删除这一路连接（需先断开）")
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.clicked.connect(lambda _=False, c=ch: self._delete_channel(c))
+        card.add_header_widget(delete_btn)
+
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row1.addWidget(BodyLabel("连接方式"))
+        mode_combo = ComboBox()
+        mode_combo.addItems(["有线串口", "模拟器"])
+        mode_combo.setCurrentIndex(1 if ch.mode == 'simulator' else 0)
+        mode_combo.currentIndexChanged.connect(
+            lambda i, c=ch: self._on_channel_mode_changed(c, i))
+        row1.addWidget(mode_combo)
+
+        port_combo = ComboBox()
+        port_combo.setMinimumWidth(80)
+        self._fill_channel_ports(ch, port_combo)
+        port_combo.currentTextChanged.connect(
+            lambda t, c=ch: self._on_channel_port_changed(c, t))
+        port_label = BodyLabel("串口")
+        row1.addWidget(port_label)
+        row1.addWidget(port_combo)
+
+        refresh_btn = PushButton("刷新")
+        refresh_btn.setFixedHeight(30)
+        refresh_btn.setToolTip("重新枚举本路的串口列表")
+        refresh_btn.clicked.connect(
+            lambda _=False, c=ch: self._refresh_channel_ports(c))
+        row1.addWidget(refresh_btn)
+
+        row1.addWidget(BodyLabel("采样频率"))
+        sample_rate_combo = SampleRateComboBox()
+        sample_rate_combo.setSampleInterval(ch.sample_interval_ms)
+        sample_rate_combo.setMaximumWidth(110)
+        sample_rate_combo.sampleIntervalChanged.connect(
+            lambda ms, c=ch: self._on_channel_sample_interval_changed(c, ms))
+        row1.addWidget(sample_rate_combo)
+
+        row1.addStretch()
+
+        connect_btn = PrimaryPushButton("连接")
+        connect_btn.setFixedHeight(30)
+        connect_btn.clicked.connect(
+            lambda _=False, c=ch: self._toggle_channel_connection(c))
+        row1.addWidget(connect_btn)
+        w1 = QWidget()
+        w1.setLayout(row1)
+        card.add_widget(w1)
+
+        card.expandAni.valueChanged.connect(self._sync_conn_card_height)
+        card.expandAni.finished.connect(self._sync_conn_card_height)
+
+        self.channels_layout.addWidget(card)
+        self._rows[ch.id] = {
+            'card': card, 'name_edit': name_edit, 'color_combo': color_combo,
+            'delete_btn': delete_btn, 'mode_combo': mode_combo,
+            'port_combo': port_combo, 'port_label': port_label,
+            'refresh_btn': refresh_btn,
+            'connect_btn': connect_btn, 'sample_rate_combo': sample_rate_combo,
+        }
+        self._init_channel_color_combo(ch)
+        self._apply_channel_mode_visibility(ch)
+
+    # ---------------- 颜色 / 名称 ----------------
+    def _init_channel_color_combo(self, ch):
+        """（重建）填充颜色下拉：预设色 + 已存自定义色 + 「自定义…」项。"""
+        refs = self._rows.get(ch.id)
+        if not refs:
+            return
+        combo = refs['color_combo']
+        combo.blockSignals(True)
+        combo.clear()
+        for c in CHANNEL_COLORS:
+            combo.addItem(c, make_color_icon(c), userData=c)
+        if ch.color and combo.findData(ch.color) < 0:
+            combo.addItem(ch.color, make_color_icon(ch.color), userData=ch.color)
+        combo.addItem("自定义…", QIcon(), userData=CUSTOM_COLOR_KEY)
+        idx = combo.findData(ch.color)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _apply_channel_color(self, ch):
+        """把通道曲线颜色同步到该路实时行的大字标签。"""
+        live = self._live_rows.get(ch.id)
+        if live:
+            key = live.get('big_key')
+            label = live.get(key) if key else None
+            if label is not None:
+                label.setStyleSheet(f"color: {ch.color};")
+
+    def _on_channel_color_changed(self, ch, index):
+        """颜色下拉选中：预设色直接生效；「自定义…」弹 Fluent 取色对话框。"""
+        refs = self._rows.get(ch.id)
+        if not refs:
+            return
+        combo = refs['color_combo']
+        data = combo.itemData(index)
+        if data == CUSTOM_COLOR_KEY:
+            state = {'ok': False, 'color': None}
+            dialog = ColorDialog(QColor(ch.color),
+                                 f"选择 {ch.name} 的曲线颜色", self)
+            dialog.colorChanged.connect(
+                lambda c: state.__setitem__('color', c))
+            dialog.yesButton.clicked.connect(
+                lambda: state.__setitem__('ok', True))
+            dialog.exec()
+            color = state['color'] or getattr(dialog, 'color', None)
+            if not (state['ok'] and color is not None and color.isValid()):
+                self._init_channel_color_combo(ch)
+                return
+            ch.color = color.name()
+            combo.blockSignals(True)
+            combo.setItemText(index, ch.color)
+            combo.setItemIcon(index, make_color_icon(ch.color))
+            combo.setItemData(index, ch.color)
+            combo.addItem("自定义…", QIcon(), userData=CUSTOM_COLOR_KEY)
+            combo.blockSignals(False)
+        else:
+            ch.color = data
+        self.kernel.notify_change(ch.id)
+        self.update_chart()
+
+    def _on_channel_name_edited(self, ch, text):
+        """名称编辑完成：写回通道名（留空恢复默认「通道N」）。"""
+        t = text.strip()
+        ch.name = t or ch.default_name
+        refs = self._rows.get(ch.id)
+        if refs:
+            try:
+                refs['card'].card.setTitle(ch.name)
+            except Exception:
+                pass
+        live = self._live_rows.get(ch.id)
+        if live:
+            live['name_label'].setText(ch.name)
+            # 次要标签重新按新名称生成（原始 ADC / 回波等前缀含通道名）
+            for key, label_text in self._live_row_spec(ch).get('secondary', []):
+                if key in live:
+                    live[key].setText(label_text)
+        self._refresh_active_channel_combo()
+        self._refresh_chart_visibility_row()
+        self.kernel.notify_change(ch.id)
+        self.update_chart()
+
+    # ---------------- 串口 / 模式 / 采样频率 ----------------
+    def _fill_channel_ports(self, ch, combo):
+        """重填串口列表：保留已保存的端口，不静默改选其它设备。"""
+        want = (ch.port or '').strip()
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            ports = list_serial_ports()
+            for device, _desc in ports:
+                combo.addItem(device)
+            if not ports:
+                combo.addItem("未安装 pyserial" if not SERIAL_AVAILABLE
+                              else "无可用串口")
+            if want:
+                idx = combo.findText(want)
+                if idx < 0:
+                    # 已保存端口当前没扫描到：保留并选中，避免刷新后
+                    # 悄悄换成第一个可用设备（插回即可直接连接）
+                    combo.addItem(want)
+                    idx = combo.findText(want)
+                combo.setCurrentIndex(idx)
+            elif combo.count():
+                combo.setCurrentIndex(0)
+        finally:
+            combo.blockSignals(False)
+
+    def _on_channel_port_changed(self, ch, text):
+        """用户选择串口：忽略占位项，写回通道并广播（网页端同步）。"""
+        t = (text or '').strip()
+        if not t or '未安装' in t or '无可用' in t or ch.port == t:
+            return
+        ch.port = t
+        self.kernel.notify_change(ch.id)
+
+    def refresh_ports(self):
+        """刷新所有通道的串口列表（网页端 refresh_ports 命令也走这里）。"""
+        for ch in self.channels:
+            self._refresh_channel_ports(ch)
+
+    def _refresh_channel_ports(self, ch):
+        refs = self._rows.get(ch.id)
+        if refs:
+            self._fill_channel_ports(ch, refs['port_combo'])
+
+    def _on_channel_mode_changed(self, ch, index):
+        ch.mode = 'simulator' if index == 1 else 'serial'
+        self._apply_channel_mode_visibility(ch)
+        self.kernel.notify_change(ch.id)
+
+    def _apply_channel_mode_visibility(self, ch):
+        """模拟器模式下隐藏本路的串口标签/下拉与刷新按钮。"""
+        refs = self._rows.get(ch.id)
+        if refs:
+            is_sim = ch.mode == 'simulator'
+            refs['port_label'].setVisible(not is_sim)
+            refs['port_combo'].setVisible(not is_sim)
+            refs['refresh_btn'].setVisible(not is_sim)
+            try:
+                refs['card']._adjustViewSize()
+            except Exception:
+                pass
+            self._sync_conn_card_height()
+
+    def _on_channel_sample_interval_changed(self, ch, interval_ms):
+        """本路采样频率改变：更新该路间隔并保存配置。"""
+        ch.sample_interval_ms = interval_ms
+        if self.channels and ch is self.channels[0]:
+            self.sample_interval_ms = interval_ms
+            self.kernel.sample_interval_ms = interval_ms
+        self.kernel.notify_change(ch.id)
+
+    # ---------------- 单路连接 / 断开 ----------------
+    def _toggle_channel_connection(self, ch):
+        if getattr(ch, 'connected', False):
+            self._disconnect_channel(ch)
+        else:
+            self._connect_channel(ch)
+
+    def _connect_channel(self, ch):
+        """连接单路：串口或模拟器（其余通道不受影响）。"""
+        refs = self._rows.get(ch.id)
+        if ch.mode == 'serial':
+            if not SERIAL_AVAILABLE:
+                fluent_message_box(self, "提示", serial_unavailable_hint())
+                return
+            port = refs['port_combo'].currentText() if refs else ch.port
+            if not port or "未安装" in port or "无可用" in port:
+                fluent_message_box(self, "错误", f"{ch.name}: 请选择串口")
+                return
+            ch.port = port
+        res = self.kernel.connect(ch.id)
+        if not res.get('ok'):
+            fluent_message_box(self, "连接错误",
+                               res.get('message', f'{ch.name} 连接失败'))
+            return
+        if refs:
+            refs['connect_btn'].setText("断开")
+        log.info("%s 已连接（%s）", ch.name,
+                 '模拟器' if ch.mode == 'simulator' else ch.port)
+        self._set_collect_enabled(True)
+        self._on_channel_connection_changed(ch, True)
+
+    def _disconnect_channel(self, ch):
+        """断开单路（其余通道不受影响）。"""
+        self.kernel.disconnect(ch.id)
+        refs = self._rows.get(ch.id)
+        if refs:
+            refs['connect_btn'].setText("连接")
+        log.info("%s 已断开", ch.name)
+        self._on_channel_connection_changed(ch, False)
+        self._refresh_summary_text()
+        self._set_collect_enabled(self.kernel.connected_any())
+
+    def connect_device(self):
+        """连接全部未连接的通道（网页端 connect=true 也走这里）。"""
+        self.kernel.connect_all()
+        for ch in self.channels:
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText(
+                    "断开" if getattr(ch, 'connected', False) else "连接")
+        self._set_collect_enabled(self.kernel.connected_any())
+        self._on_connection_state_changed()
+
+    def disconnect_all(self):
+        """断开全部通道（退出清理 / 网页端命令也走这里）。"""
+        self.kernel.disconnect_all()
+        for ch in self.channels:
+            refs = self._rows.get(ch.id)
+            if refs:
+                refs['connect_btn'].setText("连接")
+        self._set_collect_enabled(False)
+        self._on_connection_state_changed()
+
+    # ---------------- 「当前连接」下拉 ----------------
+    def _active_channel_obj(self):
+        """参数卡当前选中的通道对象（无通道/未初始化返回 None）。"""
+        combo = getattr(self, '_active_channel_combo', None)
+        if combo is None:
+            return None
+        cid = combo.currentData()
+        return next((ch for ch in self.channels if ch.id == cid), None)
+
+    def _refresh_active_channel_combo(self, keep_id=None):
+        """通道增删/改名后重建「当前连接」下拉，尽量保住原选中。"""
+        combo = getattr(self, '_active_channel_combo', None)
+        if combo is None:
+            return
+        if keep_id is None and combo.count():
+            keep_id = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for ch in self.channels:
+            combo.addItem(ch.name, userData=ch.id)
+        idx = next((i for i in range(combo.count())
+                    if combo.itemData(i) == keep_id), 0)
+        if combo.count():
+            combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+        self._sync_active_channel_controls(self._active_channel_obj())
+
+    # ---------------- 采集按钮 / 数据操作 ----------------
+    def start_collection(self):
+        """开始数据采集（数据清空与时间基准由内核负责）。"""
+        self.kernel.start_collection()
+        self._apply_started_ui()
+
+    def stop_collection(self):
+        """停止数据采集。"""
+        self.kernel.stop_collection()
+        self._apply_stopped_ui()
+
+    def toggle_collection(self):
+        """合并的开始/停止按钮：按当前采集状态切换。"""
+        if self._collecting:
+            self.stop_collection()
+        else:
+            self.start_collection()
+
+    def _drain_kernel_events(self):
+        """GUI 线程消费内核事件（由 View 的 QTimer 调用）。"""
+        for event in self._events.drain(200):
+            if event is None:
+                return
+            self._handle_kernel_event(event)
+
+    # ---------------- 网页 / HTTP 适配 ----------------
+    def _ai_data(self):
+        """AI 分析实验数据回调（数据由内核生成，View 只补系统提示词）。"""
+        data = self.kernel.ai_data()
+        if not data:
+            return None
+        data = dict(data)
+        module = sys.modules.get(type(self).__module__)
+        data['system_prompt'] = getattr(module, 'AI_SYSTEM_PROMPT', '')
+        return data
+
+    def api_snapshot(self):
+        """当前实验数据快照（由内核生成，任意线程可读）。"""
+        return self.kernel.snapshot()
+
+    def api_csv(self):
+        """HTTP 导出用 CSV（由内核统一生成长表）。"""
+        return self.kernel.csv_text()
+
+    def api_actions(self):
+        """本模块支持的控制动作（供 KernelRegistry / HTTP 层展示）。"""
+        return self.kernel.actions()
+
+    def api_command(self, action, params=None):
+        """执行控制动作（由 KernelRegistry 直接调用内核）。"""
+        return self.kernel.command(action, params)
+
+    def _set_collect_enabled(self, enabled):
+        """连接/断开时同步合并按钮与浮动栏按钮的可用性。"""
+        self.collect_btn.setEnabled(enabled)
+        self.float_collect_btn.setEnabled(enabled)
+
+    def _refresh_collect_btn(self):
+        """合并按钮与浮动栏按钮：文案随采集状态切换。"""
+        update_collect_btn(self.collect_btn, self._collecting)
+        update_collect_btn(self.float_collect_btn, self._collecting)
+
+    def _total_points(self):
+        return sum(len(self.kernel.channel_values(ch)) for ch in self.channels)
+
+    def save_data(self):
+        """保存数据到文件（由内核生成 CSV）。"""
+        total = self._total_points()
+        if total == 0:
+            fluent_message_box(self, "警告", "没有数据可保存")
+            return
+        try:
+            filename = self.kernel.export_csv()
+            log.info("数据已保存到: %s（%d 点）", filename, total)
+            fluent_message_box(self, "成功", f"数据已保存到: {filename}")
+        except Exception as e:
+            log.error("保存失败: %s", e)
+            fluent_message_box(self, "错误", f"保存失败: {e}")
+
+    def clear_data(self):
+        """清除数据。"""
+        self.kernel.clear_data()
+        self._apply_cleared_ui()
+        log.info("已清除数据")
+
+    # ---------------- 生命周期 / 主题 ----------------
+    def shutdown(self):
+        """退出清理：停止事件消费、关闭传输并关闭事件总线。"""
+        try:
+            self._event_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._events.close()
+        except Exception:
+            pass
+        self.kernel.shutdown()
+
+    def showEvent(self, e):
+        """首次显示后按子卡真实高度收敛连接控制卡。"""
+        super().showEvent(e)
+        self._sync_conn_card_height()
+
+    def apply_theme(self, theme):
+        """主题切换：刷新本模块内所有与主题相关的硬编码样式。"""
+        apply_module_theme(self, theme)
+        try:
+            from qfluentwidgets import isDarkTheme
+            self.chart.apply_chart_theme(isDarkTheme())
+        except Exception:
+            pass
 
