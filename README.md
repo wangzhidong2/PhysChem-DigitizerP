@@ -266,8 +266,10 @@ PhysChem-DigitizerP/
 ├── docs/                       # 文档与文档图片（含操作手册、设计文档、README 截图）
 │   └── images/                 # 文档图片
 └── src/                        # 源码目录：主程序只从这里加载，运行时配置也在本目录生成
-    ├── main.py                 # 主程序：FluentWindow + 主页 + 动态加载器
-    ├── core.py                 # 公共模块：通信线程 / 配置 / 图表分析（拟合/离群点剔除）/ 对话框 / AI 分析 / 字体 / 现代样式
+    ├── main.py                 # 主程序 UI：FluentWindow + 主页 + 侧边栏 + 设置
+    ├── core.py                 # 公共内核（纯 Python）：日志 / 配置 / 串口与模拟器传输 / 事件 / SensorKernel / KernelRegistry
+    ├── core_ui.py              # 公共 UI：主题字体 / 样式 / ChartPanel / 通用控件对话框
+    ├── module_loader.py        # 传感器模块与插件扫描加载
     ├── test_serial.py          # 串口连接测试工具
     ├── sensor_config.json      # 传感器校准配置（运行时自动生成，.gitignore）
     ├── app_config.json         # 应用配置（主题/字体/引擎/置顶/日志等，运行时生成，.gitignore）
@@ -432,9 +434,15 @@ python ./src/main.py
 | 能力 | 说明 |
 |------|------|
 | **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器，与主程序复用同一套逻辑） |
+| **实时双向同步** | 桌面端与网页端操作的是同一份内核状态：任一端改名/改色/换模式/改采样间隔/校准/显隐/增删通道/启停采集，另一端立即刷新（桌面 ≈10–20 ms，网页走 SSE 推送） |
 | **仪表盘登录** | 开启鉴权后先显示登录页，输对密钥才进桌面；登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
-| **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`，以及 `collect`／`command`／`params` 控制端点 |
+| **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`、`/events`，以及 `collect`／`command`／`params` 控制端点 |
 | **MCP 代理** | `./src/flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
+
+同步机制：`KernelRegistry` 订阅每个传感器内核的事件总线，写入带单调序号的环形日志，
+再通过 `GET /api/events`（SSE）广播给所有网页客户端；断线可用 `Last-Event-ID` 续传，
+落后太多会收到 `event: reset` 让前端整页重拉。高频采样合并为「有新数据」通知
+（每路最多 2 次/秒），网页在推送正常时自动跳过 1 s 轮询，掉线后回落到轮询兜底。
 
 仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`./src/assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
 

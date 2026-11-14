@@ -50,7 +50,8 @@ for dirpath, dirnames, filenames in os.walk('src/sensors'):
         continue
     dest = os.path.relpath(dirpath, 'src')
     for fn in filenames:
-        if fn.endswith('.py') and not fn.startswith('_') and not fn.startswith('test'):
+        if (fn.endswith('.py') and not fn.startswith('test')
+                and (not fn.startswith('_') or fn.startswith('_kernel'))):
             sensor_datas.append((os.path.join(dirpath, fn), dest))
 
 # --- flaskserver 插件：整目录手动收集（.py 与 web/ 静态资源都要）---

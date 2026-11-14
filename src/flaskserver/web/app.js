@@ -184,6 +184,8 @@ function setToken(t) {
   } catch (e) { /* localStorage 不可用时仅本次会话有效 */ }
   tokenInput.value = t || '';
   updateAuthUI();
+  // 密钥变化后重建事件流（局域网模式下读操作也要带 token）
+  if (pollingStarted) startEventStream();
 }
 
 /* ---------- 数据源（唯一出口） ---------- */
@@ -433,22 +435,16 @@ function createWindow(key) {
     stats.appendChild(box);
   });
   content.appendChild(stats);
-  // 连接管理行：模式下拉 + 串口下拉 + 刷新端口 + 应用（后端无 connection 时隐藏）
-  const conn = el('div', 'win-conn hidden');
-  const connMode = document.createElement('select');
-  connMode.title = '连接方式';
-  const connPort = document.createElement('select');
-  connPort.title = '串口设备';
-  const connRefresh = el('button', 'conn-mini', '刷新端口');
-  connRefresh.type = 'button';
-  const connApply = el('button', 'conn-apply', '应用');
-  connApply.type = 'button';
-  conn.appendChild(el('span', 'conn-label', '连接'));
-  conn.appendChild(connMode);
-  conn.appendChild(connPort);
-  conn.appendChild(connRefresh);
-  conn.appendChild(connApply);
-  content.appendChild(conn);
+  // 多通道管理：每路独立的模式/端口/采样频率/连接/删除
+  const channelsBox = el('div', 'win-conn win-channels');
+  const channelList = el('div', 'channel-list');
+  const addChannelBtn = el('button', 'conn-apply', '+ 新增通道');
+  addChannelBtn.type = 'button';
+  addChannelBtn.title = '新增一路模拟器通道并立即连接';
+  channelsBox.appendChild(el('span', 'conn-label', '通道'));
+  channelsBox.appendChild(addChannelBtn);
+  channelsBox.appendChild(channelList);
+  content.appendChild(channelsBox);
   const toolbar = el('div', 'win-toolbar');
   content.appendChild(toolbar);
   const chartEl = el('div', 'win-chart');
@@ -464,23 +460,12 @@ function createWindow(key) {
     els: {
       title, state: title.querySelector('.win-state'), stats: statsMap, toolbar, chart: chartEl, params,
       max: btnMax,
-      conn: {
-        row: conn, mode: connMode, port: connPort, refresh: connRefresh, apply: connApply,
-      },
+      channels: { box: channelsBox, list: channelList, add: addChannelBtn },
     },
   };
 
-  // 连接管理交互
-  connMode.addEventListener('change', () => {
-    // 本地预览：串口模式才显示端口下拉与刷新端口（应用后才真正生效）。
-    // 标记 dirty 后，轮询回读不再覆盖用户未应用的选择，避免预览被打断。
-    const isSerial = connMode.value.includes('串口');
-    connPort.classList.toggle('hidden', !isSerial);
-    connRefresh.classList.toggle('hidden', !isSerial);
-    w.els.conn.dirty = true;
-  });
-  connApply.addEventListener('click', () => applyConnection(w));
-  connRefresh.addEventListener('click', () => sendCommand(w, 'refresh_ports', {}, connRefresh));
+  // 多通道交互
+  addChannelBtn.addEventListener('click', () => addChannel(w, addChannelBtn));
 
   // 交互
   btnMin.addEventListener('click', () => minimizeWindow(w));
@@ -670,6 +655,87 @@ function togglePanel() {
   else closePanel();
 }
 
+/* ---------- 实时事件（SSE） ----------
+   桌面 GUI / 网页 / CLI 任一处的修改都由内核广播；这里收到后立即刷新
+   对应窗口，轮询退化为兜底（SSE 正常且刚有事件时不重复拉取）。 */
+let sse = null;
+let sseAlive = false;
+let lastKernelEventAt = 0;
+const dirtyKeys = new Set();       // 页面隐藏期间待刷新的窗口
+const eventTimers = new Map();     // key -> 合并密集事件的定时器
+let overviewTimer = null;
+
+function startEventStream() {
+  if (typeof EventSource === 'undefined') return;
+  if (sse) {
+    try { sse.close(); } catch (e) { /* 忽略 */ }
+    sse = null;
+  }
+  let url = '/api/events';
+  const tok = getToken();
+  if (tok) url += '?token=' + encodeURIComponent(tok);
+  try {
+    sse = new EventSource(url);
+  } catch (e) {
+    sse = null;
+    return;
+  }
+  sse.addEventListener('open', () => { sseAlive = true; });
+  sse.addEventListener('error', () => { sseAlive = false; });
+  sse.addEventListener('reset', () => {   // 落后太多：整页状态重新拉取
+    sseAlive = true;
+    refreshOverview();
+    refreshAllWindows();
+  });
+  sse.addEventListener('kernel', (ev) => {
+    sseAlive = true;
+    lastKernelEventAt = Date.now();
+    let data;
+    try { data = JSON.parse(ev.data || '{}'); } catch (e) { return; }
+    onKernelEvent(data);
+  });
+}
+
+function onKernelEvent(ev) {
+  const kind = ev.kind || '';
+  if (kind === 'error') {
+    const m = moduleMap.get(ev.key);
+    toast(((m && m.name) || ev.key || '模块') + ' 设备错误：' +
+      ((ev.data && ev.data.message) || '未知错误'));
+  }
+  if (kind === 'channels_changed' || kind === 'collection_changed' ||
+      kind === 'channel_state' || kind === 'error') {
+    scheduleOverview();
+  }
+  if (ev.key) scheduleWindowRefresh(ev.key);
+}
+
+/** 模块列表/图标状态刷新（500ms 去抖，避免连续事件打爆请求） */
+function scheduleOverview() {
+  if (overviewTimer) return;
+  overviewTimer = setTimeout(() => {
+    overviewTimer = null;
+    refreshOverview();
+  }, 500);
+}
+
+/** 单个窗口立即刷新（120ms 内同一窗口的密集事件合并为一次） */
+function scheduleWindowRefresh(key, delay) {
+  if (!windows.has(key)) return;
+  if (document.hidden) {             // 隐藏时不刷新，回到前台再补
+    dirtyKeys.add(key);
+    return;
+  }
+  if (eventTimers.has(key)) return;
+  eventTimers.set(key, setTimeout(() => {
+    eventTimers.delete(key);
+    const w = windows.get(key);
+    if (!w) return;
+    if (w.busy) { scheduleWindowRefresh(key, 150); return; }
+    refreshWindow(w);
+  }, delay === undefined ? 120 : delay));
+}
+
 /* ---------- 窗口数据刷新 ---------- */
 function refreshAllWindows() {
   windows.forEach((w) => refreshWindow(w));
@@ -702,11 +768,11 @@ async function refreshWindow(w) {
     w.els.stats.points.textContent = String(snap.total_points || 0);
     w.els.stats.ylabel.textContent = yLabel || '—';
     renderControls(w, snap.actions || []);
-    syncConn(w, snap.connection);
+    syncChannels(w, snap, snap.connection);
     w.els.params.textContent = typeof snap.params === 'string'
       ? snap.params
       : JSON.stringify(snap.params || {}, null, 1);
-    drawChart(w, series.points || [], snap.x_label, yLabel);
+    drawChart(w, series.points || [], snap.x_label, yLabel, series.channels || []);
     syncWindowStates();
   } catch (e) {
     w.els.params.textContent = '读取失败：' + e.message;
@@ -771,72 +837,207 @@ async function sendAction(w, action, btn) {
   }
 }
 
-/* ---------- 连接管理（串口 / 模拟器切换，数据来自快照 connection 字段） ---------- */
-function syncConn(w, conn) {
-  const c = w.els.conn;
-  if (!conn || !conn.modes || !conn.modes.length) {
-    c.row.classList.add('hidden');
-    c.dirty = false;
-    return;
-  }
-  c.row.classList.remove('hidden');
-  // 列表重建时保留当前选择，避免轮询把用户正在编辑的值冲掉
-  const prevMode = c.mode.value;
-  const modeKey = conn.modes.map((m) => m.text + (m.enabled === false ? '!' : '')).join('|');
-  if (c.mode.dataset.modes !== modeKey) {
-    c.mode.dataset.modes = modeKey;
-    c.mode.innerHTML = '';
-    conn.modes.forEach((m) => {
+/* ---------- 多通道管理（新增 / 删除 / 连接 / 采样频率） ---------- */
+function channelModeOptions(conn) {
+  const modes = conn && conn.modes;
+  if (modes && modes.length) return modes;
+  return [{ text: '有线串口', enabled: true }, { text: '模拟器', enabled: true }];
+}
+
+function channelModeLabel(ch) {
+  return ch && ch.mode === 'simulator' ? '模拟器' : '有线串口';
+}
+
+function fillChannelModes(select, conn) {
+  const modes = channelModeOptions(conn);
+  const sig = modes.map((m) => m.text + (m.enabled === false ? '!' : '')).join('|');
+  if (select.dataset.sig === sig) return;
+  select.dataset.sig = sig;
+  const prev = select.value;
+  select.innerHTML = '';
+  modes.forEach((m) => {
+    const o = document.createElement('option');
+    o.value = m.text;
+    o.textContent = m.text;
+    if (m.enabled === false) o.disabled = true;
+    select.appendChild(o);
+  });
+  if (prev && modes.some((m) => m.text === prev)) select.value = prev;
+}
+
+function fillChannelPorts(select, conn, current) {
+  const ports = (conn && conn.ports) ? conn.ports.slice() : [];
+  if (current && current !== '无可用串口' && !ports.includes(current)) ports.unshift(current);
+  const sig = ports.join('|');
+  if (select.dataset.sig === sig) return;
+  select.dataset.sig = sig;
+  select.innerHTML = '';
+  if (!ports.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = '（无可用串口）';
+    select.appendChild(o);
+  } else {
+    ports.forEach((p) => {
       const o = document.createElement('option');
-      o.value = m.text;
-      o.textContent = m.text;
-      if (m.enabled === false) o.disabled = true;
-      c.mode.appendChild(o);
+      o.value = p;
+      o.textContent = p;
+      select.appendChild(o);
     });
-    if (prevMode && conn.modes.some((m) => m.text === prevMode)) c.mode.value = prevMode;
-  }
-  const prevPort = c.port.value;
-  const portKey = (conn.ports || []).join('|');
-  if (c.port.dataset.ports !== portKey) {
-    c.port.dataset.ports = portKey;
-    c.port.innerHTML = '';
-    if (!(conn.ports || []).length) {
-      const o = document.createElement('option');
-      o.value = '';
-      o.textContent = '（无可用串口）';
-      c.port.appendChild(o);
-    } else {
-      conn.ports.forEach((p) => {
-        const o = document.createElement('option');
-        o.value = p;
-        o.textContent = p;
-        c.port.appendChild(o);
-      });
-    }
-    if (prevPort && (conn.ports || []).includes(prevPort)) c.port.value = prevPort;
-  }
-  // 用户有未应用的修改：不动值与显隐，等「应用」成功后回读真实状态
-  if (c.dirty) return;
-  if (document.activeElement !== c.mode && conn.mode) c.mode.value = conn.mode;
-  const isSerial = !!conn.mode && conn.mode.includes('串口');
-  c.port.classList.toggle('hidden', !isSerial);
-  c.refresh.classList.toggle('hidden', !isSerial);
-  if (isSerial && document.activeElement !== c.port && conn.port
-      && (conn.ports || []).includes(conn.port)) {
-    c.port.value = conn.port;
   }
 }
 
-async function applyConnection(w) {
-  const c = w.els.conn;
-  const mode = c.mode.value;
-  if (!mode) return;
-  await sendCommand(w, 'set_connection', {
-    mode,
-    port: mode.includes('串口') ? c.port.value : '',
-    connect: true,   // 切换后立即连接：模拟器即连即用；串口用所选端口
-  }, c.apply);
-  c.dirty = false;   // 应用完成（含回读），恢复由轮询接管
+function makeChannelRow(w, ch) {
+  const row = el('div', 'channel-row');
+  row.dataset.cid = String(ch.id);
+  const color = el('span', 'channel-color');
+  const name = document.createElement('input');
+  name.className = 'channel-name';
+  name.type = 'text';
+  name.placeholder = '通道名称';
+  name.title = '通道名称';
+  const mode = document.createElement('select');
+  mode.className = 'channel-mode';
+  mode.title = '连接方式';
+  const port = document.createElement('select');
+  port.className = 'channel-port';
+  port.title = '串口设备';
+  const rate = document.createElement('input');
+  rate.className = 'channel-rate';
+  rate.type = 'number';
+  rate.min = '10';
+  rate.step = '10';
+  rate.title = '采样间隔（ms）';
+  const unit = el('span', 'channel-unit', 'ms');
+  const connect = el('button', 'conn-mini channel-connect', '连接');
+  connect.type = 'button';
+  const remove = el('button', 'conn-mini danger channel-remove', '删除');
+  remove.type = 'button';
+  row.append(color, name, mode, port, rate, unit, connect, remove);
+
+  row._refs = { color, name, mode, port, rate, connect, remove };
+  row._channel = ch;
+
+  name.addEventListener('change', () => {
+    const value = name.value.trim();
+    if (!value || value === row._channel.name) return;
+    updateChannel(w, row._channel, { name: value }, name);
+  });
+  mode.addEventListener('change', () => {
+    const serial = mode.value.includes('串口');
+    port.classList.toggle('hidden', !serial);
+    updateChannel(w, row._channel, { mode: mode.value }, mode);
+  });
+  port.addEventListener('change', () => {
+    updateChannel(w, row._channel, { port: port.value }, port);
+  });
+  rate.addEventListener('change', () => {
+    const value = Math.max(10, parseInt(rate.value, 10) || 10);
+    rate.value = String(value);
+    if (value !== row._channel.sample_interval_ms) {
+      updateChannel(w, row._channel, { sample_interval_ms: value }, rate);
+    }
+  });
+  connect.addEventListener('click', () => {
+    const ch = row._channel;
+    if (ch.connected) {
+      channelRequest(w, `/api/modules/${encodeURIComponent(w.key)}/channels/${ch.id}/disconnect`,
+        'POST', null, connect);
+      return;
+    }
+    const isSerial = mode.value.includes('串口');
+    if (isSerial && !port.value) {
+      toast('请选择串口后再连接');
+      return;
+    }
+    updateChannel(w, ch, {
+      mode: mode.value,
+      port: isSerial ? port.value : '',
+      connect: true,
+    }, connect);
+  });
+  remove.addEventListener('click', () => removeChannel(w, row._channel, remove));
+  return row;
+}
+
+function syncChannelRow(row, ch, conn) {
+  const r = row._refs;
+  row._channel = ch;
+  r.color.style.background = ch.color || '#187aff';
+  if (document.activeElement !== r.name && r.name.value !== ch.name) {
+    r.name.value = ch.name || '';
+  }
+  fillChannelModes(r.mode, conn);
+  const label = channelModeLabel(ch);
+  if (document.activeElement !== r.mode && r.mode.value !== label) r.mode.value = label;
+  const isSerial = r.mode.value.includes('串口');
+  r.port.classList.toggle('hidden', !isSerial);
+  fillChannelPorts(r.port, conn, ch.port);
+  if (isSerial && document.activeElement !== r.port && ch.port && r.port.value !== ch.port) {
+    r.port.value = ch.port;
+  }
+  if (document.activeElement !== r.rate) r.rate.value = String(ch.sample_interval_ms);
+  r.connect.textContent = ch.connected ? '断开' : '连接';
+  row.classList.toggle('channel-connected', !!ch.connected);
+}
+
+function syncChannels(w, snap, conn) {
+  const box = w.els.channels;
+  if (!box) return;
+  const channels = snap.channels || [];
+  const seen = new Set();
+  channels.forEach((ch) => {
+    seen.add(String(ch.id));
+    let row = box.list.querySelector(`.channel-row[data-cid="${ch.id}"]`);
+    if (!row) {
+      row = makeChannelRow(w, ch);
+      box.list.appendChild(row);
+    }
+    syncChannelRow(row, ch, conn);
+  });
+  box.list.querySelectorAll('.channel-row').forEach((row) => {
+    if (!seen.has(row.dataset.cid)) row.remove();
+  });
+}
+
+async function channelRequest(w, path, method, body, btn) {
+  if (w.busyCmd) return;
+  w.busyCmd = true;
+  if (btn) btn.disabled = true;
+  try {
+    const d = await api(path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body === null || body === undefined ? undefined : JSON.stringify(body),
+    });
+    toast(d.message || '已更新');
+    await refreshWindow(w);
+  } catch (e) {
+    toast('操作失败：' + e.message);
+    await refreshWindow(w);
+  } finally {
+    w.busyCmd = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+function updateChannel(w, ch, fields, btn) {
+  return channelRequest(w,
+    `/api/modules/${encodeURIComponent(w.key)}/channels/${ch.id}`,
+    'PATCH', fields, btn);
+}
+
+function addChannel(w, btn) {
+  const n = w.els.channels.list.querySelectorAll('.channel-row').length + 1;
+  channelRequest(w, `/api/modules/${encodeURIComponent(w.key)}/channels`,
+    'POST', { name: '通道' + n, mode: '模拟器', connect: true }, btn);
+}
+
+function removeChannel(w, ch, btn) {
+  if (!window.confirm(`确认删除「${ch.name}」？`)) return;
+  channelRequest(w,
+    `/api/modules/${encodeURIComponent(w.key)}/channels/${ch.id}`,
+    'DELETE', null, btn);
 }
 
 async function sendCommand(w, action, params, btn) {
@@ -878,7 +1079,7 @@ function getChart(w) {
   return w.chart;
 }
 
-function drawChart(w, points, xLabel, yLabel) {
+function drawChart(w, points, xLabel, yLabel, channels) {
   if (typeof echarts === 'undefined') return; // 库未加载时不重复刷错误提示
   // 容器尚无尺寸（最小化 / 布局未完成）时初始化会得到 0 尺寸画布
   if (w.els.chart.clientWidth === 0 || w.els.chart.clientHeight === 0) {
@@ -889,13 +1090,41 @@ function drawChart(w, points, xLabel, yLabel) {
   const axis = dark ? '#9aa0a8' : '#666';
   const split = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)';
   const c = getChart(w);
-  w._lastDraw = { points, xLabel, yLabel };   // 系统主题切换时据此重绘
 
-  const hasData = points && points.length >= 2;
+  const channelList = (Array.isArray(channels) ? channels : [])
+    .filter((ch) => ch.visible !== false);   // 桌面端隐藏的通道网页端也隐藏
+  const seriesList = channelList.length
+    ? channelList.map((ch) => ({
+        name: ch.name || ('通道' + ch.id),
+        type: 'line',
+        showSymbol: false,
+        lineStyle: { color: ch.color || '#187aff', width: 2 },
+        itemStyle: { color: ch.color || '#187aff' },
+        emphasis: { focus: 'series' },
+        data: (ch.points || []).map((p) => [p[0], Number(p[1])]),
+      }))
+    : [{
+        name: yLabel || '数据',
+        type: 'line',
+        showSymbol: false,
+        lineStyle: { color: '#187aff', width: 2 },
+        itemStyle: { color: '#187aff' },
+        data: (points || []).map((p) => [p[0], Number(p[1])]),
+      }];
+  const hasData = seriesList.some((s) => s.data.length >= 2);
+  const showLegend = seriesList.length > 1;
+  w._lastDraw = { points, xLabel, yLabel, channels: channelList };   // 系统主题切换时据此重绘
+
   const option = {
     backgroundColor: 'transparent',
     animation: false,
-    grid: { left: 52, right: 16, top: 26, bottom: 32 },
+    grid: { left: 52, right: 16, top: showLegend ? 42 : 26, bottom: 32 },
+    legend: showLegend ? {
+      top: 0,
+      left: 'center',
+      textStyle: { color: axis, fontSize: 11 },
+      data: seriesList.map((s) => s.name),
+    } : undefined,
     title: hasData ? undefined : {
       text: '暂无数据（开始采集后这里会出现曲线）',
       left: 'center', top: 'middle',
@@ -926,13 +1155,7 @@ function drawChart(w, points, xLabel, yLabel) {
       confine: true,
       valueFormatter: (v) => fmt(Number(v)),
     },
-    series: [{
-      type: 'line',
-      showSymbol: false,
-      lineStyle: { color: '#187aff', width: 2 },
-      itemStyle: { color: '#187aff' },
-      data: hasData ? points.map((p) => [p[0], Number(p[1])]) : [],
-    }],
+    series: seriesList,
   };
   c.setOption(option, true);
 }
@@ -1040,15 +1263,28 @@ function startPolling() {
   pollingStarted = true;
   refreshOverview();
   refreshWebSettings();          // 字体设置：进桌面后拉一次并填充下拉框
+  startEventStream();            // 实时推送：任一端的修改立即反映到各端
   setInterval(refreshOverview, POLL_OVERVIEW_MS);
   setInterval(() => {
     if (document.hidden) return;
+    // SSE 正常且刚收到事件时跳过：事件已触发定向刷新，避免重复请求
+    if (sseAlive && Date.now() - lastKernelEventAt < 5000) return;
     refreshAllWindows();
   }, POLL_DETAIL_MS);
 }
 
 function bindEvents() {
   startBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
+  // 切回前台：补刷后台期间攒下的窗口，并重建已关闭的事件流
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (dirtyKeys.size) {
+      const keys = [...dirtyKeys];
+      dirtyKeys.clear();
+      keys.forEach((k) => scheduleWindowRefresh(k));
+    }
+    if (sse && sse.readyState === 2) startEventStream();
+  });
   $('panel-close').addEventListener('click', closePanel);
   authBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1086,7 +1322,8 @@ function bindEvents() {
   const onTheme = () => {
     windows.forEach((w) => {
       if (w.chart && w._lastDraw) {
-        drawChart(w, w._lastDraw.points, w._lastDraw.xLabel, w._lastDraw.yLabel);
+        drawChart(w, w._lastDraw.points, w._lastDraw.xLabel, w._lastDraw.yLabel,
+          w._lastDraw.channels);
       }
     });
     const theme = themeDark() ? 'dark' : 'light';

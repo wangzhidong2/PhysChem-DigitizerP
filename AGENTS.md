@@ -6,15 +6,36 @@
 
 - **禁止 `print`**：日志一律 `from core import get_logger` + `log = get_logger('模块名')`。控制台始终输出；「运行日志」开关只决定是否额外写入 `logs.json`。
 - **禁止直接 `import serial`**：串口一律走 `core.list_serial_ports()` / `core.SERIAL_AVAILABLE` / `core.serial_unavailable_hint()`。pyserial 是可选依赖，未装时各模块须自动降级到模拟器模式。
-- **禁止用 matplotlib / pyqtgraph 原生控件画图**：不得创建 `Figure` / `FigureCanvas` / `pg.PlotWidget`，一律用 `core.ChartPanel`，否则设置页的引擎热切换对该模块失效。
+- **禁止用 matplotlib / pyqtgraph 原生控件画图**：不得创建 `Figure` / `FigureCanvas` / `pg.PlotWidget`，一律用 `core_ui.ChartPanel`，否则设置页的引擎热切换对该模块失效。
 - **禁止构造原生 Qt 控件**：不得使用 `QLabel` / `QFrame` / `QGroupBox` / `QSpinBox` / `QDoubleSpinBox` / `QCheckBox`，一律用 FluentWidgets 对应组件。
 - **禁止改 `main_legacy.py`**：迁移前的单文件存档，不再维护。新功能只改 `main.py` + 模块文件。
 - **禁止基于 `NavButton` / `SidebarWidget` 开发**：迁移前的遗留侧边栏，`MainWindow` 已改用 `FluentWindow` 自带导航。
-- **禁止在 `sensor_config.json` 之外散落校准数据**：校准参数统一经 `load_sensor_config()` / `save_sensor_config()` 读写。
+- **禁止在 `sensor_config.json` 之外散落校准数据**：校准参数统一经 `load_sensor_config()` / `save_sensor_config()` 读写。`save_sensor_config()` 内部有进程内锁 + 临时文件原子替换，禁止绕过它直接写该文件。
 - **禁止把运行产物提交进仓库**：`sensor_config.json` / `app_config.json` / `logs.json` / `build/` / `dist/` 均已被 `.gitignore` 忽略。
 
-## 2. 新增传感器模块
+## 1.5 公共层分工
 
+```text
+main.py         只做 UI：入口、MainWindow、Home、Sidebar、Settings
+core.py         公共内核：日志、sensor_config、串口/模拟器传输、事件、SensorKernel、
+                ChannelBase、MultiChannelKernel、KernelRegistry
+core_ui.py      公共 UI：AppConfig、主题/字体/样式、ChartPanel、通用控件/对话框、
+                ChannelPanelMixin（多通道连接卡公共实现）
+module_loader.py 模块与插件扫描加载（不含 UI）
+```
+
+依赖方向固定：
+
+- `main.py` → `core_ui.py` / `core.py` / `module_loader.py`
+- `core_ui.py` → `core.py`
+- `module_loader.py` → `core.py`
+- 传感器 View → `core.py`（内核 API）+ `core_ui.py`（UI API）
+- 传感器 `_kernel*.py` → **只允许** `core.py`，禁止 `core_ui` / PySide6 / qfluentwidgets
+- Flask / MCP / CLI → `core.KernelRegistry` → `SensorKernel`，**禁止**访问 QWidget 或通过 `mode_combo` / `port_combo` 反射
+
+`core.py` 必须保持纯 Python：不得 import PySide6、qfluentwidgets；日志开关和配置持久化开关由 `core_ui` 注入。
+
+## 2. 新增传感器模块
 **不改 `./src/main.py`**，只需两步：
 
 ### 2.1 建目录丢文件
@@ -38,15 +59,16 @@
 | `name` | 是 | 模块显示名，用于侧边栏与主页磁贴 |
 | `category` | 是 | `physics` 或 `chemistry`，决定主页分组 |
 | `class` | 是 | 主类名，须继承 `QWidget` |
+| `kernel` | 是 | 同目录内核文件与类，如 `_kernel_ph:PhKernel`；格式 `文件:类名` |
 
 **格式严格**：字段名、冒号、空格写错会导致模块加载失败（`importlib` 动态加载依赖此格式）。
 
 ### 2.3 模块必须实现
 
-- `self.chart = core.ChartPanel(...)`，并在 `__init__` 里 `self.chart.set_ai_data_provider(self._ai_data)`。
-- `apply_theme(self, theme)`：委托 `core.apply_module_theme(self, theme)`，再调 `self.chart.apply_chart_theme(isDarkTheme())`。
+- `self.chart = core_ui.ChartPanel(...)`，并在 `__init__` 里 `self.chart.set_ai_data_provider(self._ai_data)`。
+- `apply_theme(self, theme)`：委托 `core_ui.apply_module_theme(self, theme)`，再调 `self.chart.apply_chart_theme(isDarkTheme())`。
 - `_ai_data()`：返回 `{title, x_label, y_label, points, params, system_prompt}`，无数据返回 `None`；模块顶部定义 `AI_SYSTEM_PROMPT` 常量，经 `'system_prompt'` 键返回（旧键 `'prompt'` 兼容）。
-- 用 `core.stop_thread()` 回收自己起的通信线程，不要只调 `stop()`。
+- 用 `core_ui.stop_thread()` 回收自己起的通信线程，不要只调 `stop()`。
 
 ### 2.4 组件选型对照
 
@@ -56,14 +78,47 @@
 | 次要说明 / 统计小字（原先硬编码 `#666` 的灰色小字） | `CaptionLabel`（不设硬编码颜色） |
 | 数字输入 | `SpinBox` / `DoubleSpinBox` |
 | 模式开关 | `SwitchButton`，信号是 `checkedChanged`（**不是** `toggled`） |
-| 普通卡片（连接控制 / 参数 / 实时数据 / 操作按钮） | `core.FluentCard` |
-| 图表卡（需要全屏 / 浮动面板） | `core.CollapsibleCard` |
+| 普通卡片（连接控制 / 参数 / 实时数据 / 操作按钮） | `core_ui.FluentCard` |
+| 图表卡（需要全屏 / 浮动面板） | `core_ui.CollapsibleCard` |
 | 页面标题 | `TitleLabel` |
 | 滚动区 / 页面背景 | `scroll_area_style()` / `page_bg_style()` |
 
 **不要**再拼 `QWidget#card QLabel { color: ... }` 这类硬编码样式，Fluent 组件本身已随主题变色。
 
-## 3. 图表（`core.ChartPanel`）
+### 2.5 内核 / View 分离（新模块必须遵守）
+
+- 每个传感器目录必须同时提供 View 与内核，例如：
+  ```text
+  src/sensors/ph/
+  ├─ ph_sensor.py   # View
+  └─ _kernel.py     # PhKernel
+  ```
+- 内核文件纯 Python，**禁止** import `PySide6` / `qfluentwidgets`；只使用 `core` 的纯内核 API（`SensorKernel`、`SimulatorTransport`、`load_sensor_config` 等）。
+- 内核负责：配置读写、串口/模拟器、解析换算、校准/去皮、采样节流、缓存、快照、CSV、专有命令。
+- View 负责：控件、通道卡、实时行、图表、对话框、主题；数据与采集全部委托 `self.kernel`。
+- View 构造函数统一为 `__init__(self, kernel=None)`，无注入时从同目录内核文件兜底。
+- View 用 `kernel.subscribe()` + `QTimer` 在 GUI 线程消费事件，禁止后台线程直接操作 QWidget。
+- View 本地修改内核状态（改名/改色/换模式/改采样间隔/校准/显隐等）后必须调用 `kernel.notify_change(cid)`（或 `kernel.update_channel(...)`），**禁止只 `save_config()`**：只存盘不发事件会导致网页/CLI 端看不到变化。`KernelRegistry` 会汇聚各内核事件并通过 `/api/events`（SSE）广播给网页端。
+- 不再新起 `SerialThread` / `SimulatorThread`；统一用 `core.SerialTransport` / `core.SimulatorTransport`。
+- PyInstaller spec 已收集 `src/sensors/**/_kernel*.py`，新增内核文件无需改 spec。
+
+### 2.6 多通道公共层（新模块直接复用）
+
+- View：`class XWidget(core_ui.ChannelPanelMixin, QWidget)`。通道增删、连接子卡、实时行、端口刷新、显示勾选、单路/批量连接、采集按钮联动、CSV 保存、主题/退出清理均由 mixin 提供；模块只实现差异钩子：
+  - `_live_row_spec(ch)`：实时行的 `big_key/big_text/secondary`；
+  - `_channel_extra_params()`：新建通道传给内核的额外参数；
+  - `_sync_active_channel_controls(ch)`：参数卡「当前连接」下拉联动；
+  - `_on_channel_connection_changed(ch, connected)` / `_on_connection_state_changed()`：去皮/校准按钮与实时行文案；
+  - `_after_channels_built()`：通道重建后的模块级收尾。
+- 内核：`class XKernel(core.MultiChannelKernel)`。通道 id/默认名/配色、配置恢复、每路字段序列化、顶层镜像、CSV 长表由基类统一处理；模块实现：
+  - `create_channel(cid, name, color, mode, port, sample_interval_ms, visible, params)`；
+  - `channel_restore_params(item)`（把每路配置转成 `create_channel` 的额外参数）；
+  - `after_restore_channels()`（通常调用 `self.mirror_first_channel(...)`）；
+  - 按需覆盖 `csv_comments/csv_header/csv_row_values`。
+- 通道数据模型继承 `core.ChannelBase`，只初始化自己的物理参数与数据序列，并把 `value_data/raw_data` 别名到模块自己的列表。
+- 默认曲线配色统一用 `core.CHANNEL_COLORS`，不要在模块里复制一份。
+
+## 3. 图表（`core_ui.ChartPanel`）
 
 事务式 API，两种引擎行为一致：
 
@@ -79,6 +134,7 @@ c.end()
 ```
 
 - 多子图用 `ChartPanel(n_plots=N)`，各调用通过 `index` 参数寻址。
+- 多曲线（多通道）必须给 `plot()` 传 `series_id=str(ch.id)`：分析面板的「拟合对象」按该 id 选择目标曲线；不传时退回用 `label`，改名后选择会失效。
 - 切换引擎时 `ChartPanel` 自动重放最近一次事务，无需手动重绘。
 - 分析面板（拟合 / 离群点剔除 / 滚动窗口）用 `get_analysis_panel()` 取得，仅 pyqtgraph 下可见，matplotlib / 占位模式下自动隐藏。
 - **水平参考线不得直接加入图例**：`InfiniteLine` 没有 `opts` 属性，旧版 pyqtgraph 的 `ItemSample.paint` 会崩，并拖垮整棵控件树的绘制。
@@ -86,7 +142,7 @@ c.end()
 ## 4. 主题
 
 - 所有模块须实现 `apply_theme(theme)`，亮 ↔ 暗双向可切。
-- `core.apply_module_theme()` 用缓存的 `_orig_qss` 动态属性实现双向切换，**不要自己重写样式替换逻辑**。
+- `core_ui.apply_module_theme()` 用缓存的 `_orig_qss` 动态属性实现双向切换，**不要自己重写样式替换逻辑**。
 - `FluentCard` 会被 `apply_module_theme` 跳过（它自带 Fluent 样式，套自定义 QSS 反而破坏背景）。
 
 ## 5. 环境与构建
@@ -138,7 +194,7 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 
 ### 线程回收
 
-- 断开模块线程一律用 `core.stop_thread()`：内部 `stop()` + 限时 `wait(2000)`，超时的线程收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃。
+- 断开模块线程一律用 `core_ui.stop_thread()`：内部 `stop()` + 限时 `wait(2000)`，超时的线程收进 `_retired_threads` 保活，避免 QThread 被回收时 fail-fast 崩溃。
 - 通信线程的 `running` 初值须为 `True`，并在 `run()` 首行检查，防止 `stop()` 先于 `run()` 执行导致线程永不退出、`wait()` 卡死。
 - `AIRequestThread` 不挂 parent，发送中关窗可自动收尾，避免 QThread 析构崩溃。
 

@@ -470,6 +470,77 @@ body {
 .win-conn .conn-mini:disabled,
 .win-conn .conn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* 多通道：每路一行，模式/端口/采样频率/连接/删除 */
+.win-channels {
+  align-items: flex-start;
+}
+
+.win-channels .channel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.channel-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-color) 4%, transparent);
+}
+
+.channel-row.channel-connected {
+  border-color: color-mix(in srgb, var(--accent-color) 48%, var(--input-border));
+}
+
+.channel-row .channel-color {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 50%;
+  background: var(--accent-color);
+}
+
+.channel-row .channel-name,
+.channel-row .channel-rate {
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-color);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  outline: none;
+}
+
+.channel-row .channel-name { width: 108px; }
+.channel-row .channel-rate { width: 72px; }
+.channel-row .channel-name:focus,
+.channel-row .channel-rate:focus { border-color: var(--accent-color); }
+
+.channel-row .channel-unit {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: -3px;
+}
+
+.channel-row .conn-mini.danger {
+  color: #d83b3b;
+  border-color: color-mix(in srgb, #d83b3b 35%, var(--input-border));
+}
+
+.channel-row .conn-mini.danger:hover {
+  color: #fff;
+  background: #d83b3b;
+  border-color: #d83b3b;
+}
+
 .win-chart {
   flex: 1;
   min-height: 160px;

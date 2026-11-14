@@ -31,6 +31,21 @@
 
 ## 3. 架构
 
+### 3.0 公共层（消除六模块重复）
+
+多通道能力沉淀在两个公共层，模块只保留物理差异：
+
+| 公共层 | 位置 | 职责 |
+|---|---|---|
+| `ChannelBase` / `MultiChannelKernel` | `core.py` | 通道 id/默认名/配色、配置恢复与每路字段序列化、顶层镜像、CSV 长表 |
+| `ChannelPanelMixin` | `core_ui.py` | 连接子卡、实时行、端口刷新、显示勾选、单路/批量连接、采集按钮联动、CSV 保存、主题/退出清理 |
+
+模块侧只实现钩子：View 的 `_live_row_spec` / `_channel_extra_params` /
+`_on_channel_connection_changed`；内核的 `create_channel` /
+`channel_restore_params` / `after_restore_channels` / CSV 列定义。
+默认配色统一使用 `core.CHANNEL_COLORS`，`FlowWrapBox` / `FlowFixedWidth` /
+`make_color_icon` 统一由 `core_ui` 提供。
+
 ### 3.1 数据模型 `_Channel`（纯 Python，不持 Qt 控件）
 
 ```
@@ -199,10 +214,14 @@ channel,timestamp_s,raw_adc,voltage_v
 1. **AI 分析只喂主通道序列**：`_ai_data()` 取数据最多的一路作 points，
    其余路的概况写入 params 文字。多路全量喂给模型需要 ChartPanel 的
    AI 数据协议升级（points 结构目前是单序列 `[(t, y), ...]`）；
-2. **拟合/离群点剔除只作用于第一条曲线**（见 3.4）；
-3. **串口端口可重复选择**：两路选同一个 COM 口会被第二路打开失败
-   （pyserial 独占），报错走该路的 ERROR 弹窗。后续可在 UI 上做去重
-   提示；
+2. ~~**拟合/离群点剔除只作用于第一条曲线**~~：**已修复**——分析面板新增
+   「拟合对象」下拉（多曲线时才显示），按 `series_id`（通道 id）选择；
+   拟合、R²、离群点剔除都作用于所选曲线，通道改名保持选择、删除后回落
+   「自动（第一条）」；双子图（超声波速度）同一通道两幅图同时拟合；
+3. ~~**串口端口可重复选择**~~：**已修复**——`SensorKernel.connect()` 维护
+   进程内串口占用表（`core.claim_serial_port`），同一串口被第二路（含
+   跨模块）连接时直接拒绝并提示「串口 X 已被『模块 通道』占用」；
+   断开或掉线后自动释放，可被其他路/模块重新连接；
 4. **颜色为十六进制字符串**存配置，无命名/透明度支持；
 5. **模拟器线程的发送频率在连接时定格**：连接中途改本路采样频率，
    过滤间隔即时生效，但模拟器发数周期要重连后才按新频率运行
@@ -253,4 +272,5 @@ channel,timestamp_s,raw_adc,voltage_v
    `channels` 明细，前端可统一升级；
 3. **AI 多序列协议**：`_ai_data` 支持 `series: [{name, color, points}]`，
    ChartPanel 的 AI 弹窗同步升级；
-4. **端口去重提示**：同端口被两路选中时在 UI 上即时提醒。
+4. ~~**端口去重提示**：同端口被两路选中时在 UI 上即时提醒。~~
+   **已完成**（连接时直接拒绝并给出占用者提示）。

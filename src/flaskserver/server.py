@@ -2,15 +2,17 @@
 """
 flaskserver.server — Flask app、路由、token 校验、静态托管
 
-只做一件事：把 core.DataService 的方法翻译成 HTTP 端点。
+只做一件事：把 core.KernelRegistry 的方法翻译成 HTTP 端点。
 不持有数据、不认识任何具体传感器、不操作任何 Qt 控件。
 """
 
+import json
 import os
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify, request, Response, send_file
+from flask import (Flask, jsonify, request, Response, send_file,
+                   stream_with_context)
 
 _WEB_DIR = Path(__file__).parent / 'web'
 #: 内嵌字体目录：与主程序共用 src/assets/fonts/（本文件在 src/flaskserver/ 下，上溯两级为 src/）
@@ -71,11 +73,11 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
     """构建 Flask app。
 
     Args:
-        service: core.DataService 实例（数据与控制总线）
+        service: core.KernelRegistry 实例（直接持有内核，不经过 QWidget）
         token: 访问密钥；空字符串表示写操作也免校验（不推荐）
         allow_lan: 局域网模式 —— 读操作也强制 token
         enable_cors: 是否允许跨域
-        app_cfg: core.app_cfg（网页字体等外观设置读写用）；None 时只读回退默认
+        app_cfg: core_ui.app_cfg（网页字体等外观设置读写用）；None 时只读回退默认
     """
     app = Flask(__name__, static_folder=str(_WEB_DIR), static_url_path='')
 
@@ -166,6 +168,130 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
         snap['ok'] = True
         return jsonify(snap)
 
+    # --------------------------------------------------------
+    # 事件推送（SSE）：桌面 GUI / 网页 / CLI 任一处改内核都会广播
+    #
+    # 事件统一为 {seq, key, kind, channel_id, data, ts}：
+    # - channels_changed / collection_changed / channel_state / error 为状态事件
+    # - data 为高频采样合并后的「有新数据」通知（每路最多 2 次/秒）
+    # 客户端按 Last-Event-ID 断线续传；落后超过环形缓冲时收到 reset 事件。
+    # --------------------------------------------------------
+    @app.route('/api/events')
+    def events():
+        r = _check_token(write=False)
+        if r is not None:
+            return r
+        wait_events = getattr(service, 'wait_events', None)
+        if not callable(wait_events):
+            return _error(503, 'not_supported', '当前服务不支持事件推送')
+        current_seq = getattr(service, 'current_seq', None)
+        start = current_seq() if callable(current_seq) else 0
+        raw = request.args.get('since')
+        if raw is None or raw == '':
+            raw = request.headers.get('Last-Event-ID')
+        try:
+            since = int(raw) if raw not in (None, '') else start
+        except (TypeError, ValueError):
+            since = start
+
+        def _stream():
+            cursor = since
+            yield 'retry: 3000\n\n'
+            while True:
+                batch, seq, gap = wait_events(cursor, timeout=15.0)
+                if gap:
+                    cursor = seq
+                    yield 'event: reset\ndata: {}\n\n'
+                    continue
+                if not batch:
+                    # 心跳：保持连接不被代理/浏览器掐断
+                    yield ': ping %d\n\n' % int(time.time())
+                    continue
+                for event in batch:
+                    cursor = event.get('seq', cursor)
+                    yield 'id: %d\nevent: kernel\ndata: %s\n\n' % (
+                        cursor, json.dumps(event, ensure_ascii=False))
+
+        resp = Response(stream_with_context(_stream()),
+                        mimetype='text/event-stream')
+        resp.headers['Cache-Control'] = 'no-cache'
+        resp.headers['X-Accel-Buffering'] = 'no'
+        return resp
+
+    @app.route('/api/modules/<key>/channels')
+    def module_channels(key):
+        r = _check_token(write=False)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        return jsonify({'ok': True, 'key': key,
+                        'channels': service.channels(key)})
+
+    @app.route('/api/modules/<key>/channels', methods=['POST'])
+    def module_channel_add(key):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        body = _json_body()
+        res = service.submit_command(key, 'add_channel', body,
+                                     timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
+    @app.route('/api/modules/<key>/channels/<int:cid>', methods=['PATCH'])
+    def module_channel_update(key, cid):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        body = _json_body()
+        body['channel_id'] = cid
+        res = service.submit_command(key, 'update_channel', body,
+                                     timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
+    @app.route('/api/modules/<key>/channels/<int:cid>', methods=['DELETE'])
+    def module_channel_remove(key, cid):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        res = service.submit_command(
+            key, 'remove_channel', {'channel_id': cid},
+            timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
+    @app.route('/api/modules/<key>/channels/<int:cid>/connect', methods=['POST'])
+    def module_channel_connect(key, cid):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        res = service.submit_command(
+            key, 'connect', {'channel_id': cid}, timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
+    @app.route('/api/modules/<key>/channels/<int:cid>/disconnect', methods=['POST'])
+    def module_channel_disconnect(key, cid):
+        r = _check_token(write=True)
+        if r is not None:
+            return r
+        if key not in service.keys():
+            return _error(404, 'module_not_found', '模块不存在: %s' % key)
+        res = service.submit_command(
+            key, 'disconnect', {'channel_id': cid}, timeout=_READ_TIMEOUT_S)
+        status = 200 if res.get('ok') else 400
+        return jsonify(dict(res, ok=res.get('ok', False))), status
+
     @app.route('/api/modules/<key>/series')
     def module_series(key):
         r = _check_token(write=False)
@@ -177,8 +303,10 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
             limit = int(request.args.get('limit', 2000))
         except ValueError:
             return _error(400, 'bad_request', 'limit 必须是整数')
+        limit = max(1, limit)
         return jsonify({'ok': True, 'key': key,
-                        'points': service.series(key, limit=max(1, limit))})
+                        'points': service.series(key, limit=limit),
+                        'channels': service.series_channels(key, limit=limit)})
 
     @app.route('/api/modules/<key>/export.csv')
     def module_csv(key):
@@ -363,7 +491,7 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
         installed = []
         if app_cfg is not None:
             try:
-                from core import available_font_families
+                from core_ui import available_font_families
                 installed = available_font_families()
             except Exception:
                 installed = []

@@ -10,7 +10,7 @@ PhysChem-DigitizerP 主程序
 - 主页（HomePageWidget）
 - 侧边栏（SidebarWidget）+ 导航按钮（NavButton）
 - 设置（SettingsWidget）
-- 动态模块加载器：扫描 sensors/ 目录，importlib 加载各传感器模块
+- 动态模块加载：通过 module_loader 扫描 sensors/ 目录并加载各传感器模块
 
 新增传感器模块时无需修改本文件，只需在 sensors/ 下新建子目录并放入
 带识别区的 .py 文件即可被自动发现并注册。
@@ -19,14 +19,12 @@ PhysChem-DigitizerP 主程序
 import sys
 import os
 import re
-import glob
 import webbrowser
-import importlib.util
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QStackedWidget, QScrollArea,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QFrame, QScrollArea,
     QFileDialog,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QRect, QTimer, QUrl
@@ -44,11 +42,9 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         FluentWindow, FluentIcon as FIF, NavigationItemPosition,
         PushButton, PrimaryPushButton,
         ComboBox, InfoBar, InfoBarIcon, InfoBarPosition, BodyLabel,
-        TitleLabel, SubtitleLabel, CaptionLabel, HyperlinkButton,
-        SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
+        TitleLabel, SubtitleLabel, CaptionLabel, SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
         SwitchSettingCard, SwitchButton, SpinBox, MessageBox, MessageBoxBase, Dialog,
-        qconfig, IndicatorPosition,
-        LineEdit,
+        qconfig, LineEdit,
         CardWidget, IconWidget, PillToolButton, CheckBox,
         AdaptiveFlowLayout, ToolTipFilter, TransparentToolButton,
     )
@@ -68,22 +64,26 @@ class ZhSwitchSettingCard(SwitchSettingCard):
         self.switchButton.setText("开" if isChecked else "关")
 
 
-# 公共模块（与各传感器模块共享）
+# 公共内核（纯 Python）：配置、日志、内核注册表、传感器配置导入导出
 from core import (
-    card_style, primary_btn_style, accent_btn_style,
-    patch_combobox_arrow_flip, CollapsibleCard, FluentCard,
+    clear_sensor_config, export_sensor_config, import_sensor_config,
+    get_logger, get_log_file_path, set_config_persistence, KernelRegistry,
+)
+# 公共 UI：主题、字体、样式、图表、通用控件
+from core_ui import (
+    patch_combobox_arrow_flip, FluentCard,
     page_bg_style, scroll_area_style, _theme_colors, app_cfg,
     ChartPanel, chart_engine_available, resolve_chart_engine,
-    clear_sensor_config, export_sensor_config, import_sensor_config, reset_all_config,
+    reset_all_config,
     DEFAULT_THEME_COLOR, system_accent_color, set_app_theme_color,
     current_theme_mode, set_app_theme_mode, restore_app_theme,
-    get_logger, get_log_file_path, setup_logging,
-    set_log_enabled, set_log_level, set_log_max_entries,
-    DataService,
+    setup_logging, set_log_enabled, set_log_level, set_log_max_entries,
     # 应用字体：内嵌 MiSans 注册 / 解析 / 应用 / 系统字体选择器
-    EMBEDDED_FONT_FAMILY, load_embedded_font, apply_app_font,
+    load_embedded_font, apply_app_font,
     resolve_app_font_family, available_font_families, FontPickerDialog,
 )
+# 模块扫描 / 内核加载 / 插件加载
+from module_loader import scan_modules, load_plugins
 
 log = get_logger("main")
 
@@ -285,194 +285,6 @@ class ModuleFolderTile(CardWidget):
     def refresh_icon(self):
         """按当前主题重绘图标（主题切换时调用）。"""
         self.icon_widget.setIcon(self._make_icon())
-
-
-# ============================================================
-# 模块元数据解析
-# ============================================================
-META_PATTERN = re.compile(
-    r'#\s*===\s*MODULE META\s*===\s*\n'
-    r'(.*?)'
-    r'#\s*===+\s*',
-    re.DOTALL
-)
-
-
-def parse_module_meta(file_path):
-    """解析模块文件头的识别区注释块。
-
-    Args:
-        file_path: 模块 .py 文件的绝对路径
-
-    Returns:
-        dict: {'icon': ..., 'name': ..., 'category': ..., 'class': ...,
-               可选 'icon_file': ...（assets/ 下图标文件名，多模块共目录时区分图标）}
-        解析失败返回 None
-    """
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            # 只读前 50 行，识别区在文件头
-            head = ''.join(f.readline() for _ in range(50))
-    except Exception as e:
-        log.warning("读取模块文件失败 %s: %s", file_path, e)
-        return None
-
-    m = META_PATTERN.search(head)
-    if not m:
-        return None
-
-    meta = {}
-    for line in m.group(1).splitlines():
-        line = line.strip()
-        if line.startswith('#'):
-            line = line.lstrip('#').strip()
-        if ':' in line:
-            key, _, value = line.partition(':')
-            meta[key.strip().lower()] = value.strip()
-
-    if 'name' not in meta or 'class' not in meta:
-        return None
-
-    meta.setdefault('icon', '?')
-    meta.setdefault('category', 'physics')
-    return meta
-
-
-def scan_modules(modules_dir):
-    """扫描模块目录，发现并加载所有传感器模块。
-
-    Args:
-        modules_dir: 传感器模块目录的绝对路径
-
-    Returns:
-        list of dict: 每项包含
-            - name: 模块显示名
-            - icon: 模块图标文本
-            - category: 模块类别（physics/chemistry）
-            - class_name: 模块类名
-            - module: 加载后的 Python 模块对象
-            - file_path: 模块文件路径
-        按模块名排序
-    """
-    discovered = []
-    if not os.path.isdir(modules_dir):
-        log.warning("模块目录不存在: %s", modules_dir)
-        return discovered
-
-    # 遍历 sensors/ 下的每个子目录
-    for sub in sorted(os.listdir(modules_dir)):
-        sub_path = os.path.join(modules_dir, sub)
-        if not os.path.isdir(sub_path):
-            continue
-
-        # 子目录下所有 .py 文件
-        for py_file in sorted(glob.glob(os.path.join(sub_path, '*.py'))):
-            base = os.path.basename(py_file)
-            if base.startswith('_') or base.startswith('test'):
-                continue
-
-            meta = parse_module_meta(py_file)
-            if not meta:
-                log.info("跳过（无识别区）: %s", py_file)
-                continue
-
-            # importlib 动态加载
-            mod_name = f"_sensor_module_{base[:-3]}"
-            spec = importlib.util.spec_from_file_location(mod_name, py_file)
-            if spec is None or spec.loader is None:
-                log.warning("无法加载模块: %s", py_file)
-                continue
-
-            mod = importlib.util.module_from_spec(spec)
-            try:
-                sys.modules[mod_name] = mod
-                spec.loader.exec_module(mod)
-            except Exception as e:
-                log.error("模块加载失败 %s: %s", py_file, e)
-                continue
-
-            class_name = meta['class']
-            if not hasattr(mod, class_name):
-                log.error("模块未定义类 %s: %s", class_name, py_file)
-                continue
-
-            discovered.append({
-                'name': meta['name'],
-                'icon': meta['icon'],
-                'icon_file': meta.get('icon_file'),
-                'category': meta['category'],
-                'class_name': class_name,
-                'module': mod,
-                'file_path': py_file,
-            })
-            log.info("✓ 已加载模块: %s (%s) <- %s",
-                     meta['name'], meta['category'], base)
-
-    discovered.sort(key=lambda x: (x['category'], x['name']))
-    return discovered
-
-
-# ============================================================
-# 插件加载（flaskserver 等）
-#
-# 扫描 main.py 所在目录（src/）下的一级子目录：内有 __init__.py 且文件头 50 行含
-# 「=== PLUGIN META ===」识别区即视为插件。按显式路径加载成正规包
-# （不进 sys.path），失败只记日志并跳过，不影响主程序启动。
-# ============================================================
-
-PLUGIN_META_PATTERN = re.compile(r'#\s*===\s*PLUGIN\s+META\s*===\s*(.*)', re.S)
-
-
-def parse_plugin_meta(init_path):
-    """解析插件 __init__.py 头部识别区，返回 meta dict 或 None。"""
-    try:
-        with open(init_path, 'r', encoding='utf-8') as f:
-            head = ''.join(f.readline() for _ in range(50))
-    except Exception as e:
-        log.warning("读取插件文件失败 %s: %s", init_path, e)
-        return None
-    m = PLUGIN_META_PATTERN.search(head)
-    if not m:
-        return None
-    meta = {}
-    for line in m.group(1).splitlines():
-        line = line.strip().lstrip('#').strip()
-        if ':' in line:
-            key, _, value = line.partition(':')
-            meta[key.strip().lower()] = value.strip()
-    if 'name' not in meta or 'class' not in meta:
-        return None
-    return meta
-
-
-def load_plugins(app_dir):
-    """扫描并加载 app_dir 下的插件，返回插件实例列表。"""
-    plugins = []
-    if not os.path.isdir(app_dir):
-        return plugins
-    for sub in sorted(os.listdir(app_dir)):
-        plugin_dir = os.path.join(app_dir, sub)
-        init_path = os.path.join(plugin_dir, '__init__.py')
-        if not os.path.isfile(init_path):
-            continue
-        meta = parse_plugin_meta(init_path)
-        if not meta:
-            continue
-        mod_name = 'physchem_plugin_%s' % sub
-        try:
-            spec = importlib.util.spec_from_file_location(
-                mod_name, init_path,
-                submodule_search_locations=[plugin_dir])
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules[mod_name] = mod
-            spec.loader.exec_module(mod)
-            cls = getattr(mod, meta['class'])
-            plugin = cls()
-            plugins.append(plugin)
-            log.info("✓ 已加载插件: %s <- %s/", meta['name'], sub)
-        except Exception as e:
-            log.error("插件加载失败 %s: %s", sub, e)
-    return plugins
 
 
 def lan_ip():
@@ -2018,6 +1830,7 @@ class SettingsWidget(QWidget):
         之前校准好的数据，因此先弹确认框；拒绝则切回关闭。
         （「清除用户设置」程序内开启时跳过确认：磁盘配置已删，无覆盖风险）
         """
+        set_config_persistence(bool(checked))
         if not checked:
             return
         if self._suppress_persistence_confirm:
@@ -2103,7 +1916,7 @@ class SettingsWidget(QWidget):
 
     def _on_regenerate_token(self):
         """重生成访问密钥并持久化；服务运行中则带新密钥重启。"""
-        from core import app_cfg as _cfg
+        from core_ui import app_cfg as _cfg
         token = None
         window = self.window()
         plugin = getattr(window, 'data_plugin', None)
@@ -2314,6 +2127,7 @@ class SettingsWidget(QWidget):
             # 保存开关置为开：跳过开启确认框（磁盘配置已删，无覆盖风险）
             self._suppress_persistence_confirm = True
             qconfig.set(app_cfg.configPersistenceEnabled, True)
+            set_config_persistence(True)
             self._suppress_persistence_confirm = False
             box = MessageBox(
                 "已清除",
@@ -2683,8 +2497,16 @@ class MainWindow(FluentWindow):
 
         for info in discovered:
             cls = getattr(info['module'], info['class_name'])
+            kernel = None
+            kernel_cls = info.get('kernel_class')
+            if kernel_cls is not None:
+                try:
+                    kernel = kernel_cls()
+                except Exception as e:
+                    log.error("实例化模块内核 %s 失败: %s", info['name'], e)
+                    continue
             try:
-                widget = cls()
+                widget = cls(kernel) if kernel is not None else cls()
             except Exception as e:
                 log.error("实例化模块 %s 失败: %s", info['name'], e)
                 continue
@@ -2727,27 +2549,24 @@ class MainWindow(FluentWindow):
         # 默认显示主页
         self.switchTo(home_page)
 
-        # === 数据总线（核心能力，与插件无关）===
-        # 模块 key 用识别区英文名约定：取 objectName 去掉 module_ 前缀；
-        # 更稳妥的是模块在 api_snapshot 里自报 key（DataService 兼容两种）
-        self.data_service = DataService()
+        # === 内核注册表（HTTP / MCP / CLI 直接调用内核）===
+        # View 只持有内核；外部接口通过 KernelRegistry 拿到同一个内核实例，
+        # 不再通过 QWidget / mode_combo / port_combo 做反射。
+        self.kernel_registry = KernelRegistry()
         self._module_keys = {}  # widget -> key
         for info, widget in zip(
                 [d for d in discovered if d['name'] in self.modules],
                 [self.modules[d['name']] for d in discovered
                  if d['name'] in self.modules]):
-            key = self._module_key(info, widget)
-            # 优先采用模块 api_snapshot() 自报的 key（如 ultrasonic_displacement），
-            # 与模块快照里的 'key' 字段保持一致，避免 URL 与数据错位
-            try:
-                snap_key = (widget.api_snapshot() or {}).get('key')
-                if snap_key:
-                    key = snap_key
-            except Exception:
-                pass
+            kernel = getattr(widget, 'kernel', None)
+            key = getattr(kernel, 'key', '') or self._module_key(info, widget)
             self._module_keys[widget] = key
-            self.data_service.register(key, info['name'], widget,
-                                       icon_path=module_icon_path(info, theme='light'))
+            if kernel is None:
+                log.warning("模块 %s 没有内核，跳过 HTTP 注册", info['name'])
+                continue
+            self.kernel_registry.register(
+                key, info['name'], kernel,
+                icon_path=module_icon_path(info, theme='light'))
 
         # === 插件加载（失败静默，不影响主程序）===
         self.plugins = load_plugins(app_dir)
@@ -2755,7 +2574,7 @@ class MainWindow(FluentWindow):
         for plugin in self.plugins:
             try:
                 plugin.attach({
-                    'service': self.data_service,
+                    'service': self.kernel_registry,
                     'app_cfg': app_cfg,
                     'log': log,
                 })
@@ -3039,7 +2858,7 @@ class MainWindow(FluentWindow):
         for name, widget in self.modules.items():
             if name in ("主页", "设置"):
                 continue
-            for meth in ("disconnect_all", "disconnect_serial"):
+            for meth in ("shutdown", "disconnect_all", "disconnect_serial"):
                 dispose = getattr(widget, meth, None)
                 if callable(dispose):
                     try:
@@ -3226,7 +3045,7 @@ def main():
     # 监听 Windows 系统强调色变化（仅「跟随系统主题色」模式生效）；
     # 引用挂在 app 上防止被垃圾回收
     try:
-        from core import SystemAccentListener
+        from core_ui import SystemAccentListener
         app._system_accent_listener = SystemAccentListener()
         app.installNativeEventFilter(app._system_accent_listener)
     except Exception as e:
