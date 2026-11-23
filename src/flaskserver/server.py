@@ -131,6 +131,9 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
             'modules_n': len(service.keys()),
             'lan_access': allow_lan,
             'auth_enabled': bool(app._token),
+            # 谁占着哪个串口：让 MCP/脚本能判断「连不上是因为被桌面端占用」
+            'serial_owners': (service.serial_owners()
+                              if hasattr(service, 'serial_owners') else {}),
         })
 
     @app.route('/api/auth/check')

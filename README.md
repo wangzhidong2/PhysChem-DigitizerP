@@ -32,7 +32,7 @@
 - **开源透明**：`GPL-3.0` 协议，硬件设计和软件代码完全开源，同时提供我认为写的比较详细的教程
 - **模块化设计**：新增传感器只需丢文件，详情参看`Agents.md`，同时也方便AI Agent开发
 - **现代化界面**：`PySide6 `+`Fluent-widgets`库图形界面，UI美观，尽可能的复刻`fluent design`；**字体可换**（内嵌 MiSans，也可从系统字体里任选，见 6.9）
-- **数据接口**：可选插件把数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**，手机也能看（见 6.10）
+- **数据接口**：可选插件把数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**，手机也能看（见 6.10）；Agent 接入步骤见 6.11
 
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/5e684b3a-bff0-4c48-8284-f5a23525a62a/image.png 'image.png')
 ## 3.快速上手上位机
@@ -437,7 +437,7 @@ python ./src/main.py
 | **实时双向同步** | 桌面端与网页端操作的是同一份内核状态：任一端改名/改色/换模式/改采样间隔/校准/显隐/增删通道/启停采集，另一端立即刷新（桌面 ≈10–20 ms，网页走 SSE 推送） |
 | **仪表盘登录** | 开启鉴权后先显示登录页，输对密钥才进桌面；登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
 | **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`、`/events`，以及 `collect`／`command`／`params` 控制端点 |
-| **MCP 代理** | `./src/flaskserver/mcp_server.py` 把 REST 暴露为 MCP 工具（`list_modules`／`get_snapshot`／`get_series`／`control_collect`／`send_command`），供 AI Agent 通过 stdio 调用（需另装 `mcp`） |
+| **MCP 服务** | `./src/flaskserver/mcp_server.py` 按 **MCP 2026-07-28** 暴露 13 个工具（读状态／改参数／采集／校准／导出／生成报告）；支持 `http`（连桌面端）与 `local`（进程内直连内核，无 GUI）两种后端；每个工具统一回传 `ok/error/hint/state` |
 
 同步机制：`KernelRegistry` 订阅每个传感器内核的事件总线，写入带单调序号的环形日志，
 再通过 `GET /api/events`（SSE）广播给所有网页客户端；断线可用 `Last-Event-ID` 续传，
@@ -450,10 +450,77 @@ python ./src/main.py
 
 ```bash
 pip install flask          # 插件依赖（可选；未装时主页「数据接口」卡片灰显，程序照常运行）
-pip install mcp            # 仅 MCP 代理需要
+pip install -U "mcp>=2.3"  # 仅 MCP 服务需要（1.x 不支持 2026-07-28 规范）
 ```
 
-完整的端点清单、curl 示例与 MCP 配置见 [src/flaskserver/README.md](src/flaskserver/README.md)。
+### 6.11.在 AI Agent 里接入 MCP（三步）
+
+MCP 让 Claude Desktop / Cursor / Claude Code / OpenCode 这类客户端能**自己**看模块、改参数、开采集、等数据、出报告。整个链路上桌面端只负责采数，Agent 通过 MCP 操作同一个内核。
+
+**第 1 步：装 Python 依赖**（MCP 服务是独立 Python 进程，不能用打包好的 exe 代替）
+
+```bash
+pip install -U "mcp>=2.3"   # 必须 2.3+，1.x 没有 2026-07-28 规范
+pip install pyserial        # 只有 local 后端直连串口才需要
+```
+
+**第 2 步：桌面端打开数据接口，复制密钥**
+
+主页 →「数据接口」卡片 → 打开开关 → 复制访问密钥（`http://127.0.0.1:8765`）。
+
+**第 3 步：写客户端配置**
+
+Claude Desktop（Windows：`%APPDATA%\Claude\claude_desktop_config.json`；macOS：`~/Library/Application Support/Claude/claude_desktop_config.json`）、Cursor（`~/.cursor/mcp.json`）等通用格式：
+
+```json
+{
+  "mcpServers": {
+    "physchem": {
+      "command": "python",
+      "args": ["D:\\PhysChem-DigitizerP\\src\\flaskserver\\mcp_server.py"],
+      "env": {
+        "PCD_BACKEND": "http",
+        "PCD_API_BASE": "http://127.0.0.1:8765",
+        "PCD_TOKEN": "设置页里的密钥"
+      }
+    }
+  }
+}
+```
+
+> Windows 路径要双写反斜杠；`command` 建议写 Python 绝对路径（如
+> `C:\\Users\\me\\AppData\\Local\\Programs\\Python\\Python312\\python.exe`），
+> 避开 Microsoft Store 的假 `python`。Linux/macOS 用 `/path/to/src/flaskserver/mcp_server.py`。
+
+Claude Code 用一条命令即可：
+
+```bash
+claude mcp add physchem \
+  -e PCD_BACKEND=http -e PCD_API_BASE=http://127.0.0.1:8765 -e PCD_TOKEN=<密钥> \
+  -- python /path/to/src/flaskserver/mcp_server.py
+```
+
+**三种场景只改 `env`**：
+
+| 场景 | `PCD_BACKEND` | `PCD_API_BASE` | `PCD_TOKEN` |
+|---|---|---|---|
+| 桌面端开着（推荐） | `http` | `http://127.0.0.1:8765` | 必填 |
+| Agent 在另一台电脑 | `http` | `http://<桌面端IP>:8765` | 必填（局域网读也要） |
+| 没有桌面端（服务器/CI） | `local` | 不填 | 不填 |
+
+**验证**：重启客户端，问它「列一下有哪些传感器模块」。回 6 个模块即接通。报错对照：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `upstream_unreachable` | 桌面端「数据接口」开关没开 / 端口不对 | 打开开关，核对 `PCD_API_BASE` |
+| `unauthorized` | 密钥没填或已重置 | 重新复制密钥到 `PCD_TOKEN` |
+| `port_in_use` | 串口正被桌面端占用 | 正常现象：改用 `http` 后端共享，别用 `local` 直连 |
+| 启动即退出并提示缺 `mcp` | 装到了 1.x 或没装 | `pip install -U "mcp>=2.3"` |
+
+> `local` 后端会在 MCP 进程内自己驱动内核，**会独占串口**，不要和桌面端同时连同一台设备。
+> 桌面端已经在采数时，一律用 `http`，让网页端和 Agent 共用桌面端那一份数据。
+
+完整的端点清单、curl 示例、工具说明见 [src/flaskserver/README.md](src/flaskserver/README.md)。
 
 ## 7.故障排除
 

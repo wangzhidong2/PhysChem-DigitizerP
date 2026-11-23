@@ -6070,8 +6070,25 @@ class ChannelPanelMixin:
             self._fill_channel_ports(ch, refs['port_combo'])
 
     def _on_channel_mode_changed(self, ch, index):
-        ch.mode = 'simulator' if index == 1 else 'serial'
+        new_mode = 'simulator' if index == 1 else 'serial'
+        if new_mode == getattr(ch, 'mode', ''):
+            return
+        was_connected = bool(getattr(ch, 'connected', False))
+        # 统一走内核接口：它会先把旧传输断开，避免「界面切到模拟器、
+        # 实际仍在读串口」——那样数据来源与界面不一致，串口也一直被占着。
+        self.kernel.update_channel(ch.id, mode=new_mode)
         self._apply_channel_mode_visibility(ch)
+        if was_connected:
+            res = self.kernel.connect(ch.id)   # 换了数据源就按新模式重连
+            refs = self._rows.get(ch.id)
+            ok = bool(res.get('ok'))
+            if refs:
+                refs['connect_btn'].setText("断开" if ok else "连接")
+            self._set_collect_enabled(self.kernel.connected_any())
+            self._on_channel_connection_changed(ch, ok)
+            if not ok:
+                log.warning("%s 切换连接方式后重连失败: %s", ch.name,
+                            res.get('message', ''))
         self.kernel.notify_change(ch.id)
 
     def _apply_channel_mode_visibility(self, ch):

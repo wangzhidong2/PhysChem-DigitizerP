@@ -854,6 +854,13 @@ def release_serial_port(port, owner):
             _port_claims.pop(port, None)
 
 
+def serial_port_owners():
+    """当前进程内被占用的串口：{port: 展示名}（供健康检查/诊断暴露）。"""
+    with _port_claims_lock:
+        return {port: (label or owner)
+                for port, (owner, label) in _port_claims.items()}
+
+
 def stop_transport(transport, timeout=2000, name="通信线程"):
     """停止普通线程传输并限时等待；超时的保留引用。"""
     if transport is None:
@@ -1002,6 +1009,20 @@ class SensorKernel:
         ch = self.get_channel(cid)
         if ch is None:
             return False
+        # 换连接方式必须先断开旧传输：否则界面显示「模拟器」、通道却仍在读串口，
+        # 串口占用表也不会释放（网页端 / MCP 会一直看到「已被占用」）。
+        if 'mode' in fields:
+            raw = str(fields['mode']).strip()
+            if raw in ('模拟器', 'simulator'):
+                norm = 'simulator'
+            elif raw in ('串口', 'serial', '有线串口'):
+                norm = 'serial'
+            else:
+                norm = raw
+            if norm != str(getattr(ch, 'mode', '')):
+                if getattr(ch, 'connected', False):
+                    self.disconnect(cid)
+            fields['mode'] = norm
         for k, v in fields.items():
             if hasattr(ch, k):
                 setattr(ch, k, v)
@@ -1328,6 +1349,13 @@ class SensorKernel:
                 if params.get('connect'):
                     self.disconnect(ch.id)
                     return self.connect(ch.id)
+                # 只改配置不带 connect：若通道还连着，必须断开。
+                # 否则会出现「显示模拟器、实际仍在读串口」的错位，
+                # 串口占用表也不会释放，别的进程永远连不上。
+                if getattr(ch, 'connected', False):
+                    self.disconnect(ch.id)
+                    return {'ok': True,
+                            'message': f'{ch.name} 连接方式已更新，原连接已断开'}
                 return {'ok': True, 'message': f'{ch.name} 连接方式已更新'}
             if action == 'add_channel':
                 mode = str(params.get('mode', 'serial')).strip()
@@ -1825,6 +1853,18 @@ class KernelRegistry:
             return []
 
     # ---- 连接信息（直接读内核通道，不碰控件） ----
+    def serial_owners(self):
+        """本进程内谁占着哪个串口，供 /api/health 与 MCP 诊断使用。
+
+        只反映**本进程**：MCP 用 local 后端时看不到桌面端进程的占用表，
+        需要额外探一次桌面端的 /api/health（见 mcp_server 的连接预检）。
+        """
+        try:
+            return serial_port_owners()
+        except Exception as e:
+            log.error("读取串口占用表失败: %s", e)
+            return {}
+
     def connection_info(self, key):
         kernel = self.get(key)
         if kernel is None:
