@@ -40,7 +40,7 @@ import contextlib as _contextlib
 with _contextlib.redirect_stdout(_io.StringIO()):
     from qfluentwidgets import (
         FluentWindow, FluentIcon as FIF, NavigationItemPosition,
-        PushButton, PrimaryPushButton,
+        PushButton,
         ComboBox, InfoBar, InfoBarIcon, InfoBarPosition, BodyLabel,
         TitleLabel, SubtitleLabel, CaptionLabel, SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
         SwitchSettingCard, SwitchButton, SpinBox, MessageBox, MessageBoxBase, Dialog,
@@ -483,13 +483,14 @@ class HomePageWidget(QWidget):
         card.add_widget(self._sw_auth)
 
         # ---- 打开仪表盘（仅服务运行中可见） ----
+        # 说明文字与按钮合并成一个按钮：点击即用默认浏览器打开仪表盘，
+        # 不再需要跑到行尾去点「打开仪表盘」。
         open_row = QHBoxLayout()
-        self._open_label = BodyLabel("在浏览器打开")
-        open_row.addWidget(self._open_label)
-        open_row.addStretch()
-        self._open_btn = PrimaryPushButton("打开仪表盘")
+        self._open_btn = PushButton(FIF.GLOBE, "在浏览器打开")
+        self._open_btn.setToolTip("用默认浏览器打开数据仪表盘（自动带上访问密钥）")
         self._open_btn.clicked.connect(self._open_browser)
         open_row.addWidget(self._open_btn)
+        open_row.addStretch()
         self._open_row = QWidget()
         self._open_row.setLayout(open_row)
         card.add_widget(self._open_row)
