@@ -469,18 +469,28 @@ class HomePageWidget(QWidget):
             "局域网", self._lan_url(), copy=True)
         self._addr_rows['lan'] = self._lan_row
         self._token_row = self._make_addr_row(
-            "访问密钥", '', copy=True, regen=True)  # 运行中才显示，文本由刷新回填
+            "局域网密钥", '', copy=True, regen=True)  # 局域网+鉴权都开启才显示
 
         self._sw_lan = SwitchButton("局域网访问")
         self._sw_lan.setOnText("局域网访问")
         self._sw_lan.checkedChanged.connect(self._on_lan_switch)
         card.add_widget(self._sw_lan)
 
-        self._sw_auth = SwitchButton("访问密钥鉴权")
-        self._sw_auth.setOnText("访问密钥鉴权")
+        self._sw_auth = SwitchButton("局域网访问需密钥")
+        self._sw_auth.setOnText("局域网访问需密钥")
+        self._sw_auth.setToolTip(
+            "本机回环访问始终免密钥；开启后局域网设备必须带密钥才能读写")
         self._sw_auth.setChecked(bool(app_cfg.serverAuth.value))
         self._sw_auth.checkedChanged.connect(self._on_auth_switch)
         card.add_widget(self._sw_auth)
+
+        self._sw_autostart = SwitchButton("启动时自动开启")
+        self._sw_autostart.setOnText("启动时自动开启")
+        self._sw_autostart.setToolTip(
+            "程序启动后自动在 127.0.0.1 上开启数据接口（仅本机，不对局域网开放）")
+        self._sw_autostart.setChecked(bool(app_cfg.serverAutoStart.value))
+        self._sw_autostart.checkedChanged.connect(self._on_autostart_switch)
+        card.add_widget(self._sw_autostart)
 
         # ---- 打开仪表盘（仅服务运行中可见） ----
         # 说明文字与按钮合并成一个按钮：点击即用默认浏览器打开仪表盘，
@@ -559,13 +569,24 @@ class HomePageWidget(QWidget):
         lan_on = bool(app_cfg.serverLanAccess.value)
         self._sw_lan.blockSignals(True); self._sw_lan.setChecked(lan_on); self._sw_lan.blockSignals(False)
         self._sw_lan.setEnabled(ok)
+        self._sw_autostart.blockSignals(True)
+        self._sw_autostart.setChecked(bool(app_cfg.serverAutoStart.value))
+        self._sw_autostart.blockSignals(False)
+        self._sw_autostart.setEnabled(ok)
         # 局域网地址行：仅局域网开关 = 开 且有 IP
         self._lan_row.setVisible(lan_on and bool(self._lan_url()))
         self._lan_row._edit.setText(self._lan_url())
-        # 密钥行：仅服务运行中且鉴权开启；鉴权关闭时整行隐藏
+        # 密钥行：只有「局域网开 + 鉴权开」才有意义——本机回环永远免密钥；
+        # 局域网关着时端口只绑回环，令牌既用不上也不该打扰用户
         auth_on = bool(app_cfg.serverAuth.value)
-        self._token_row.setVisible(running and auth_on)
-        self._token_row._edit.setText(self._data_plugin.token or '')
+        token_row_visible = running and lan_on and auth_on
+        self._token_row.setVisible(token_row_visible)
+        self._sw_auth.setEnabled(ok)
+        self._sw_auth.setVisible(lan_on)
+        # 只有真要展示时才去取令牌：plugin.token 在令牌为空时会现场生成并落盘，
+        # 局域网关着时不该顺手生成一个用不上的密钥
+        if token_row_visible:
+            self._token_row._edit.setText(self._data_plugin.token or '')
         # 「在浏览器打开」整行：仅服务运行中
         self._open_row.setVisible(running)
         # flask 未装提示
@@ -625,16 +646,23 @@ class HomePageWidget(QWidget):
         if checked:
             box = MessageBox(
                 "开启局域网访问？",
-                "同一网络内的任何人都能访问并控制本机实验。\n请仅在可信网络中开启。",
+                "同一网络内的设备将能访问本机数据接口。\n"
+                "本机访问始终免密钥；局域网设备默认需要密钥（见下方开关）。\n"
+                "请仅在可信网络中开启。",
                 self.window())
             if not box.exec():
                 self._sw_lan.blockSignals(True); self._sw_lan.setChecked(False); self._sw_lan.blockSignals(False)
                 return
+            # 让局域网一开就有可用令牌：钩子会把令牌生成并写进配置，
+            # 避免「开了局域网但鉴权行还没密钥」的空档
+            self._ensure_lan_token()
         app_cfg.serverLanAccess.value = bool(checked)
-        # 重启服务以重新绑定网卡；期间禁用两个开关防连点
+        # 重启服务以重新绑定网卡；期间禁用相关开关防连点
         self._restart_busy = True
-        self._sw_server.setEnabled(False)
-        self._sw_lan.setEnabled(False)
+        switches = (self._sw_server, self._sw_lan, self._sw_auth,
+                    self._sw_autostart)
+        for sw in switches:
+            sw.setEnabled(False)
         if self._data_plugin.is_running():
             self._data_plugin.stop()
             ok, msg = self._data_plugin.start(
@@ -646,17 +674,19 @@ class HomePageWidget(QWidget):
                               position=InfoBarPosition.TOP, parent=self.window())
                 self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)
         self._restart_busy = False
-        self._sw_server.setEnabled(True)
-        self._sw_lan.setEnabled(True)
+        for sw in switches:
+            sw.setEnabled(True)
         self._refresh_data_card()
 
     def _on_auth_switch(self, checked):
-        """切鉴权开关：写配置并重启服务使其生效（重启期间禁用开关防连点）。"""
+        """切「局域网访问需密钥」开关：写配置并重启服务使其生效。"""
         if self._restart_busy:
             return
         app_cfg.serverAuth.value = bool(checked)
         self._restart_busy = True
-        for sw in (self._sw_server, self._sw_lan, self._sw_auth):
+        switches = (self._sw_server, self._sw_lan, self._sw_auth,
+                    self._sw_autostart)
+        for sw in switches:
             sw.setEnabled(False)
         if self._data_plugin.is_running():
             self._data_plugin.stop()
@@ -669,12 +699,32 @@ class HomePageWidget(QWidget):
                               position=InfoBarPosition.TOP, parent=self.window())
                 self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)
         self._restart_busy = False
-        for sw in (self._sw_server, self._sw_lan, self._sw_auth):
+        for sw in switches:
             sw.setEnabled(True)
         self._refresh_data_card()
 
+    def _on_autostart_switch(self, checked):
+        """「启动时自动开启」只写配置：本次运行的启停仍由服务开关决定。"""
+        app_cfg.serverAutoStart.value = bool(checked)
+        self._refresh_data_card()
+
+    def _ensure_lan_token(self):
+        """局域网访问打开时确保已有一枚令牌（仅生成一次，不覆盖已有密钥）。
+
+        令牌只对非回环来源生效；本机访问永远免密钥，所以普通启动路径
+        不会也不该触碰令牌。
+        """
+        plugin = getattr(self, '_data_plugin', None)
+        if plugin is None:
+            return
+        try:
+            if not plugin.token:
+                plugin.regenerate_token()
+        except Exception as e:
+            log.warning("生成局域网访问密钥失败: %s", e)
+
     def _regen_token(self):
-        """重生成访问密钥（仅运行中可用），旧密钥立即失效。"""
+        """重生成局域网访问密钥（仅局域网+鉴权开启时可用），旧密钥立即失效。"""
         if not self._data_plugin.is_running():
             return
         token = self._data_plugin.regenerate_token()
@@ -684,19 +734,55 @@ class HomePageWidget(QWidget):
                                 enable_cors=app_cfg.serverCors.value,
                                 token=token)
         self._refresh_data_card()
-        InfoBar.success(title="密钥已重生", content="旧密钥立即失效",
+        InfoBar.success(title="密钥已重生", content="旧密钥立即失效（本机访问不受影响）",
                         duration=2000, position=InfoBarPosition.TOP,
                         parent=self.window())
 
     def _open_browser(self):
+        """用默认浏览器打开仪表盘。
+
+        本机回环访问免密钥，地址里不再拼 ?token=（避免密钥留在浏览器历史里）；
+        只有在本机通过局域网地址打开、且鉴权开启时才需要带上密钥。
+        """
         url = self._data_plugin.url or self._local_url()
-        # 鉴权开启时自动带上密钥：浏览器端 app.js 会读取 ?token= 免手输
-        if app_cfg.serverAuth.value:
+        if app_cfg.serverAuth.value and not url.startswith('http://127.0.0.1'):
             token = self._data_plugin.token or ''
             if token:
                 sep = '&' if '?' in url else '?'
                 url = f"{url}{sep}token={token}"
         QDesktopServices.openUrl(QUrl(url))
+
+    def _autostart_data_server(self):
+        """启动程序时自动开启本地数据接口（仅回环，不碰局域网）。
+
+        只监听 127.0.0.1 意味着局域网连不上，因此不需要令牌、也不弹浏览器。
+        配置里若显式打开了「局域网访问」，则按其设置启动（设置页也有一份开关，
+        用户既然开了就是知情选择）。失败只提示不阻塞启动。
+        """
+        plugin = getattr(self, '_data_plugin', None)
+        if plugin is None:
+            return
+        ok, hint = plugin.available()
+        if not ok:
+            log.info("数据接口未自动启动：%s", hint)
+            return
+        if plugin.is_running():
+            return
+        if not bool(app_cfg.serverAutoStart.value):
+            return
+        ok, msg = plugin.start(
+            port=app_cfg.serverPort.value,
+            allow_lan=app_cfg.serverLanAccess.value,
+            enable_cors=app_cfg.serverCors.value)
+        if ok:
+            log.info("数据接口已自动启动（本机回环）: %s", msg)
+        else:
+            log.warning("数据接口自动启动失败: %s", msg)
+            InfoBar.warning(title="数据接口未能自动开启", content=msg,
+                            duration=4000, position=InfoBarPosition.TOP,
+                            parent=self.window())
+        if hasattr(self, 'home_page') and self.home_page is not None:
+            self.home_page._refresh_data_card()
 
     def _load_platform_icon(self, svg_name, fallback=FIF.CODE):
         """加载本地 SVG 平台 logo，失败回退 FluentIcon。"""
@@ -1538,8 +1624,10 @@ class SettingsWidget(QWidget):
 
         # ===== 数据接口分组（flaskserver 插件的不常改项） =====
         group_api = SettingCardGroup("数据接口", self._content)
+        group_api.addSettingCard(self._build_api_autostart_card())
         group_api.addSettingCard(self._build_api_port_card())
         group_api.addSettingCard(self._build_api_lan_card())
+        group_api.addSettingCard(self._build_api_auth_card())
         group_api.addSettingCard(self._build_api_cors_card())
         group_api.addSettingCard(self._build_api_token_card())
         layout.addWidget(group_api)
@@ -1881,7 +1969,9 @@ class SettingsWidget(QWidget):
         if checked:
             box = MessageBox(
                 "开启局域网访问？",
-                "同一网络内的任何人都能访问并控制本机实验。\n请仅在可信网络中开启。",
+                "同一网络内的设备将能访问本机数据接口（含控制）。\n"
+                "本机访问始终免密钥；局域网设备默认需要密钥（见下方开关）。\n"
+                "请仅在可信网络中开启。",
                 self)
             if not box.exec():
                 # 回弹（sender 是 SwitchButton）
@@ -1889,7 +1979,40 @@ class SettingsWidget(QWidget):
                 if sw is not None:
                     sw.blockSignals(True); sw.setChecked(False); sw.blockSignals(False)
                 return
+            # 开了局域网就备好密钥，避免设置页显示「无密钥」的空档
+            win = self.window()
+            ensure = getattr(win, '_ensure_lan_token', None)
+            if callable(ensure):
+                ensure()
         app_cfg.serverLanAccess.value = bool(checked)
+
+    def _build_api_autostart_card(self):
+        """启动时自动开启本地数据接口卡片（只绑回环，不碰局域网）。"""
+        card = SettingCard(
+            FIF.PLAY, "启动时自动开启数据接口",
+            "程序启动后自动在 127.0.0.1 上监听，仅本机可用，不需要密钥", None)
+        sw = SwitchButton(card)
+        sw.setOnText("开"); sw.setOffText("关")
+        sw.setChecked(bool(app_cfg.serverAutoStart.value))
+        sw.checkedChanged.connect(
+            lambda c: setattr(app_cfg.serverAutoStart, 'value', bool(c)))
+        card.hBoxLayout.addWidget(sw)
+        card.hBoxLayout.addSpacing(16)
+        return card
+
+    def _build_api_auth_card(self):
+        """局域网访问是否需要令牌（本机永远不需要）。"""
+        card = SettingCard(
+            FIF.CERTIFICATE, "局域网访问需密钥",
+            "本机回环访问始终免密钥；开启后局域网设备必须带密钥", None)
+        sw = SwitchButton(card)
+        sw.setOnText("开"); sw.setOffText("关")
+        sw.setChecked(bool(app_cfg.serverAuth.value))
+        sw.checkedChanged.connect(
+            lambda c: setattr(app_cfg.serverAuth, 'value', bool(c)))
+        card.hBoxLayout.addWidget(sw)
+        card.hBoxLayout.addSpacing(16)
+        return card
 
     def _build_api_cors_card(self):
         """允许跨域 (CORS) 开关卡片。"""
@@ -1905,9 +2028,10 @@ class SettingsWidget(QWidget):
         return card
 
     def _build_api_token_card(self):
-        """重新生成 token 卡片（旧密钥立即失效）。"""
-        card = SettingCard(FIF.CERTIFICATE, "重新生成访问密钥",
-                           "旧密钥立即失效，已连接的客户端需更新", None)
+        """重新生成局域网访问令牌卡片（本机访问不受影响）。"""
+        card = SettingCard(FIF.CERTIFICATE, "重新生成局域网密钥",
+                           "旧密钥立即失效，已连接的局域网设备需更新（本机不受影响）",
+                           None)
         btn = PushButton("重新生成", card)
         btn.setFixedHeight(30)
         btn.clicked.connect(self._on_regenerate_token)
@@ -1916,7 +2040,7 @@ class SettingsWidget(QWidget):
         return card
 
     def _on_regenerate_token(self):
-        """重生成访问密钥并持久化；服务运行中则带新密钥重启。"""
+        """重生成局域网访问密钥并持久化；服务运行中则带新密钥重启。"""
         from core_ui import app_cfg as _cfg
         token = None
         window = self.window()
@@ -1932,7 +2056,7 @@ class SettingsWidget(QWidget):
                     token=token)
                 if not ok:
                     log.warning("数据接口带新密钥重启失败: %s", msg)
-        InfoBar.success(title="密钥已重生", content="旧密钥立即失效",
+        InfoBar.success(title="密钥已重生", content="旧密钥立即失效（本机访问不受影响）",
                         duration=2000, position=InfoBarPosition.TOP,
                         parent=self)
 
@@ -2586,6 +2710,11 @@ class MainWindow(FluentWindow):
         # 主页数据接口入口卡片（插件缺失时主页保持原样）
         if hasattr(home_page, 'set_data_plugin'):
             home_page.set_data_plugin(self.data_plugin)
+
+        # === 自动开启本地数据接口（仅回环，不开放局域网）===
+        # 放到事件循环里延迟启动：不阻塞窗口显示，失败也能弹 InfoBar 提示
+        if self.data_plugin is not None:
+            QTimer.singleShot(0, self._autostart_data_server)
 
     @staticmethod
     def _module_key(info, widget):

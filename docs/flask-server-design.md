@@ -378,7 +378,7 @@ def api_command(self, action, params):
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/api/health` | 存活探测：`{ok, plugin, version, uptime_s, flask, modules_n}` |
+| `GET` | `/api/health` | 存活探测：`{ok, plugin, version, uptime_s, flask, modules_n, scope, auth_required, lan_access, serial_owners}` |
 | `GET` | `/api/modules` | 模块列表与状态摘要 |
 | `GET` | `/api/modules/<key>` | 单模块快照（含 `latest` / `params` / `actions`），`?points=N` 附带序列 |
 | `GET` | `/api/modules/<key>/series?limit=N` | 仅序列，默认降采样到 2000 点 |
@@ -391,9 +391,9 @@ def api_command(self, action, params):
 - 桌面 GUI、网页、CLI 任一处修改内核状态都会进入同一条事件流；View 的本地修改通过 `SensorKernel.notify_change()` 发布。
 - 客户端落后超过 512 条环形缓冲时收到 `event: reset`，应整页重拉后从最新 `seq` 续传；空闲时每 15 秒收到一行注释心跳。
 
-### 10.2 控制（需要 token）
+### 10.2 控制（局域网来源需要 token，本机回环免 token）
 
-token 通过 `X-Auth-Token` 请求头或 `?token=` 传递。
+token 通过 `X-Auth-Token` 请求头或 `?token=` 传递；只对非回环来源校验。
 
 | 方法 | 路径 | 请求体 | 说明 |
 |---|---|---|---|
@@ -408,7 +408,7 @@ token 通过 `X-Auth-Token` 请求头或 `?token=` 传递。
 |---|---|
 | `200` | 成功 |
 | `400` | 参数非法 / 动作不支持 |
-| `401` | token 缺失或错误 |
+| `401` | token 缺失或错误（仅局域网来源） |
 | `404` | 模块 `key` 不存在 |
 | `409` | 状态冲突（如已采集时再 `start`） |
 | `503` | 插件未启动 / flask 未安装 |
@@ -425,14 +425,22 @@ token 通过 `X-Auth-Token` 请求头或 `?token=` 传递。
 | 项 | 决定 | 理由 |
 |---|---|---|
 | 默认监听地址 | **`127.0.0.1`** | 默认不暴露到局域网，避免同网段任意人操作实验台 |
-| 局域网开放 | 需**显式**打开开关 | 打开时读操作也强制 token，并在日志与 UI 给出警告 |
-| token | `secrets.token_urlsafe(24)`，首次开启自动生成 | 持久化到 `app_config.json`，重启后书签仍可用 |
+| 启动行为 | **默认自动开启回环服务**（`DataAPI.AutoStart`，可关） | 本机 AI Agent / 脚本开箱可用，且只绑回环不对外 |
+| 局域网开放 | 需**显式**打开开关 | 打开后绑定 `0.0.0.0`，并在 UI 给出风险提示 |
+| 令牌的作用域 | **只约束非回环来源** | 本机浏览器打开仪表盘不该再输一次密钥 |
+| token | `secrets.token_urlsafe(24)`，首次开启局域网时生成 | 持久化到 `app_config.json`，重启后书签仍可用 |
 | token 存放 | 主页卡片可见、可复制、可重生 | 用户是设备所有者，无需隐藏 |
-| 读操作 | 回环地址下免 token | 浏览器仪表盘开箱可用 |
-| 写操作 | **始终**需要 token | 防止网页里被诱导发起的跨站请求 |
+| 读操作 | 回环来源免 token；局域网来源要 token | 浏览器仪表盘本机开箱可用，局域网仍受保护 |
+| 写操作 | 回环来源免 token；局域网来源要 token | 局域网侧防跨站诱导；本机视为可信操作者 |
+| 局域网 + 关闭鉴权 | 允许（显式选择），此时非回环也免校验 | 隔离实验网络里省事，UI 明示风险 |
 | CORS | 默认**不开启** | 需要时显式打开 |
 
-> ⚠️ 文档与 UI 都需明示：**局域网模式下任何能访问该端口的人都能控制实验**，请仅在可信网络使用。
+鉴权判定按**请求来源**而非端点：`request.remote_addr` 落在回环
+（`127.0.0.0/8`、`::1`、`::ffff:127.x`）即为本机，否则为局域网。
+`/api/health` 与 `/api/auth/check` 返回 `scope`（`loopback` / `auth` / `off`）
+与 `auth_required`，前端据此决定是否弹登录页。
+
+> ⚠️ 文档与 UI 都需明示：**局域网模式下任何能访问该端口的人都能控制实验**（除非开启并保管好令牌），请仅在可信网络使用。
 
 ---
 
@@ -444,7 +452,7 @@ token 通过 `X-Auth-Token` 请求头或 `?token=` 传递。
   - 模块卡片列表：名称、连接/采集状态、实时值
   - 选中模块的曲线图（Canvas 绘制，滚动窗口）
   - 控制条：按 `/api/modules/<key>` 返回的 `actions` **动态生成按钮**
-  - token 输入框（写操作用，存 `localStorage`）
+  - 局域网来源才显示 token 输入框（存 `localStorage`）；本机回环直接进桌面
 - 实时推送用 **SSE**：`GET /api/events`（`text/event-stream`），不是 WebSocket
   - 理由：纯 HTTP、无需额外依赖（浏览器原生 `EventSource`），断线自动重连 + `Last-Event-ID` 续传
   - 事件源是 `KernelRegistry` 的带序号环形日志：桌面 GUI、网页、CLI 任一处改内核都会广播

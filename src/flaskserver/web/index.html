@@ -63,11 +63,11 @@
     <div class="panel-section">
       <div class="panel-section-title">访问密钥</div>
       <div class="token-row">
-        <input id="token" type="password" placeholder="输入访问密钥"
+        <input id="token" type="password" placeholder="输入局域网访问密钥"
                autocomplete="off" spellcheck="false">
         <button id="token-submit" class="btn-primary" type="button">提交</button>
       </div>
-      <div id="token-hint" class="panel-hint">写操作（开始/停止采集等）需要访问密钥</div>
+      <div id="token-hint" class="panel-hint">本机访问免密钥；从局域网打开才需要密钥</div>
     </div>
     <div class="panel-section">
       <div class="panel-section-title">外观</div>
@@ -83,12 +83,12 @@
   </div>
 </section>
 
-<!-- 登录页（鉴权开启时拦截，参考路由器管理登录） -->
+<!-- 登录页（只有局域网来源 + 鉴权开启时才会出现） -->
 <section id="login" class="hidden" aria-label="访问密钥登录">
   <div class="login-card">
     <div class="login-logo" aria-hidden="true">PC</div>
     <div class="login-title">PhysChem 实验仪表盘</div>
-    <div class="login-sub">本机已开启访问鉴权，请输入密钥登录</div>
+    <div class="login-sub">来自局域网的访问需要密钥，请输入后登录（本机访问无需密钥）</div>
     <div class="token-row login-row">
       <input id="login-token" type="password" placeholder="访问密钥"
              autocomplete="off" spellcheck="false">

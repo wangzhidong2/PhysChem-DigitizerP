@@ -4,6 +4,16 @@ flaskserver.server — Flask app、路由、token 校验、静态托管
 
 只做一件事：把 core.KernelRegistry 的方法翻译成 HTTP 端点。
 不持有数据、不认识任何具体传感器、不操作任何 Qt 控件。
+
+鉴权模型（按请求来源判定，而不是按端点判定）：
+
+- **本机回环**（127.0.0.1 / ::1）：读写一律免令牌。浏览器仪表盘默认就
+  跑在回环上，本地自己用不该再输一次密钥。
+- **局域网来源**（非回环）：只在「局域网访问」开启后可能到达；此时若
+  鉴权开启则读写都要令牌，鉴权关闭则同样免令牌（用户显式选择的风险）。
+
+响应里的 ``scope`` 字段（loopback / auth / off）描述本次请求实际落在
+哪一档，前端据此决定要不要显示登录页。
 """
 
 import json
@@ -68,14 +78,50 @@ def _json_body():
     return data if isinstance(data, dict) else {}
 
 
+#: 回环来源地址：只有这些不需要令牌（IPv6 可能是 ::1 或 IPv4 映射形式）
+_LOOPBACK_ADDRS = frozenset((
+    '127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1',
+))
+
+
+def _peer_addr():
+    """本次请求的对端地址（去掉端口），无法判断时返回空串。"""
+    addr = ''
+    try:
+        addr = request.remote_addr or ''
+    except Exception:
+        return ''
+    addr = str(addr).strip()
+    if addr.startswith('['):                 # [::1]:1234 → ::1
+        addr = addr[1:].split(']', 1)[0]
+    elif addr.count(':') == 1:               # 127.0.0.1:1234 → 127.0.0.1
+        addr = addr.split(':', 1)[0]
+    return addr
+
+
+def is_loopback_request():
+    """本请求是否来自本机回环（本地访问免令牌的唯一依据）。"""
+    addr = _peer_addr()
+    if not addr:
+        return False
+    if addr in _LOOPBACK_ADDRS:
+        return True
+    # 127.0.0.0/8 全部视为回环；::ffff:127.x.x.x 同理
+    if addr.startswith('127.'):
+        return True
+    if addr.startswith('::ffff:127.'):
+        return True
+    return False
+
+
 def build_app(service, token='', allow_lan=False, enable_cors=False,
               app_cfg=None):
     """构建 Flask app。
 
     Args:
         service: core.KernelRegistry 实例（直接持有内核，不经过 QWidget）
-        token: 访问密钥；空字符串表示写操作也免校验（不推荐）
-        allow_lan: 局域网模式 —— 读操作也强制 token
+        token: 局域网访问令牌；本机回环永远免校验，此值为空则局域网也免校验
+        allow_lan: 局域网模式 —— 服务绑定在 0.0.0.0，非回环来源才需要 token
         enable_cors: 是否允许跨域
         app_cfg: core_ui.app_cfg（网页字体等外观设置读写用）；None 时只读回退默认
     """
@@ -98,15 +144,28 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
             resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
             return resp
 
-    def _check_token(write=False):
-        """token 校验：写操作始终需要；读操作仅局域网模式需要。
+    def _auth_scope():
+        """本次请求的鉴权档位：loopback / auth / off。
 
+        - loopback：来自本机回环，读写一律免令牌
+        - auth：来自局域网且令牌已配置，读写都要令牌
+        - off：来自局域网但令牌为空（用户在设置里关掉了鉴权）
+        """
+        if is_loopback_request():
+            return 'loopback'
+        return 'auth' if app._token else 'off'
+
+    def _check_token(write=False):
+        """令牌校验：只对**局域网来源**生效，本机回环始终放行。
+
+        Args:
+            write: 保留参数，用于区分读写；当前两档都按同一来源规则判定，
+                   保留是为了将来「本机免读、写需令牌」之类的收紧
         Returns:
             None 通过；否则返回 401 响应
         """
-        if not app._token:
-            return None
-        if not (write or allow_lan):
+        scope = _auth_scope()
+        if scope != 'auth':
             return None
         supplied = (request.headers.get('X-Auth-Token')
                     or request.args.get('token') or '')
@@ -115,22 +174,27 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
         return _error(401, 'unauthorized', '缺少或错误的访问密钥')
 
     # --------------------------------------------------------
-    # 读取端点（回环地址下默认免 token）
+    # 读取端点（本机回环免令牌）
     # --------------------------------------------------------
     @app.route('/api/health')
     def health():
         r = _check_token(write=False)
         if r is not None:
             return r
+        scope = _auth_scope()
         return jsonify({
             'ok': True,
             'plugin': 'flaskserver',
-            'version': 1,
+            'version': 2,
             'uptime_s': round(time.time() - app._start_time, 1),
             'flask': True,
             'modules_n': len(service.keys()),
             'lan_access': allow_lan,
+            # scope=loopback/off 时免令牌；scope=auth 时读写都要令牌
+            'scope': scope,
             'auth_enabled': bool(app._token),
+            'auth_required': scope == 'auth',
+            'loopback': scope == 'loopback',
             # 谁占着哪个串口：让 MCP/脚本能判断「连不上是因为被桌面端占用」
             'serial_owners': (service.serial_owners()
                               if hasattr(service, 'serial_owners') else {}),
@@ -138,16 +202,19 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
 
     @app.route('/api/auth/check')
     def auth_check():
-        """登录探测：始终按写级别校验（token 非空时必须带对），无副作用。
+        """登录探测：无副作用，报告本次来源需要什么级别的鉴权。
 
-        - 鉴权关闭 → 200 且 auth_enabled=false（前端免登录直接进）
-        - 密钥正确 → 200 且 auth_enabled=true
-        - 密钥缺失/错误 → 401（前端据此显示登录页）
+        - scope=loopback → 200，免令牌直接进桌面
+        - scope=off      → 200，局域网也免令牌
+        - scope=auth     → 令牌正确 200，缺失/错误 401（前端据此显示登录页）
         """
         r = _check_token(write=True)
         if r is not None:
             return r
-        return jsonify({'ok': True, 'auth_enabled': bool(app._token)})
+        scope = _auth_scope()
+        return jsonify({'ok': True, 'scope': scope,
+                        'auth_enabled': bool(app._token),
+                        'auth_required': scope == 'auth'})
 
     @app.route('/api/modules')
     def modules():
@@ -324,7 +391,7 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
                                  'attachment; filename="%s.csv"' % key})
 
     # --------------------------------------------------------
-    # 控制端点（始终需要 token）
+    # 控制端点（局域网来源需要 token，本机回环免令牌）
     # --------------------------------------------------------
     @app.route('/api/modules/<key>/icon.svg')
     def module_icon(key):
@@ -432,7 +499,7 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
         new_token = regen()
         app._token = new_token
         return jsonify({'ok': True, 'token': new_token,
-                        'message': '旧密钥立即失效'})
+                        'message': '旧密钥立即失效（本机访问不受影响）'})
 
     # --------------------------------------------------------
     # 网页字体与外观设置
@@ -541,7 +608,10 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
     # --------------------------------------------------------
     @app.route('/')
     def index():
-        return app.send_static_file('index.html')
+        resp = app.make_response(app.send_static_file('index.html'))
+        # 页面本身不缓存：改文案/换版本后刷新即生效
+        resp.headers['Cache-Control'] = 'no-cache'
+        return resp
 
     @app.errorhandler(404)
     def not_found(_e):

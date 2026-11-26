@@ -38,6 +38,7 @@ const windows = new Map();        // key -> 窗口对象
 let zCounter = 10;
 let urlTokenApplied = false;
 let authState = 'unknown';       // 'ok' | 'err' | 'unknown'：最近一次请求的密钥校验结果
+let authScope = 'auth';          // 'loopback' | 'off' | 'auth'：服务端判定的本请求鉴权档位
 
 /* ---------- 通用工具 ---------- */
 const ICON_ALIAS = [
@@ -140,6 +141,15 @@ function setTokenHint(text, kind) {
 
 function updateAuthUI() {
   const t = getToken();
+  // 后埠：本机回环 / 鉴权关闭时，密钥根本不参与鉴权，不要显示成「密钥未设置」误导用户
+  if (authScope !== 'auth') {
+    authDot.className = 'dot ok';
+    authText.textContent = authScope === 'loopback' ? '本机访问免密钥' : '鉴权已关闭';
+    authBtn.title = authScope === 'loopback'
+      ? '来自本机的回环访问无需密钥（局域网设备才需要）'
+      : '服务未开启局域网访问鉴权，读写均无需密钥';
+    return;
+  }
   authDot.className = 'dot ' + (t ? 'ok' : 'warn');
   authText.textContent = t ? '密钥 ' + maskToken(t) : '密钥未设置';
   authBtn.title = t ? '已保存访问密钥 ' + maskToken(t) + '，点击修改' : '点击设置访问密钥';
@@ -168,13 +178,13 @@ async function submitToken() {
     setTokenHint('已提交密钥 ' + maskToken(v) + '，正在校验…');
   } else {
     toast('已清除保存的密钥');
-    setTokenHint('已清除密钥：写操作将无法通过校验');
+    setTokenHint('已清除密钥：从局域网访问将无法通过校验（本机访问不受影响）');
   }
   await refreshOverview();
   refreshAllWindows();
   if (!v) return;                       // 清除密钥：保留上方提示
   if (authState === 'err') return;      // 校验失败：保留 onAuthError 写入的错误提示
-  setTokenHint('已保存密钥 ' + maskToken(v) + '，写操作（开始/停止采集等）已可用', 'ok');
+  setTokenHint('已保存密钥 ' + maskToken(v) + '，局域网访问已通过校验', 'ok');
 }
 
 function setToken(t) {
@@ -184,7 +194,7 @@ function setToken(t) {
   } catch (e) { /* localStorage 不可用时仅本次会话有效 */ }
   tokenInput.value = t || '';
   updateAuthUI();
-  // 密钥变化后重建事件流（局域网模式下读操作也要带 token）
+  // 密钥变化后重建事件流（局域网来源的读请求也要带 token）
   if (pollingStarted) startEventStream();
 }
 
@@ -277,7 +287,7 @@ async function refreshWebSettings() {
   }
 }
 
-/** 用户切换字体：写服务端并即时应用（写操作需访问密钥） */
+/** 用户切换字体：写服务端并即时应用（局域网来源需访问密钥） */
 async function onFontChange() {
   if (!fontSelectEl) return;
   const family = fontSelectEl.value;
@@ -305,8 +315,18 @@ async function refreshHealth() {
     const d = await api('/api/health');
     healthDot.className = 'dot ok';
     healthText.textContent = '服务正常';
+    // 从服务端回读鉴权档位：本机回环免密钥时不要把界面渲染成「未设置密钥」
+    if (d.scope && d.scope !== authScope) {
+      authScope = d.scope;
+      updateAuthUI();
+    }
+    const scopeText = d.scope === 'loopback' ? '本机免密钥'
+      : d.scope === 'off' ? '局域网免密钥'
+      : d.scope === 'auth' ? '局域网需密钥' : '';
     serviceInfoEl.textContent =
-      `运行 ${Math.round(d.uptime_s || 0)} 秒 · 模块 ${d.modules_n} 个 · 局域网访问${d.lan_access ? '开启' : '关闭'}`;
+      `运行 ${Math.round(d.uptime_s || 0)} 秒 · 模块 ${d.modules_n} 个 · `
+      + `局域网访问${d.lan_access ? '开启' : '关闭'}`
+      + (scopeText ? ` · ${scopeText}` : '');
   } catch (e) {
     healthDot.className = 'dot err';
     healthText.textContent = '未连接';
@@ -1212,7 +1232,7 @@ async function probeAuth() {
   } catch (e) {
     throw new Error('无法连接数据接口');
   }
-  if (resp.status === 401) return { ok: false, auth_enabled: true };
+  if (resp.status === 401) return { ok: false, scope: 'auth', auth_required: true };
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
   return resp.json();
 }
@@ -1251,11 +1271,25 @@ async function doLogin() {
 
 /** 登录放行后：同步密钥 UI 并启动数据轮询 */
 function enterDashboard() {
+  authScope = 'auth';
   tokenInput.value = getToken();
   updateAuthUI();
-  setTokenHint('已保存密钥 ' + maskToken(getToken()) + '，写操作（开始/停止采集等）已可用', 'ok');
+  if (getToken()) {
+    setTokenHint('已保存密钥 ' + maskToken(getToken()) + '，局域网访问已通过校验', 'ok');
+  }
   startPolling();
   refreshOverview();
+}
+
+/** 本机回环 / 局域网免密钥：不显示任何密钥 UI，直接进桌面 */
+function enterDashboardNoAuth(scope) {
+  authScope = scope || 'loopback';
+  closeLogin();
+  updateAuthUI();
+  setTokenHint(authScope === 'loopback'
+    ? '本机访问免密钥：读写均可直接操作（局域网设备才需要密钥）'
+    : '局域网访问鉴权已关闭：读写操作均无需密钥');
+  startPolling();
 }
 
 function startPolling() {
@@ -1344,7 +1378,13 @@ function bindEvents() {
   });
 }
 
-/** 启动门卫：先探测鉴权，再决定进桌面还是拦在登录页 */
+/** 启动门卫：先探测鉴权档位，再决定进桌面还是拦在登录页
+ *
+ * 服务端按「请求来源」判定鉴权：
+ *   loopback —— 本机回环，读写免密钥，直接进
+ *   off      —— 局域网 + 用户关闭鉴权，同样免密钥
+ *   auth     —— 局域网 + 鉴权开启，必须带对密钥，否则登录页
+ */
 async function startup() {
   updateClock();
   setInterval(updateClock, 1000);
@@ -1359,15 +1399,12 @@ async function startup() {
     showLogin('无法连接数据接口：' + e.message);
     return;
   }
-  if (!auth.auth_enabled) {        // 鉴权关闭：免登录直接进
-    closeLogin();
-    authDot.className = 'dot ok';
-    authText.textContent = '鉴权已关闭';
-    authBtn.title = '服务未开启访问鉴权，所有操作无需密钥';
-    setTokenHint('服务未开启访问鉴权：读、写操作均无需密钥');
-    startPolling();
+  const scope = auth.scope || (auth.auth_enabled ? 'auth' : 'off');
+  if (scope !== 'auth') {          // 本机回环 / 鉴权关闭：免登录直接进
+    enterDashboardNoAuth(scope);
     return;
   }
+  authScope = 'auth';
   if (auth.ok) {                   // 已带正确密钥（URL / 上次保存）
     closeLogin();
     enterDashboard();
@@ -1376,7 +1413,7 @@ async function startup() {
     }
     return;
   }
-  showLogin();                     // 鉴权开启且无有效密钥 → 登录页
+  showLogin();                     // 局域网 + 鉴权开启且无有效密钥 → 登录页
 }
 
 startup();

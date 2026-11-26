@@ -285,8 +285,8 @@ PhysChem-DigitizerP/
     │       ├── gitee.svg       # 主页与设置页 Gitee logo
     │       └── gitcode.svg     # 主页与设置页 GitCode logo
     ├── flaskserver/            # 数据接口插件（HTTP + 浏览器仪表盘 + MCP，见 6.10）
-    │   ├── __init__.py         # 插件生命周期（启停/密钥/可用性探测）
-    │   ├── server.py           # Flask 路由：REST API + 字体托管 + 静态仪表盘
+    │   ├── __init__.py         # 插件生命周期（启停/局域网令牌/可用性探测）
+    │   ├── server.py           # Flask 路由：REST API + 来源级鉴权 + 字体托管 + 静态仪表盘
     │   ├── mcp_server.py       # MCP stdio 代理（供 AI Agent 调用，需单独装 mcp）
     │   ├── README.md           # 插件接口文档（端点一览 / curl 示例 / MCP 配置）
     │   └── web/                # 仪表盘前端（零构建、零 CDN，离线可用）
@@ -428,14 +428,14 @@ python ./src/main.py
 ### 6.10.数据接口与浏览器仪表盘（flaskserver）
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/f90dec07-d72d-49e6-b33b-defa0a472f4f/image.png 'image.png')
 把实验数据开放给 **AI Agent**（REST / MCP）与**浏览器仪表盘**。这是**可选插件**：删掉整个 `./src/flaskserver/` 目录，主程序行为完全不变（主页卡片消失、不占端口）。
-**开启**：主页 →「数据接口」卡片 →「打开…」→ 打开「数据接口」开关（默认监听 `http://127.0.0.1:8765`）；浏览器访问该地址即为实时仪表盘，首次开启自动生成访问密钥。
+**开启**：程序启动时会**自动**在 `http://127.0.0.1:8765` 开启本地数据接口（只绑回环，不需要密钥，可在设置页「数据接口 → 启动时自动开启」关掉）；主页「数据接口」卡片点「在浏览器打开」即为实时仪表盘。要跨机器访问再打开「局域网访问」。
 ![image.png](https://raw.gitcode.com/user-images/assets/9825261/55356cfd-de46-44d8-bc32-f472ef38535a/image.png 'image.png')
 ![QQ_1791700657467.png](https://raw.gitcode.com/user-images/assets/9825261/11b6548a-4571-489c-afa3-8a1a1d7778d3/QQ_1791700657467.png 'QQ_1791700657467.png')
 | 能力 | 说明 |
 |------|------|
 | **浏览器仪表盘** | 桌面式界面（窗口／任务栏／开始菜单），实时曲线、模块控制、连接管理（串口／模拟器，与主程序复用同一套逻辑） |
 | **实时双向同步** | 桌面端与网页端操作的是同一份内核状态：任一端改名/改色/换模式/改采样间隔/校准/显隐/增删通道/启停采集，另一端立即刷新（桌面 ≈10–20 ms，网页走 SSE 推送） |
-| **仪表盘登录** | 开启鉴权后先显示登录页，输对密钥才进桌面；登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
+| **仪表盘登录** | **本机回环访问免密钥**，打开即进桌面；只有从局域网打开且开启鉴权时才显示登录页，登录后地址栏自动带 `?token=`，刷新或分享链接可直接进入 |
 | **REST API** | `/api/health`、`/api/modules`、`/api/modules/<key>`、`/series`、`/export.csv`、`/events`，以及 `collect`／`command`／`params` 控制端点 |
 | **MCP 服务** | `./src/flaskserver/mcp_server.py` 按 **MCP 2026-07-28** 暴露 13 个工具（读状态／改参数／采集／校准／导出／生成报告）；支持 `http`（连桌面端）与 `local`（进程内直连内核，无 GUI）两种后端；每个工具统一回传 `ok/error/hint/state` |
 
@@ -446,7 +446,7 @@ python ./src/main.py
 
 仪表盘的**默认字体是内嵌的 HarmonyOS Sans SC**（`./src/assets/fonts/*.woff2`，由服务端 `/font.css` + `/font-file` 提供）——手机等**从未安装该字体**的设备打开也能正常显示。在仪表盘 **开始菜单 → 外观 → 字体** 里可随时切换，选择保存在服务端（`app_config.json` 的 `WebDashboard.FontFamily`），因此局域网内多台设备、多个浏览器表现一致，且与桌面端的「应用字体」互不干扰。
 
-⚠️ 「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机／其他电脑可访问）。**同一网络内的任何人都能查看并控制实验，甚至可能通过漏洞提权，请仅在可信网络中开启。**
+⚠️ 「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机／其他电脑可访问）。**令牌只约束局域网来源：本机回环永远免密钥；局域网默认要密钥，也可以在卡片里显式关掉——关掉后同网段任何设备都能控制实验，请仅在可信网络中这样做。**
 
 ```bash
 pip install flask          # 插件依赖（可选；未装时主页「数据接口」卡片灰显，程序照常运行）
@@ -464,9 +464,10 @@ pip install -U "mcp>=2.3"   # 必须 2.3+，1.x 没有 2026-07-28 规范
 pip install pyserial        # 只有 local 后端直连串口才需要
 ```
 
-**第 2 步：桌面端打开数据接口，复制密钥**
+**第 2 步：确认数据接口已开启（本机免密钥）**
 
-主页 →「数据接口」卡片 → 打开开关 → 复制访问密钥（`http://127.0.0.1:8765`）。
+程序启动即已在本机 `127.0.0.1:8765` 开启服务，**回环访问不需要密钥**，`PCD_TOKEN` 可以留空。
+只有把 MCP 指到**另一台电脑**时才需要「数据接口」卡片里「局域网访问」的密钥。
 
 **第 3 步：写客户端配置**
 
@@ -480,13 +481,15 @@ Claude Desktop（Windows：`%APPDATA%\Claude\claude_desktop_config.json`；macOS
       "args": ["D:\\PhysChem-DigitizerP\\src\\flaskserver\\mcp_server.py"],
       "env": {
         "PCD_BACKEND": "http",
-        "PCD_API_BASE": "http://127.0.0.1:8765",
-        "PCD_TOKEN": "设置页里的密钥"
+        "PCD_API_BASE": "http://127.0.0.1:8765"
       }
     }
   }
 }
 ```
+
+> 连本机时 `PCD_TOKEN` 可以不写（回环免密钥）；`PCD_API_BASE` 指向另一台电脑的局域网地址时
+> 才需要加上 `"PCD_TOKEN": "局域网密钥"`。
 
 > Windows 路径要双写反斜杠；`command` 建议写 Python 绝对路径（如
 > `C:\\Users\\me\\AppData\\Local\\Programs\\Python\\Python312\\python.exe`），
@@ -496,7 +499,7 @@ Claude Code 用一条命令即可：
 
 ```bash
 claude mcp add physchem \
-  -e PCD_BACKEND=http -e PCD_API_BASE=http://127.0.0.1:8765 -e PCD_TOKEN=<密钥> \
+  -e PCD_BACKEND=http -e PCD_API_BASE=http://127.0.0.1:8765 \
   -- python /path/to/src/flaskserver/mcp_server.py
 ```
 
@@ -504,7 +507,7 @@ claude mcp add physchem \
 
 | 场景 | `PCD_BACKEND` | `PCD_API_BASE` | `PCD_TOKEN` |
 |---|---|---|---|
-| 桌面端开着（推荐） | `http` | `http://127.0.0.1:8765` | 必填 |
+| 桌面端开着（推荐） | `http` | `http://127.0.0.1:8765` | 可留空（回环免密钥） |
 | Agent 在另一台电脑 | `http` | `http://<桌面端IP>:8765` | 必填（局域网读也要） |
 | 没有桌面端（服务器/CI） | `local` | 不填 | 不填 |
 
@@ -512,8 +515,8 @@ claude mcp add physchem \
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `upstream_unreachable` | 桌面端「数据接口」开关没开 / 端口不对 | 打开开关，核对 `PCD_API_BASE` |
-| `unauthorized` | 密钥没填或已重置 | 重新复制密钥到 `PCD_TOKEN` |
+| `upstream_unreachable` | 桌面端数据接口没起来 / 端口不对 | 检查设置页「数据接口」开关，核对 `PCD_API_BASE` |
+| `unauthorized` | 局域网来源但密钥没填或已重置 | 重新复制「局域网密钥」到 `PCD_TOKEN` |
 | `port_in_use` | 串口正被桌面端占用 | 正常现象：改用 `http` 后端共享，别用 `local` 直连 |
 | 启动即退出并提示缺 `mcp` | 装到了 1.x 或没装 | `pip install -U "mcp>=2.3"` |
 

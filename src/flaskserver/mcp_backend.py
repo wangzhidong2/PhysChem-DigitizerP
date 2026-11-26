@@ -308,9 +308,14 @@ class HttpBackend(Backend):
     def health(self):
         d = self._req('/api/health', timeout=5)
         d['backend'] = self.kind
-        if d.get('auth_enabled') and not self.token:
-            d['warning'] = ('上位机已开启鉴权，但未设置 PCD_TOKEN：'
-                            '读操作可用，所有写操作会返回 unauthorized')
+        # 服务端按来源判定鉴权：本机回环免密钥，只有局域网来源才需要令牌。
+        # 老版本只有 auth_enabled，没有 auth_required，故这里兼容两种字段。
+        needs = d.get('auth_required')
+        if needs is None:
+            needs = bool(d.get('auth_enabled'))
+        if needs and not self.token:
+            d['warning'] = ('上位机对局域网访问开启了鉴权，但未设置 PCD_TOKEN：'
+                            '写操作会返回 unauthorized')
         return d
 
     def modules(self):

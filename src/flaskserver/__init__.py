@@ -78,6 +78,10 @@ class FlaskServerPlugin:
               enable_cors=None, enable_auth=None):
         """启动 HTTP 服务（werkzeug make_server，daemon 线程）。
 
+        鉴权模型：**本机回环免令牌，局域网才按需令牌**。
+        `token` 只用于非回环来源；`allow_lan=False` 时服务绑定 127.0.0.1，
+        局域网根本连不上，故不需要令牌。
+
         Returns:
             (bool, str): (是否成功, 失败原因/成功后的地址)
         """
@@ -100,8 +104,11 @@ class FlaskServerPlugin:
                 enable_auth = bool(self._app_cfg.serverAuth.value) if self._app_cfg else True
             if allow_lan and host == '127.0.0.1':
                 host = '0.0.0.0'
-            if not enable_auth:
-                # 鉴权关闭：token 置空，server 侧所有端点免校验
+            if not allow_lan:
+                # 只监听回环：局域网连不上，令牌没有意义，置空避免误报鉴权
+                token = ''
+            elif not enable_auth:
+                # 局域网开着但用户显式关掉鉴权：token 置空，非回环来源也免校验
                 token = ''
             elif not token and self._app_cfg is not None:
                 token = self._app_cfg.serverToken.value or self.regenerate_token()

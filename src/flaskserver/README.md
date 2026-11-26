@@ -17,19 +17,39 @@ pip install -U "mcp>=2.3"
 
 ## 使用
 
-1. 主页 →「数据接口」卡片 →「打开…」
-2. 打开「数据接口」开关（默认监听 `http://127.0.0.1:8765`）
-3. 浏览器访问该地址即为实时仪表盘；首次开启自动生成访问密钥
+1. 程序启动即在 `http://127.0.0.1:8765` **自动开启**本地数据接口
+   （只绑回环，不需要密钥；设置页「数据接口 → 启动时自动开启」可关）
+2. 主页 →「数据接口」卡片 →「在浏览器打开」即为实时仪表盘
+3. 需要让手机/别的电脑访问，再打开「局域网访问」——此时才会用到令牌
 
-「局域网访问」开关会把监听地址改为 `0.0.0.0`（手机/其他电脑可访问），
-⚠️ **同一网络内的任何人都能查看并控制实验，请仅在可信网络开启。**
+### 鉴权模型：本机免密钥，局域网才检验令牌
+
+| 访问来源 | 读操作 | 写操作 | 说明 |
+|---|---|---|---|
+| 本机回环（`127.0.0.1` / `::1`） | 免密钥 | 免密钥 | 默认场景，浏览器仪表盘开箱即用 |
+| 局域网 + 鉴权开启（默认） | 需密钥 | 需密钥 | 手机/别的电脑必须带令牌 |
+| 局域网 + 鉴权关闭 | 免密钥 | 免密钥 | 用户在卡片里显式关掉，适合隔离实验网 |
+
+判定依据是请求来源地址，不是端点：`/api/health` 与 `/api/auth/check`
+返回 `scope`（`loopback` / `auth` / `off`）与 `auth_required`，前端据此决定
+要不要弹登录页。
+
+⚠️ **开了「局域网访问」后同网段能连到本端口，默认需要令牌，但仍请仅在可信网络开启。**
+
 端口、CORS、密钥重生在设置页「数据接口」分组。
 
 ### 仪表盘登录（路由器式）
 
-开启鉴权后，浏览器直接打开仪表盘地址会先显示**登录页**：输入正确密钥才进入桌面，
+**从局域网打开**且鉴权开启时，浏览器会先显示**登录页**：输入正确密钥才进入桌面，
 登录成功后地址栏自动带上 `?token=`（刷新或把链接发给可信同事可直接进入）。
-从上位机内点「打开仪表盘」会自动带上密钥，无需再输一次。
+**在本机点「在浏览器打开」不会带 token**——回环访问本来就免密钥，
+不必把密钥留在浏览器历史里。
+
+### 从桌面端打开仪表盘
+
+卡片里的「在浏览器打开」直接在默认浏览器打开当前服务地址（回环时是
+`http://127.0.0.1:<端口>`），不自动弹窗、不拼密钥；需要局域网地址时可复制
+「局域网」那一行。
 
 ### 连接管理（串口 / 模拟器）
 
@@ -58,12 +78,13 @@ curl -N "http://127.0.0.1:8765/api/events?since=0"
 
 ## REST API
 
-统一前缀 `/api`；写操作需要 token（`X-Auth-Token` 头或 `?token=`）。
+统一前缀 `/api`。令牌**只对局域网来源**校验：本机回环的读写一律免令牌；
+来自局域网的请求在鉴权开启时需要 `X-Auth-Token` 头或 `?token=`。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/health` | 存活探测：`auth_enabled`、`lan_access`、`serial_owners`（谁占着哪个串口） |
-| GET | `/api/auth/check` | 登录探测：按写级别校验、无副作用，正确返回 200，错误 401 |
+| GET | `/api/health` | 存活探测：`scope`（loopback/auth/off）、`auth_required`、`lan_access`、`serial_owners`（谁占着哪个串口） |
+| GET | `/api/auth/check` | 登录探测：返回本次来源的鉴权档位，无副作用；需要令牌时校验，错误 401 |
 | GET | `/api/events?since=N` | 实时事件流（SSE），断线可用 `Last-Event-ID` 续传 |
 | GET | `/api/modules` | 模块列表与状态摘要 |
 | GET | `/api/modules/<key>` | 单模块快照，`?points=N` 附带序列；含 `connection` 连接信息 |
@@ -86,11 +107,14 @@ curl -N "http://127.0.0.1:8765/api/events?since=0"
 ### curl 示例
 
 ```bash
+# 本机回环：读写都免令牌（默认场景）
 curl http://127.0.0.1:8765/api/modules
 curl -X POST http://127.0.0.1:8765/api/modules/force_sensor/collect \
-     -H "X-Auth-Token: <密钥>" -H "Content-Type: application/json" \
-     -d '{"action":"start"}'
+     -H "Content-Type: application/json" -d '{"action":"start"}'
 curl "http://127.0.0.1:8765/api/modules/force_sensor/series?limit=100"
+
+# 局域网来源（鉴权开启时）：读写都要带令牌
+curl -H "X-Auth-Token: <密钥>" http://192.168.1.20:8765/api/modules
 ```
 
 ## MCP（AI Agent 接入）
@@ -108,7 +132,8 @@ pip install -U "mcp>=2.3"
 ### 三步接入（复制即可用）
 
 1. **装依赖**：`pip install -U "mcp>=2.3"`（直连串口再加 `pip install pyserial`）。
-2. **桌面端**：主页 →「数据接口」→ 打开开关 → 复制密钥。
+2. **桌面端**：启动程序即已在本机 `127.0.0.1:8765` 开启服务（回环免密钥）；
+   若要跨机器访问，在「数据接口」卡片打开「局域网访问」并复制密钥。
 3. **写配置**（Claude Desktop / Cursor 通用；Claude Code 用下一节的 `claude mcp add`）：
 
 ```json
@@ -170,8 +195,9 @@ PCD_BACKEND=http PCD_API_BASE=http://192.168.1.20:8765 PCD_TOKEN=<密钥> \
   python src/flaskserver/mcp_server.py
 ```
 
-注意局域网模式下**读操作也强制 token**（`allow_lan`），不带密钥连 `list_modules` 都会返回
-`unauthorized`。串口仍然只由桌面端那台机器持有，MCP 只是远程操作它。
+注意局域网模式下**局域网来源的读操作也要 token**（`allow_lan` + 鉴权开启），
+不带密钥连 `list_modules` 都会返回 `unauthorized`；但桌面端本机自己的回环
+访问始终免密钥。串口仍然只由桌面端那台机器持有，MCP 只是远程操作它。
 
 #### `connect_device` 的连接语义
 
@@ -217,8 +243,8 @@ PCD_MCP_TRANSPORT=streamable-http PCD_MCP_PORT=8766 python src/flaskserver/mcp_s
 
 | 场景 | `PCD_BACKEND` | `PCD_API_BASE` | `PCD_TOKEN` |
 |---|---|---|---|
-| 桌面端开着（推荐） | `http` | `http://127.0.0.1:8765` | 设置页密钥 |
-| 另一台电脑 / 手机热点 | `http` | `http://<桌面端IP>:8765` | 设置页密钥（局域网模式读也要） |
+| 桌面端开着（推荐） | `http` | `http://127.0.0.1:8765` | 可留空（回环免密钥） |
+| 另一台电脑 / 手机热点 | `http` | `http://<桌面端IP>:8765` | 必填（局域网读也要） |
 | 没有桌面端（服务器/CI） | `local` | 不填 | 不填 |
 
 Windows 示例（路径用双反斜杠，`python` 建议写绝对路径，避开 Microsoft Store 的假 python）：
@@ -336,7 +362,7 @@ CSV 的注释头行数随通道数变化，返回的 `rows` 统计的是**数据
 |---|---|---|
 | `PCD_BACKEND` | `http` | `http` 或 `local` |
 | `PCD_API_BASE` | `http://127.0.0.1:8765` | http 后端的上位机地址 |
-| `PCD_TOKEN` | 空 | 上位机开启鉴权时必填 |
+| `PCD_TOKEN` | 空 | 上位机对**局域网访问**开启鉴权时必填（本机回环不需要） |
 | `PCD_SENSORS_DIR` | `../sensors` | local 后端的模块目录 |
 | `PCD_REPORT_DIR` | `~/PhysChemReports` | 报告与 CSV 输出目录 |
 | `PCD_MCP_TRANSPORT` | `stdio` | `stdio` 或 `streamable-http` |
@@ -345,7 +371,7 @@ CSV 的注释头行数随通道数变化，返回的 `rows` 统计的是**数据
 
 ### 安全
 
-- http 后端的写操作全部要求 `X-Auth-Token`；
+- http 后端的令牌只约束**非回环来源**：本机脚本免密钥，局域网来源的读写都要 `X-Auth-Token`；
 - `export_csv` / `make_report` 只写 `PCD_REPORT_DIR`，**不接受调用方指定路径**；
 - `calibrate` / `send_command` 标注 `destructiveHint`，客户端可据此要求人工确认；
 - `local` 模式绕过鉴权，因为它直接操作本机内核——只在自己可控的环境里使用。

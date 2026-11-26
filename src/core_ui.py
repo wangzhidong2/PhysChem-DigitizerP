@@ -294,11 +294,14 @@ class AppConfig(QConfig):
     )
     # 数据接口（HTTP 服务，flaskserver 插件消费这些配置项）
     serverPort = ConfigItem("DataAPI", "Port", 8765)
+    # 启动程序时自动开启本地（回环）数据接口：只监听 127.0.0.1，
+    # 不给局域网开端口，因此不需要令牌，也不弹浏览器
+    serverAutoStart = ConfigItem("DataAPI", "AutoStart", True)
     serverLanAccess = ConfigItem("DataAPI", "LanAccess", False)
     serverCors = ConfigItem("DataAPI", "CorsEnabled", False)
-    # 访问密钥鉴权开关：关闭后所有读写请求均免密钥（回环本机自用时可选）
+    # 局域网访问的令牌鉴权开关：本机回环永远免令牌；关闭后局域网也免令牌
     serverAuth = ConfigItem("DataAPI", "TokenRequired", True)
-    # 访问密钥：首次开启服务时自动生成并持久化，重启后书签仍可用
+    # 局域网访问令牌：首次开启局域网访问时自动生成并持久化，重启后书签仍可用
     serverToken = ConfigItem("DataAPI", "Token", "")
 
 
