@@ -45,6 +45,7 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
         ConfigSerializer,
         ExpandGroupSettingCard, FluentIcon, RadioButton, CheckBox, FlowLayout,
+        AdaptiveFlowLayout,
     )
 from qfluentwidgets.components.dialog_box import ColorDialog
 
@@ -58,6 +59,44 @@ from core import (
 )
 
 log = get_logger('core_ui')
+
+
+# ============================================================
+# FlowLayout 补丁：修正 takeAt 的返回类型
+#
+# qfluentwidgets 的 FlowLayout.takeAt() 返回 QWidget，而 Qt 要求
+# QLayout::takeAt() 返回 QLayoutItem。PySide6 在 C++ 回调该虚函数时会打印：
+#   RuntimeWarning: Invalid return value in function 'QLayout.takeAt',
+#   expected ...QLayoutItem, got ...QWidget
+# 子类只改返回值（保留库内的动画清理逻辑），排版行为不变。
+# ============================================================
+def _flow_take_at(layout, index):
+    """按 QLayoutItem 契约取出子项；索引越界返回 None。"""
+    if 0 <= index < len(layout._items):
+        item = layout._items[index]
+        w = item.widget()
+        ani = w.property('flowAni') if w is not None else None
+        if ani:
+            layout._anis.remove(ani)
+            layout._aniGroup.removeAnimation(ani)
+            ani.deleteLater()
+        return layout._items.pop(index)
+    return None
+
+
+class SafeFlowLayout(FlowLayout):
+    """takeAt 返回 QLayoutItem 的 FlowLayout（消除 PySide6 运行时警告）。"""
+
+    def takeAt(self, index):
+        return _flow_take_at(self, index)
+
+
+class SafeAdaptiveFlowLayout(AdaptiveFlowLayout):
+    """takeAt 返回 QLayoutItem 的 AdaptiveFlowLayout。"""
+
+    def takeAt(self, index):
+        return _flow_take_at(self, index)
+
 
 # ============================================================
 # matplotlib 全局字体设置（图表引擎为 matplotlib 时才需要；
@@ -5801,8 +5840,7 @@ class ChannelPanelMixin:
         """重建图表卡顶部的通道显示勾选行（通道增删/改名后调用）。"""
         while self._visibility_flow.count():
             item = self._visibility_flow.takeAt(0)
-            w = item if isinstance(item, QWidget) else (
-                item.widget() if item else None)
+            w = item.widget() if item is not None else None
             if w is not None:
                 w.hide()
                 w.deleteLater()
@@ -6297,7 +6335,7 @@ class ChannelPanelMixin:
         chart_layout.setContentsMargins(20, 4, 20, 16)
         chart_layout.setSpacing(12)
 
-        self._visibility_flow = FlowLayout(isTight=True)
+        self._visibility_flow = SafeFlowLayout(isTight=True)
         self._visibility_flow.setHorizontalSpacing(14)
         self._visibility_flow.setVerticalSpacing(4)
         self._visibility_container = FlowWrapBox(self._visibility_flow)

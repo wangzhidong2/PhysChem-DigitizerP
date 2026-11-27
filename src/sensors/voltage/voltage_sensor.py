@@ -24,7 +24,6 @@ from PySide6.QtGui import QFont
 from qfluentwidgets import (
     PushButton, ComboBox, TitleLabel,
     BodyLabel, DoubleSpinBox, SwitchButton, FluentIcon as FIF,
-    FlowLayout,
 )
 import numpy as np
 
@@ -47,6 +46,7 @@ from core_ui import (
     FlowFixedWidth,
     card_style,
     FluentCard,
+    SafeFlowLayout,
     scroll_area_style,
     page_bg_style,
     set_action_button_width,
@@ -320,7 +320,7 @@ class VoltageSensorWidget(ChannelPanelMixin, QWidget):
         # 紧凑流式布局：按控件自然宽度排列，宽度不够时自动换行。
         # 不用 AdaptiveFlowLayout——那是等宽卡片网格布局，会把每个控件
         # 拉成同一列宽，标签与输入框之间出现大片空白
-        params_row = FlowLayout(isTight=True)
+        params_row = SafeFlowLayout(isTight=True)
         params_row.setHorizontalSpacing(10)
         params_row.setVerticalSpacing(8)
 

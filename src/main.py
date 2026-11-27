@@ -46,7 +46,7 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         SwitchSettingCard, SwitchButton, SpinBox, MessageBox, MessageBoxBase, Dialog,
         qconfig, LineEdit,
         CardWidget, IconWidget, PillToolButton, CheckBox,
-        AdaptiveFlowLayout, ToolTipFilter, TransparentToolButton,
+        ToolTipFilter, TransparentToolButton,
     )
 
 
@@ -81,6 +81,8 @@ from core_ui import (
     # 应用字体：内嵌 MiSans 注册 / 解析 / 应用 / 系统字体选择器
     load_embedded_font, apply_app_font,
     resolve_app_font_family, available_font_families, FontPickerDialog,
+    # FlowLayout 安全子类（takeAt 返回 QLayoutItem，避免 PySide6 运行时警告）
+    SafeAdaptiveFlowLayout,
 )
 # 模块扫描 / 内核加载 / 插件加载
 from module_loader import scan_modules, load_plugins
@@ -312,7 +314,7 @@ class HomePageWidget(QWidget):
 
     模块区采用 Windows 资源管理器磁贴风格：每个模块一张卡片，
     模块文字图标 + 名称 + 右上角图钉（置顶）。网格由
-    AdaptiveFlowLayout 驱动，随窗口宽度自动换行铺满；图钉状态
+    SafeAdaptiveFlowLayout 驱动，随窗口宽度自动换行铺满；图钉状态
     持久化在 app_config.json 的 General.PinnedModules。
     """
 
@@ -371,12 +373,12 @@ class HomePageWidget(QWidget):
         self._phys_title = TitleLabel("物理实验模块")
         self._chem_title = TitleLabel("化学实验模块")
 
-        self._phys_flow = AdaptiveFlowLayout()
+        self._phys_flow = SafeAdaptiveFlowLayout()
         self._phys_flow.setHorizontalSpacing(10)
         self._phys_flow.setVerticalSpacing(10)
         self._phys_flow.setWidgetMinimumWidth(160)
 
-        self._chem_flow = AdaptiveFlowLayout()
+        self._chem_flow = SafeAdaptiveFlowLayout()
         self._chem_flow.setHorizontalSpacing(10)
         self._chem_flow.setVerticalSpacing(10)
         self._chem_flow.setWidgetMinimumWidth(160)
@@ -798,11 +800,11 @@ class HomePageWidget(QWidget):
         图钉状态以 app_cfg.pinnedModules 为准（配置重载/主题切换安全）。
         """
         # 清空两个网格（不删除磁贴）
-        # 注意：qfluentwidgets 的 FlowLayout.takeAt() 直接返回 widget 本身
-        # （不是 QLayoutItem），不可再调用 item.widget()
+        # SafeAdaptiveFlowLayout.takeAt() 按 Qt 契约返回 QLayoutItem
         for flow in (self._phys_flow, self._chem_flow):
             while flow.count():
-                w = flow.takeAt(0)
+                item = flow.takeAt(0)
+                w = item.widget() if item is not None else None
                 if w is not None:
                     w.setParent(None)
 
