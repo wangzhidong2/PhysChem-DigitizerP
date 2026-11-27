@@ -781,8 +781,7 @@ class HomePageWidget(QWidget):
             InfoBar.warning(title="数据接口未能自动开启", content=msg,
                             duration=4000, position=InfoBarPosition.TOP,
                             parent=self.window())
-        if hasattr(self, 'home_page') and self.home_page is not None:
-            self.home_page._refresh_data_card()
+        self._refresh_data_card()
 
     def _load_platform_icon(self, svg_name, fallback=FIF.CODE):
         """加载本地 SVG 平台 logo，失败回退 FluentIcon。"""
@@ -2714,7 +2713,7 @@ class MainWindow(FluentWindow):
         # === 自动开启本地数据接口（仅回环，不开放局域网）===
         # 放到事件循环里延迟启动：不阻塞窗口显示，失败也能弹 InfoBar 提示
         if self.data_plugin is not None:
-            QTimer.singleShot(0, self._autostart_data_server)
+            QTimer.singleShot(0, home_page._autostart_data_server)
 
     @staticmethod
     def _module_key(info, widget):
