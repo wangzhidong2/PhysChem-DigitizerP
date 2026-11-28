@@ -38,6 +38,19 @@ pip install -U "mcp>=2.3"
 
 端口、CORS、密钥重生在设置页「数据接口」分组。
 
+### 网页端也能开关「局域网访问」
+
+桌面端卡片和**浏览器仪表盘**都能切换局域网访问，两处改的是同一份配置：
+
+- 仪表盘 **开始菜单 → 局域网访问** 里拨开关，服务会在约 0.5 s 内
+  `stop()` → `start()` 重新绑定网卡（监听地址在绑定时定死，只能重绑）；
+- 桌面端数据接口卡片随之自动刷新（插件通过信号把 Flask 线程的结果投回 GUI 线程）；
+- 切换失败会**自动回滚**：退回原监听地址、配置也回退，界面提示失败原因；
+- 重复拨到同一状态是幂等的，不会重启服务。
+
+> 说明：在 Flask 请求线程里重启同一服务是安全的 —— werkzeug 的 threaded server
+> 把请求跑在 daemon 线程，`server_close()` 不等待当前请求线程，端口释放后可立即重绑。
+
 ### 仪表盘登录（路由器式）
 
 **从局域网打开**且鉴权开启时，浏览器会先显示**登录页**：输入正确密钥才进入桌面，
@@ -99,6 +112,8 @@ curl -N "http://127.0.0.1:8765/api/events?since=0"
 | POST | `/api/modules/<key>/collect` | `{"action":"start"\|"stop"\|"toggle"}` |
 | POST | `/api/modules/<key>/command` | `{"action":"tare",...}`；连接管理：`{"action":"set_connection","params":{"mode":"模拟器"\|"串口","port":"COM3","connect":true}}`、`{"action":"refresh_ports"}` |
 | POST | `/api/modules/<key>/params` | 写参数（白名单：采样间隔/单位） |
+| GET | `/api/settings/web` | 网页设置：字体选项 + `lan_access` / `lan_available` / `lan_url` / `auth_enabled` |
+| POST | `/api/settings/web` | `{"font":"..."}` 改字体；`{"lan_access":true\|false}` 在线开关局域网（服务会重绑网卡） |
 | POST | `/api/token/regenerate` | 重生密钥 |
 
 模块 `key`：`ultrasonic_displacement` / `ultrasonic_velocity` / `ph_sensor` /

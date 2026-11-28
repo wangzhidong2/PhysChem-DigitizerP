@@ -29,6 +29,9 @@ const authText = $('auth-text');
 const serviceInfoEl = $('service-info');
 const fontSelectEl = $('font-select');
 const fontHintEl = $('font-hint');
+const lanSwitchEl = $('lan-switch');
+const lanStateEl = $('lan-state');
+const lanHintEl = $('lan-hint');
 const toastEl = $('toast');
 
 /* ---------- 状态 ---------- */
@@ -39,6 +42,7 @@ let zCounter = 10;
 let urlTokenApplied = false;
 let authState = 'unknown';       // 'ok' | 'err' | 'unknown'：最近一次请求的密钥校验结果
 let authScope = 'auth';          // 'loopback' | 'off' | 'auth'：服务端判定的本请求鉴权档位
+let lanBusy = false;             // 局域网切换进行中（服务要重启，期间禁止重复点）
 
 /* ---------- 通用工具 ---------- */
 const ICON_ALIAS = [
@@ -284,6 +288,74 @@ async function refreshWebSettings() {
     fontHintEl.textContent = d.font_embedded
       ? `内嵌字体 ${d.font_name} 由服务端提供，手机等未安装该字体的设备也能正常显示`
       : '内嵌字体文件缺失，已回退系统字体（检查 assets/fonts/ 是否随程序分发）';
+  }
+  // 局域网访问：同步服务端真实状态（每次刷新都回读，桌面端改了也能跟上）
+  syncLanUI(d);
+}
+
+/** 把服务端返回的局域网状态渲染到开关与提示 */
+function syncLanUI(d) {
+  if (!lanSwitchEl) return;
+  const on = !!d.lan_access;
+  lanSwitchEl.checked = on;
+  if (lanStateEl) lanStateEl.textContent = on ? '开启' : '关闭';
+  // 没检测到局域网网卡时禁用开关（开了也访问不到）
+  lanSwitchEl.disabled = lanBusy || d.lan_available === false;
+  if (lanHintEl) {
+    if (d.lan_available === false) {
+      lanHintEl.textContent = '未检测到局域网网卡，无法开启';
+    } else if (on && d.lan_url) {
+      lanHintEl.textContent = '同一网络设备访问：' + d.lan_url
+        + (d.auth_enabled ? '（需密钥）' : '（已免密钥）');
+    } else {
+      lanHintEl.textContent = '开启后同一网络内的设备可访问本仪表盘；本机访问始终免密钥';
+    }
+  }
+}
+
+/** 轮询服务端局域网/鉴权状态：桌面端改了开关，网页这边也要跟着变。
+ *  只在「本地值 ≠ 服务端值」时才重渲染，避免打断用户正在拨的开关
+ *  （切换进行中 lanBusy 时直接跳过，别覆盖他的操作）。 */
+async function pollLanState() {
+  if (lanBusy || !lanSwitchEl) return;
+  try {
+    const d = await api('/api/health');
+    const lanChanged = !!d.lan_access !== lanSwitchEl.checked;
+    const authChanged = !!d.auth_enabled !== (authScope === 'auth');
+    if (lanChanged || authChanged) {
+      // 档位变了要整页刷新设置（局域网地址、是否需密钥都在里面）
+      refreshWebSettings();
+      // 鉴权档位切换会让 SSE 的 token 语义变化，重建事件流
+      if (authChanged && pollingStarted) startEventStream();
+    }
+  } catch (e) { /* 服务重启瞬间失败属正常，下次轮询再试 */ }
+}
+
+/** 用户切换「局域网访问」：写服务端 → 服务重启 → 回读真实状态。
+ *  期间禁用开关防连点；失败时回滚勾选并提示。 */
+async function onLanChange() {
+  if (!lanSwitchEl || lanBusy) return;
+  const want = lanSwitchEl.checked;
+  lanBusy = true;
+  lanSwitchEl.disabled = true;
+  if (lanStateEl) lanStateEl.textContent = '切换中…';
+  try {
+    const d = await api('/api/settings/web', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lan_access: want }),
+    });
+    toast(d.message || (want ? '局域网访问已开启' : '局域网访问已关闭'));
+  } catch (e) {
+    // 失败：回滚勾选，等 refreshWebSettings 回读真实状态
+    lanSwitchEl.checked = !want;
+    toast('切换局域网访问失败：' + e.message);
+  } finally {
+    lanBusy = false;
+    // 服务刚重启，回读一次拿到权威状态（含局域网地址、是否需密钥）
+    refreshWebSettings();
+    // 服务重启会掐断 SSE：立刻重建，别等 EventSource 3s 后自动重连
+    if (pollingStarted) startEventStream();
   }
 }
 
@@ -1299,6 +1371,9 @@ function startPolling() {
   refreshWebSettings();          // 字体设置：进桌面后拉一次并填充下拉框
   startEventStream();            // 实时推送：任一端的修改立即反映到各端
   setInterval(refreshOverview, POLL_OVERVIEW_MS);
+  // 局域网/鉴权状态：桌面端改了也要同步过来（比 refreshWebSettings 轻，
+  // 只在真变了的时候才去拉完整设置）
+  setInterval(pollLanState, POLL_OVERVIEW_MS);
   setInterval(() => {
     if (document.hidden) return;
     // SSE 正常且刚收到事件时跳过：事件已触发定向刷新，避免重复请求
@@ -1332,6 +1407,8 @@ function bindEvents() {
   });
   // 外观：字体下拉框（切换即写服务端）
   if (fontSelectEl) fontSelectEl.addEventListener('change', onFontChange);
+  // 局域网访问开关（切换即重启服务重新绑定网卡）
+  if (lanSwitchEl) lanSwitchEl.addEventListener('change', onLanChange);
   // 登录页
   loginSubmitBtn.addEventListener('click', doLogin);
   loginInput.addEventListener('keydown', (e) => {

@@ -319,6 +319,9 @@ class HomePageWidget(QWidget):
     """
 
     module_clicked = Signal(str)
+    # 数据接口状态变化（网页端切换「局域网访问」后服务会重启）：由插件在
+    # Flask 请求线程里 emit，经 Qt 队列投递回 GUI 线程刷新数据接口卡片
+    data_state_changed = Signal()
 
     def __init__(self):
         super().__init__()
@@ -328,6 +331,7 @@ class HomePageWidget(QWidget):
         # 自绘 Gitee / GitCode logo（FluentWidgets 没有内置）
         self._img_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "assets", "images")
+        self.data_state_changed.connect(self._refresh_data_card)
         self.init_ui()
 
     def set_modules(self, modules):
@@ -436,6 +440,10 @@ class HomePageWidget(QWidget):
     def set_data_plugin(self, plugin):
         """注入数据接口插件（None = 插件缺失，整张卡片不显示）。"""
         self._data_plugin = plugin
+        if plugin is not None:
+            # 网页端也能切「局域网访问」：服务重启后从 Flask 线程发信号，
+            # 经队列回到 GUI 线程刷新卡片（不能直接跨线程操作控件）
+            plugin.on_state_change = self.data_state_changed.emit
         self._refresh_data_card()
 
     def _build_data_card(self):
@@ -666,15 +674,16 @@ class HomePageWidget(QWidget):
         for sw in switches:
             sw.setEnabled(False)
         if self._data_plugin.is_running():
-            self._data_plugin.stop()
-            ok, msg = self._data_plugin.start(
-                port=app_cfg.serverPort.value,
-                allow_lan=bool(checked),
-                enable_cors=app_cfg.serverCors.value)
+            # 统一走插件的 set_lan_access：与网页端共用同一条串行通道
+            # （内部有防抢占锁 + 失败回滚），不要在这里自己 stop/start
+            ok, msg = self._data_plugin.set_lan_access(bool(checked))
             if not ok:
-                InfoBar.error(title="重启失败", content=msg, duration=3000,
+                InfoBar.error(title="切换失败", content=msg, duration=3000,
                               position=InfoBarPosition.TOP, parent=self.window())
-                self._sw_server.blockSignals(True); self._sw_server.setChecked(False); self._sw_server.blockSignals(False)
+                # 回滚开关显示到配置的真实值
+                self._sw_lan.blockSignals(True)
+                self._sw_lan.setChecked(bool(app_cfg.serverLanAccess.value))
+                self._sw_lan.blockSignals(False)
         self._restart_busy = False
         for sw in switches:
             sw.setEnabled(True)

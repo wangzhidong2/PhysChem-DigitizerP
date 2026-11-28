@@ -18,6 +18,7 @@ flaskserver.server — Flask app、路由、token 校验、静态托管
 
 import json
 import os
+import socket
 import time
 from pathlib import Path
 
@@ -60,6 +61,26 @@ def _font_file_for(base_name):
         if p.is_file():
             return p, mime
     return None, None
+
+
+def lan_ip():
+    """本机在局域网中的出口 IP；离线/无网卡时返回空串。
+
+    UDP connect 不发包，只让系统选出出口网卡；标准库实现，不引入依赖。
+    插件层启动时打印密钥也要用这个地址，故为公开名。
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        return s.getsockname()[0]
+    except OSError:
+        return ''
+    finally:
+        s.close()
+
+
+#: 兼容旧名（模块内原有调用点仍用 _lan_ip）
+_lan_ip = lan_ip
 
 
 # ============================================================
@@ -576,18 +597,30 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
                 choices.append({'value': '', 'label': label})
             elif not installed or value in installed:
                 choices.append({'value': value, 'label': label})
+        ip = _lan_ip()
+        port = getattr(app, '_port', 0)
+        lan_on = bool(app._allow_lan)
         return jsonify({'ok': True, 'font': _web_font_family(),
                         'font_embedded': font_ok, 'font_name': WEB_FONT_FACE,
-                        'choices': choices})
+                        'choices': choices,
+                        # 局域网访问：以当前实际监听的 app 为准（重启后由插件回填）
+                        'lan_access': lan_on,
+                        'lan_available': bool(ip),
+                        # 只有真开了局域网才给地址：否则前端会显示一个连不上的地址
+                        'lan_url': ('http://%s:%s' % (ip, port))
+                        if lan_on and ip and port else '',
+                        'auth_enabled': bool(app._token)})
 
     @app.route('/api/settings/web', methods=['POST'])
     def web_settings_set():
         r = _check_token(write=True)
         if r is not None:
             return r
+        body = _json_body()
+        if 'lan_access' in body:
+            return _set_lan_access(body.get('lan_access'))
         if app_cfg is None:
             return _error(503, 'not_supported', '当前运行方式不支持修改网页设置')
-        body = _json_body()
         font = body.get('font')
         if not isinstance(font, str):
             return _error(400, 'bad_request', 'font 必须是字符串')
@@ -602,6 +635,24 @@ def build_app(service, token='', allow_lan=False, enable_cors=False,
         except Exception as e:
             return _error(500, 'save_failed', '保存失败：%s' % e)
         return jsonify({'ok': True, 'font': font, 'message': '字体已切换'})
+
+    def _set_lan_access(enabled):
+        """网页端切换「局域网访问」：写配置并由插件重启服务重新绑定网卡。"""
+        ctl = getattr(app, '_lan_control', None)
+        if not callable(ctl):
+            return _error(503, 'not_supported', '当前运行方式不支持切换局域网访问')
+        if not isinstance(enabled, bool):
+            return _error(400, 'bad_request', 'lan_access 必须是布尔值')
+        ok, msg = ctl(enabled)
+        if not ok:
+            return _error(500, 'restart_failed', msg)
+        # 注意：这里读的是**旧 app** 的属性（服务已重启，旧 app 即将被回收），
+        # 但端口在重启前后不变（同端口重绑），lan_url 仍正确
+        ip = _lan_ip()
+        port = getattr(app, '_port', 0)
+        return jsonify({'ok': True, 'lan_access': enabled, 'message': msg,
+                        'lan_url': ('http://%s:%s' % (ip, port))
+                        if enabled and ip and port else ''})
 
     # --------------------------------------------------------
     # 仪表盘静态页（/ 返回 index.html）
