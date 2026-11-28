@@ -20,6 +20,10 @@ import bisect
 import importlib
 import importlib.util
 
+# 组件库加载引导：优先用 src/ 内嵌副本，缺失时回退到 pip 已安装的版本。
+# 必须在任何 qfluentwidgets 导入之前执行（见 _vendor_boot.py 头部说明）。
+import _vendor_boot  # noqa: E402  (有意放在 Qt / 组件库导入之前)
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QPushButton, QFrame, QSizePolicy, QTextEdit,
     QApplication, QScrollArea, QListWidget, QListWidgetItem,

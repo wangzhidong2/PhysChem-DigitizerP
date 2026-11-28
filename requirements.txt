@@ -1,6 +1,8 @@
 # 核心 UI 框架
+# PySide6 是唯一需要安装的 UI 依赖。
+# WinUI3 风格组件库（qfluentwidgets / qframelesswindow / darkdetect）已随源码
+# 内嵌在 src/ 下，无需 pip 安装；来源、版本与许可证见 src/_vendor/README.md
 PySide6>=6.4.0
-PySide6-Fluent-Widgets
 
 # 数值计算
 numpy>=1.21.0
@@ -20,5 +22,4 @@ flask>=3.0
 
 #如果网络较慢，可以加上国内镜像，例如：
 #pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-
 

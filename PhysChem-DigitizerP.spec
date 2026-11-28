@@ -91,8 +91,25 @@ datas = sensor_datas + plugin_datas + [
      os.path.join('assets', 'fonts')),
 ]
 # docs/images 其余 png 为 README 截图，运行时用不到，不打包以控包体
-# FluentWidgets 的 FluentIcon 资源（SVG/QSS）
-datas += collect_data_files('qfluentwidgets')
+#
+# 组件库资源（FluentIcon 的 SVG/QSS/字体，集中在 qfluentwidgets/_rc/）：
+# 组件库现在内嵌在 src/qfluentwidgets（约 4 MB），不再依赖 pip 安装。
+# collect_data_files 只认「已安装」的包，内嵌后可能返回空，所以这里两条路都走：
+#   1) 内嵌目录存在 → 直接 walk 收进 _internal/qfluentwidgets（与运行时 __file__ 对齐）
+#   2) 回退到已安装版本 → collect_data_files
+_vendored_qfw = os.path.join('src', 'qfluentwidgets')
+if os.path.isdir(_vendored_qfw):
+    for _dirpath, _dirnames, _filenames in os.walk(_vendored_qfw):
+        if '__pycache__' in _dirpath:
+            continue
+        for _fn in _filenames:
+            if _fn.endswith(('.pyc', '.pyo')):
+                continue
+            _rel = os.path.relpath(_dirpath, 'src')
+            datas.append((os.path.join(_dirpath, _fn), _rel))
+else:
+    # 内嵌缺失：退回已安装的同名包（开发机常见）
+    datas += collect_data_files('qfluentwidgets')
 
 a = Analysis(
     ['src/main.py'],

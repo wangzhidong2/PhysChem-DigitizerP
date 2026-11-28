@@ -37,13 +37,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
 
-# 依赖与 requirements.txt 一一对应，并补充了 PyPI 上的版本下限：
-#   PySide6-Fluent-Widgets 已并入 PySideSix-Frameless-Window，
-#   且 1.7.0 起才支持 PySide6 6.6+，故设 >=1.7.0（此处用 PyPI 包名，
-#   import 名仍是 qfluentwidgets）。
+# 依赖与 requirements.txt 一一对应，并补充了 PyPI 上的版本下限。
+#   WinUI3 组件库（qfluentwidgets / qframelesswindow / darkdetect）已随源码
+#   内嵌在 src/ 下（约 4 MB），不再作为 pip 依赖；来源、版本与许可证见
+#   src/_vendor/README.md。因此这里只保留 PySide6。
 dependencies = [
-    "PySide6>=6.4.0",                       # 图形界面框架
-    "PySide6-Fluent-Widgets>=1.7.0",        # WinUI3 风格组件库（必需）
+    "PySide6>=6.4.0",                       # 图形界面框架（唯一需要安装的 UI 依赖）
     "numpy>=1.21.0",                        # 数值计算
     "pyserial>=3.5",                        # 串口通信（可选依赖，缺失降级为模拟器模式）
     "matplotlib>=3.5.0",                    # 绘图引擎（与 pyqtgraph 至少安装其一）

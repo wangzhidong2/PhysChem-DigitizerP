@@ -72,15 +72,20 @@ source .venv/bin/activate
 
 依赖库
 
+> **组件库已内嵌，不用再装**：WinUI3 风格组件库 `qfluentwidgets` 及其依赖
+> `qframelesswindow`、`darkdetect` 已随源码放在 [`src/`](src/) 下（约 4 MB），
+> 克隆仓库后**零安装即可运行**。来源、版本与许可证见
+> [`src/_vendor/README.md`](src/_vendor/README.md)。
+
 | 库 | 版本 | 用途 |
 |----|------|------|
-| **PySide6** | ≥6.4.0 | 图形界面框架 |
-| **PySide6-Fluent-Widgets** | — | WinUI3 风格组件库 |
+| **PySide6** | ≥6.4.0 | 图形界面框架（唯一需要安装的 UI 依赖） |
 | **pyserial** | ≥3.5 | 串口通信（可选依赖，未安装时串口功能优雅降级，模拟器模式不受影响） |
 | **matplotlib** | ≥3.5.0 | 数据可视化（默认绘图引擎，与 pyqtgraph 至少安装其一） |
 | **pyqtgraph** | ≥0.13.0 | 高性能交互式绘图（与 matplotlib 至少安装其一） |
 | **numpy** | ≥1.21.0 | 数值计算 |
 | **flask** | ≥3.0 | 数据接口插件 flaskserver/（可选依赖，未安装时主页「数据接口」卡片灰显，程序照常运行） |
+| ~~PySide6-Fluent-Widgets~~ | — | **已内嵌**，无需安装（见上） |
 
 ```bash
 pip install PySide6 numpy
@@ -88,14 +93,12 @@ pip install PySide6 numpy
 pip install pyserial
 # 绘图引擎（matplotlib / pyqtgraph 至少安装其一）
 pip install matplotlib pyqtgraph
-# WinUI3 风格组件库（必需）
-pip install PySide6-Fluent-Widgets
 # 可选（数据接口插件 flaskserver/，供 AI Agent / 浏览器仪表盘）:
 pip install flask
 ```
 或者
 ```bash
-pip install PySide6 PySide6-Fluent-Widgets numpy pyserial matplotlib pyqtgraph flask
+pip install PySide6 numpy pyserial matplotlib pyqtgraph flask
 ```
 或者，项目根目录已提供[requirements.txt](requirements.txt)，包含所有必需与可选依赖。
 在项目根目录打开终端，执行：
@@ -105,13 +108,25 @@ pip install -r requirements.txt
 如果你所在的shell（powershell）不支持一次输入多个模块，依次输入以下命令
 ```powershell
 pip install PySide6
-pip install PySide6-Fluent-Widgets
 pip install numpy
 pip install pyserial
 pip install pyqtgraph
 pip install matplotlib
 pip install flask
 ```
+
+#### 组件的两种来源：优先内嵌，缺失自动回退
+
+启动时的加载引导（[`src/_vendor_boot.py`](src/_vendor_boot.py)）会按这个顺序取库：
+
+| 情况 | 行为 |
+|---|---|
+| `src/qfluentwidgets` 等目录存在（默认） | **用内嵌副本**，与装没装 pip 包无关 |
+| 内嵌目录被删掉，但 pip 装过 | **自动回退**用已安装的那份，程序照常启动 |
+| 两者都没有 | 启动时报错并提示装哪个包 |
+
+所以想用新版组件库调试时，可以直接 `pip install -U PySide6-Fluent-Widgets`
+再把 `src/` 里那三个目录临时挪走，程序就会用新版；想回到内嵌版挪回来即可。
 #### 3.2.4.用 uv 一键管理环境（推荐，可选）
 
 项目根目录已提供 `pyproject.toml`（依赖清单）。如果你用 [uv](https://docs.astral.sh/uv/)（Rust 写的极速 Python 包管理器），**不必手工建虚拟环境、也不必逐条 pip**——一条命令搞定：
@@ -270,6 +285,15 @@ PhysChem-DigitizerP/
     ├── core.py                 # 公共内核（纯 Python）：日志 / 配置 / 串口与模拟器传输 / 事件 / SensorKernel / KernelRegistry
     ├── core_ui.py              # 公共 UI：主题字体 / 样式 / ChartPanel / 通用控件对话框
     ├── module_loader.py        # 传感器模块与插件扫描加载
+    ├── _vendor_boot.py         # 组件库加载引导：优先内嵌、缺失回退已安装（见 3.2.3）
+    ├── qfluentwidgets/         # 内嵌 WinUI3 组件库（GPLv3，随源码分发，约 4 MB）
+    ├── qframelesswindow/       # 内嵌无边框窗口库（LGPLv3，FluentWindow 依赖）
+    ├── darkdetect/             # 内嵌深色模式探测（BSD-3，主题「跟随系统」依赖）
+    ├── _vendor/                # 内嵌库的来源说明与许可证原文
+    │   ├── README.md                       # 各库版本、来源、用途与维护须知
+    │   ├── qfluentwidgets-LICENSE.txt      # GPLv3 原文
+    │   ├── qframelesswindow-LICENSE.txt    # LGPLv3 原文
+    │   └── darkdetect-LICENSE.txt          # BSD-3 原文
     ├── test_serial.py          # 串口连接测试工具
     ├── sensor_config.json      # 传感器校准配置（运行时自动生成，.gitignore）
     ├── app_config.json         # 应用配置（主题/字体/引擎/置顶/日志等，运行时生成，.gitignore）
@@ -547,6 +571,8 @@ python ./src/test_serial.py
 | 仪表盘中文显示成方块 | 内嵌网页字体未随包分发 | 确认 `./src/assets/fonts/HarmonyOS_Sans_SC_Regular.woff2` 存在；缺失时服务端 `/font.css` 返回空样式并回退系统字体 |
 | 主页「数据接口」卡片灰显 | flask 未安装 | `pip install flask` 后重启程序 |
 | 仪表盘能打开但图表空白 | 打包时漏收 `../src/flaskserver/web/echarts.min.js` | 用仓库内的 `PhysChem-DigitizerP.spec` 重新打包（插件目录是整目录收集的） |
+| 启动报 `ModuleNotFoundError: qfluentwidgets` | `src/` 下的内嵌组件库目录被删了，且 pip 也没装 | 从仓库恢复 `src/qfluentwidgets`、`src/qframelesswindow`、`src/darkdetect` 三个目录；或 `pip install PySide6-Fluent-Widgets` 走回退路径 |
+| 组件库版本不对 / 界面控件异常 | `src/` 内嵌副本与 pip 已装版本混用 | 内嵌存在时永远用内嵌。想用 pip 的新版，把 `src/` 里那三个目录临时挪走；想回内嵌版挪回来（详见 3.2.3） |
 
 ## 8.技术文档
 

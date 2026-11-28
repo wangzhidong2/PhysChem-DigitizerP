@@ -162,6 +162,31 @@ uv run pyinstaller --noconfirm PhysChem-DigitizerP.spec
 - `flaskserver/` 数据接口插件依赖 **`flask`（可选依赖）**，已在 `requirements.txt` / `pyproject.toml` 中列出。插件顶层**绝不** `import flask`，用 `importlib.util.find_spec` 延迟探测；未装时主页「数据接口」卡片灰显、不监听端口，主程序行为完全不变。打包时该目录同样整目录收集，并对 `flask` 做 `hiddenimports` 兜底（见 `PhysChem-DigitizerP.spec`）。
 - 无自动化测试、无 CI/CD、无 lint / 类型检查配置。`test_serial.py` 只是手动诊断工具。
 
+### 5.1 组件库内嵌（重要）
+
+WinUI3 组件库**已随源码内嵌**，不是 pip 依赖：
+
+```text
+src/qfluentwidgets/     # PySide6-Fluent-Widgets 1.11.3（GPLv3）
+src/qframelesswindow/   # PySideSix-Frameless-Window 0.8.2（LGPLv3，FluentWindow 依赖）
+src/darkdetect/         # darkdetect 0.8.0（BSD-3，主题「跟随系统」依赖）
+src/_vendor/            # 三个库的许可证原文 + 来源说明
+src/_vendor_boot.py     # 加载引导：优先内嵌，缺失回退已安装
+```
+
+硬性约定：
+
+- **`import qfluentwidgets` 之前必须先 `import _vendor_boot`**。`main.py` 与
+  `core_ui.py` 已在顶部导入；新增的独立入口脚本也要照做，否则内嵌副本可能
+  与 pip 已装版本混用（版本不匹配会崩）。
+- **不要**把 `PySide6-Fluent-Widgets` 加回 `requirements.txt` / `pyproject.toml`
+  的依赖列表——那会让用户又多装一份，违背内嵌的初衷。
+- **不要删** `src/qfluentwidgets/`（尤其 `_rc/`，FluentIcon 的 SVG/QSS 资源都在里面）。
+- 升级组件库：拷新目录覆盖三个包，删掉其中的 `__pycache__` / `*.pyc`，
+  同步更新 `src/_vendor/README.md` 的版本号与许可证文件。
+- 打包时 spec 会走 `src/qfluentwidgets` 整目录收集；内嵌目录缺失才回退
+  `collect_data_files('qfluentwidgets')`（见 spec 里的 `_vendored_qfw` 分支）。
+
 ## 6. 约定
 
 - 串口波特率固定 **115200**（固件与 Python 两侧硬编码）。

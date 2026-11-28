@@ -22,6 +22,11 @@ import re
 import webbrowser
 from pathlib import Path
 
+# 组件库加载引导：优先用 src/ 内嵌副本（src/qfluentwidgets 等），
+# 内嵌目录缺失时自动回退到 pip 已安装的同名库。必须在 qfluentwidgets
+# 之前导入，见 _vendor_boot.py 头部说明。
+import _vendor_boot  # noqa: E402
+
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea,
