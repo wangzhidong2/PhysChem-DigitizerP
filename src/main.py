@@ -2585,6 +2585,8 @@ class MainWindow(FluentWindow):
         # 自定义控件（QSS 背景、文字色、图表、导航图标）在此统一刷新
         from qfluentwidgets import qconfig
         qconfig.themeChanged.connect(self._on_fluent_theme_changed)
+        # 主题换肤后库会重新套用窗口样式，需再次归零内容区边框（见方法注释）
+        qconfig.themeChangedFinished.connect(self._flatten_content_frame)
         # 不再调用 apply_modern_style()：该方法强制浅色，既会覆盖启动时
         # restore_app_theme() 恢复的主题，其内部 apply_theme 已随主题重写移除
 
@@ -2730,6 +2732,32 @@ class MainWindow(FluentWindow):
             snake = snake[:-len('_widget')]
         return snake.strip('_')
 
+    #: 追加到 StackedWidget 样式末尾的覆盖规则（标记用于防止重复追加）
+    _FLAT_CONTENT_QSS = (
+        "\n/* flat-content */\n"
+        "StackedWidget { border: none; border-radius: 0; background: transparent; }\n"
+    )
+
+    def _flatten_content_frame(self):
+        """让内容区与标题栏/导航齐平，去掉默认的 1px 边框与左上圆角。
+
+        qfluentwidgets 的 StackedWidget 默认按「内容卡片」绘制：上/左各 1px
+        边框 + 左上 10px 圆角 + 半透明背景。本项目每个页面都铺了不透明背景，
+        方形页面会把圆角盖成缺角，同时留下一条与页面底色不同的 1px 亮线
+        （高分屏缩放下尤其明显）。
+
+        这里在库样式后追加一条覆盖规则：只设 frameWidth / 动态属性都不够，
+        因为样式重套时会按 QSS 的 border 把 frameWidth 重新算回 1；让样式表
+        本身不含边框，view 才会铺满、页面也与标题栏和导航齐平。
+        """
+        sw = getattr(self, 'stackedWidget', None)
+        if sw is None:
+            return
+        qss = sw.styleSheet()
+        if '/* flat-content */' in qss:
+            return
+        sw.setStyleSheet(qss + self._FLAT_CONTENT_QSS)
+
     def showEvent(self, event):
         """首次显示主窗口后，按配置自动弹出「项目信息」卡片。
 
@@ -2737,6 +2765,9 @@ class MainWindow(FluentWindow):
         关掉窗口内「启动时自动显示」复选框后，下次启动不再弹出。
         """
         super().showEvent(event)
+        # 首次 show 期间库还会再套一遍窗口样式（会把 frameWidth 重置为 1），
+        # 故延后到当前事件处理完再归零内容区边框。
+        QTimer.singleShot(0, self._flatten_content_frame)
         if self._intro_shown or not bool(app_cfg.showIntroOnStartup.value):
             return
         self._intro_shown = True
