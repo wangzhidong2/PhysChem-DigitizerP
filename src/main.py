@@ -48,7 +48,7 @@ with _contextlib.redirect_stdout(_io.StringIO()):
         PushButton,
         ComboBox, InfoBar, InfoBarIcon, InfoBarPosition, BodyLabel,
         TitleLabel, SubtitleLabel, CaptionLabel, SettingCard, SettingCardGroup, ExpandGroupSettingCard, isDarkTheme,
-        SwitchSettingCard, SwitchButton, SpinBox, MessageBox, MessageBoxBase, Dialog,
+        SwitchSettingCard, SwitchButton, MessageBox, MessageBoxBase, Dialog,
         qconfig, LineEdit,
         CardWidget, IconWidget, PillToolButton, CheckBox,
         ToolTipFilter, TransparentToolButton,
@@ -88,6 +88,9 @@ from core_ui import (
     resolve_app_font_family, available_font_families, FontPickerDialog,
     # FlowLayout 安全子类（takeAt 返回 QLayoutItem，避免 PySide6 运行时警告）
     SafeAdaptiveFlowLayout,
+    # 数字框必须用 core_ui 的修复版：库原生 SpinBox 的文字区未加入布局，
+    # 宽度恒为 1px，表现为「只有上下箭头、看不到数字」
+    SpinBox, DoubleSpinBox,
 )
 # 模块扫描 / 内核加载 / 插件加载
 from module_loader import scan_modules, load_plugins

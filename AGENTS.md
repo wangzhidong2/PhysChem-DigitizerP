@@ -76,7 +76,7 @@ module_loader.py 模块与插件扫描加载（不含 UI）
 |------|--------|
 | 静态表单标签（「连接方式:」） | `BodyLabel` |
 | 次要说明 / 统计小字（原先硬编码 `#666` 的灰色小字） | `CaptionLabel`（不设硬编码颜色） |
-| 数字输入 | `SpinBox` / `DoubleSpinBox` |
+| 数字输入 | **`from core_ui import SpinBox, DoubleSpinBox`**（见下方警告，**不要**从 `qfluentwidgets` 导入） |
 | 模式开关 | `SwitchButton`，信号是 `checkedChanged`（**不是** `toggled`） |
 | 普通卡片（连接控制 / 参数 / 实时数据 / 操作按钮） | `core_ui.FluentCard` |
 | 图表卡（需要全屏 / 浮动面板） | `core_ui.CollapsibleCard` |
@@ -84,6 +84,23 @@ module_loader.py 模块与插件扫描加载（不含 UI）
 | 滚动区 / 页面背景 | `scroll_area_style()` / `page_bg_style()` |
 
 **不要**再拼 `QWidget#card QLabel { color: ... }` 这类硬编码样式，Fluent 组件本身已随主题变色。
+
+> ⚠️ **数字框必须从 `core_ui` 导入**，不能直接 `from qfluentwidgets import SpinBox`。
+>
+> 内嵌的 qfluentwidgets 1.11.3 有个缺陷：`SpinBoxBase.__init__` 只建了
+> `hBoxLayout`，`InlineSpinBoxBase.__init__` 只往里加了两个 `SpinButton`，
+> **`lineEdit` 从未加入布局**，因此文字区宽度恒为 1px —— 界面表现为
+> 「只有上下箭头、看不见数字」，而且库样式表还设了
+> `padding: 0px 80px 0 10px` 进一步压缩可用宽度。
+>
+> `core_ui` 里定义了 `_SpinTextFix` Mixin 并用同名类覆盖导出修复版
+> （`class SpinBox(_SpinTextFix, _LibSpinBox)`），在 `resizeEvent` /
+> `showEvent` / `setValue` 后重新定位文字区。**所有模块与 `main.py`
+> 都已改为从 `core_ui` 导入**，新增模块照做即可。
+>
+> 排查方法：控件显示后检查 `spin.lineEdit().width()`，正常应 > 40px，
+> 若为 1 就说明用错了导入源。（未显示的控件几何未布局，w 也可能是 1，
+> 这是正常的 —— 必须 `show()` 之后再判断。）
 
 ### 2.5 内核 / View 分离（新模块必须遵守）
 
