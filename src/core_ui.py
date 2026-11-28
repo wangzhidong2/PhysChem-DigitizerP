@@ -39,7 +39,11 @@ import contextlib as _contextlib
 with _contextlib.redirect_stdout(_io.StringIO()):
     from qfluentwidgets import (
         PushButton, PrimaryPushButton, HyperlinkButton, ComboBox, EditableComboBox,
-        SwitchButton, DoubleSpinBox, ToolButton, SpinBox,
+        SwitchButton, ToolButton,
+        # 库原生数字框改别名导入：本文件末尾会用修复版 SpinBox / DoubleSpinBox
+        # 覆盖这两个名字（库的 lineEdit 未加入布局，文字区恒为 1px）
+        SpinBox as _LibSpinBox,
+        DoubleSpinBox as _LibDoubleSpinBox,
         LineEdit, TextEdit, Dialog, MessageBox, MessageBoxBase, StrongBodyLabel,
         SubtitleLabel, BodyLabel, CaptionLabel,
         isDarkTheme, qconfig, QConfig, ConfigItem, OptionsConfigItem, OptionsValidator,
@@ -5619,6 +5623,91 @@ def make_color_icon(hex_color, size=24):
     return QIcon(pm)
 
 
+class _SpinTextFix:
+    """修复 qfluentwidgets 数字框「只有箭头、看不见数字」的问题。
+
+    ## 现象
+    `SpinBox` / `DoubleSpinBox` 内部文字区（`lineEdit()`）宽度恒为 1px，
+    数字完全不可见，只剩右侧两个上下箭头。
+
+    ## 根因（已实测确认，是 qfluentwidgets 的库缺陷）
+    1. `SpinBoxBase.__init__` 只创建了 `self.hBoxLayout`，
+       `InlineSpinBoxBase.__init__` 只往里加了两个 `SpinButton`，
+       **自始至终没有把 `lineEdit()` 加入布局** —— 文字区因此游离在布局之外，
+       停留在 Qt 给未布局子控件的默认 1px。
+    2. 库样式表还给控件设了 `padding: 0px 80px 0 10px`（右侧 80px 是给
+       原生 `QSpinBox` 内部按钮预留的）。在自定义布局下这 80px 会与
+       两个 31px 箭头叠加，把可用宽度吃光。
+
+    两个因素叠加，任何宽度下文字区都是 1px。`setMinimumWidth` 能强行撑开，
+    但一旦控件尺寸变化，`QAbstractSpinBox` 内部重排又会把它打回 1px，
+    所以必须每次 `resizeEvent` 后重新几何定位。
+
+    ## 修法
+    在 `resizeEvent` 里按控件实际宽度重新摆放文字区：
+    左侧留 `_PAD_LEFT`，右侧让出两个箭头 + 间距 + 右边距。
+    同时把库样式的 80px 右内边距改小，避免与自绘定位冲突。
+
+    本类作为 Mixin 与库的 `SpinBox` / `DoubleSpinBox` 组合使用，
+    见文件末尾的 `SpinBox` / `DoubleSpinBox` 覆写。
+    """
+
+    #: 文字区左边距
+    _PAD_LEFT = 8
+    #: 文字区上下边距（控件高 33 时文字区约 25px，视觉居中）
+    _PAD_Y = 4
+    #: 两个箭头按钮宽度与间距（qfluentwidgets SpinButton 固定 31px、spacing 5）
+    _BTN_W = 31
+    _BTN_SPACING = 5
+    #: 控件右边距
+    _PAD_RIGHT = 4
+    #: 库样式表里那个过大的右内边距（要一并改小）
+    _LIB_PADDING = 'padding: 0px 80px 0 10px'
+    _OWN_PADDING = 'padding: 0px 4px 0 8px'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._spin_text_fixed = True
+        self._apply_spin_padding()
+
+    def _apply_spin_padding(self):
+        """把库里 80px 的右内边距改小，交给自绘几何定位。"""
+        try:
+            qss = self.styleSheet()
+            if qss and self._LIB_PADDING in qss:
+                self.setStyleSheet(
+                    qss.replace(self._LIB_PADDING, self._OWN_PADDING))
+        except Exception:
+            pass
+
+    def _relayout_spin_lineedit(self):
+        """按当前控件尺寸重新摆放文字区。"""
+        le = self.lineEdit()
+        if le is None:
+            return
+        reserved = 2 * self._BTN_W + self._BTN_SPACING + self._PAD_RIGHT
+        avail = self.width() - self._PAD_LEFT - reserved
+        if avail < 1:
+            avail = 1
+        le.setGeometry(self._PAD_LEFT, self._PAD_Y,
+                       avail, max(1, self.height() - 2 * self._PAD_Y))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._relayout_spin_lineedit()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        # 显示时（以及样式表在显示后才会真正生效的情况）再校正一次
+        self._apply_spin_padding()
+        self._relayout_spin_lineedit()
+
+    def setValue(self, value):
+        super().setValue(value)
+        # setValue 可能触发内部重排，收尾再校正一次
+        self._relayout_spin_lineedit()
+
+
 class FlowFixedWidth(QWidget):
     """FlowLayout 按控件 sizeHint() 排版，setFixedWidth 不会改变排版宽度。
 
@@ -5636,6 +5725,17 @@ class FlowFixedWidth(QWidget):
 
     def sizeHint(self):
         return QSize(self._width, super().sizeHint().height())
+
+
+#: 修复后的数字框：对外导出的名字与库一致，模块改从 core_ui 导入即可生效。
+#: 见 `_SpinTextFix` 的注释说明为什么需要这层包装。
+class SpinBox(_SpinTextFix, _LibSpinBox):
+    """整数数字框（已修复文字区 1px 问题）。"""
+
+
+class DoubleSpinBox(_SpinTextFix, _LibDoubleSpinBox):
+    """浮点数字框（已修复文字区 1px 问题）。"""
+
 
 
 class FlowWrapBox(QWidget):

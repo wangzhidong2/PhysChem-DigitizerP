@@ -29,8 +29,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from qfluentwidgets import (
     TitleLabel,
-    BodyLabel, CaptionLabel, SpinBox,
+    BodyLabel, CaptionLabel,
 )
+# 数字框必须用 core_ui 的修复版：库原生 SpinBox 的文字区未加入布局，
+# 宽度恒为 1px，表现为「只有上下箭头、看不到数字」
+from core_ui import SpinBox
 import numpy as np
 
 # 从公共模块导入共享代码
